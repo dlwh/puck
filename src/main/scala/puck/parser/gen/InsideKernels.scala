@@ -1,4 +1,4 @@
-package puck.parser
+package puck.parser.gen
 
 import virtualization.lms.common.{RangeOps, Base}
 import trochee.kernels.{Constant, Global, KernelOps}
@@ -6,12 +6,13 @@ import spire.algebra._
 import spire.implicits._
 import spire.syntax._
 import spire.math._
+import epic.trees.BinaryRule
 
 /**
  *
  * @author dlwh
  */
-trait InsideKernels extends ParserCommon { self: Base with KernelOps with RangeOps =>
+trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with RangeOps =>
 
   def insideTermBinaries = kernel8("inside_term_binaries"){ (insideBots: Rep[ParseChart with Global],
                                                              insideTops: Rep[ParseChart with Global],
@@ -28,7 +29,7 @@ trait InsideKernels extends ParserCommon { self: Base with KernelOps with RangeO
     val length = lengths(sentence)
 
     if (end <= length) {
-      val out = nontermAccumulator
+      val out = accumulatorForRules(grammar.bothTermRules ++ grammar.leftTermRules ++ grammar.rightTermRules)
 
       val sentOffset = offsets(sentence)
       val lengthOff = lengthOffsets(sentence)
@@ -89,7 +90,7 @@ trait InsideKernels extends ParserCommon { self: Base with KernelOps with RangeO
 
     if (end <= length) {
       val sentOffset = offsets(sentence)
-      val out = nontermAccumulator
+      val out = accumulatorForRules(grammar.unaryRules)
       val bot = insideBots(sentOffset, begin, end, gram)
       doInsideUnaries(out, bot, rules, gram)
       insideTops(sentOffset, begin, end, gram) = out
@@ -111,7 +112,7 @@ trait InsideKernels extends ParserCommon { self: Base with KernelOps with RangeO
 
     if (end <= length) {
       val sentOffset = offsets(sentence)
-      val out = nontermAccumulator
+      val out = accumulatorForRules(grammar.unaryTermRules)
       val bot = insidePos(lengthOff, begin, gram)
       doInsideTermUnaries(out, bot, rules, gram)
       insideTops(sentOffset, begin, end, gram) = out
@@ -143,7 +144,7 @@ trait InsideKernels extends ParserCommon { self: Base with KernelOps with RangeO
       val length = lengths(sentence)
 
       if (end <= length) {
-        val out = nontermAccumulator
+        val out = accumulatorForRules(rulePartition)
 
         val sentOffset = offsets(sentence)
 

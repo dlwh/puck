@@ -1,17 +1,16 @@
-package puck.parser
+package puck.parser.gen
 
+import epic.trees._
 import virtualization.lms.common.{RangeOps, Base}
 import trochee.kernels.KernelOps
 import spire.implicits._
-import spire.syntax._
-import spire.math._
 import trochee.basic.SpireOps
 
 /**
  * 
  * @author dlwh
  */
-trait InliningInsideKernels extends UniformLoopInsideKernels { self: Base with KernelOps with RangeOps with SpireOps =>
+trait InliningInsideKernels[L] extends UniformLoopInsideKernels[L] { self: Base with KernelOps with RangeOps with SpireOps =>
 
 
   protected def doInsideUnaryUpdates(top: Accumulator, bot: ParseCell, rulePartition: IndexedSeq[(UnaryRule[Int], Int)], rules: Rep[RuleCell], gram: Rep[Int]): Rep[Unit] = {
@@ -26,10 +25,10 @@ trait InliningInsideKernels extends UniformLoopInsideKernels { self: Base with K
   }
 
   protected def doInsideBinaryUpdates(out: Accumulator, left: ParseCell, right: ParseCell, rulePartition: IndexedSeq[(BinaryRule[Int], Int)], rules: Rep[RuleCell], gram: Rep[Int]): Rep[Unit] = {
-    for( (leftChild, rr) <- rulePartition.groupBy(_._1.leftChild)) {
-      val leftScore = left(leftChild)
-      for((rightChild,rrr) <- rr.groupBy(_._1.rightChild)) {
-        val rightScore = right(rightChild)
+    for( (lc, rr) <- rulePartition.groupBy(_._1.left)) {
+      val leftScore = left(lc)
+      for((rc,rrr) <- rr.groupBy(_._1.right)) {
+        val rightScore = right(rc)
         val joint = leftScore * rightScore
         for((r,id) <- rrr) {
          out.mad(r.parent, joint, rules.rules(id, gram))
@@ -40,7 +39,7 @@ trait InliningInsideKernels extends UniformLoopInsideKernels { self: Base with K
   }
 }
 
-trait UniformLoopInsideKernels extends InsideKernels { self: Base with KernelOps with RangeOps with SpireOps =>
+trait UniformLoopInsideKernels[L] extends InsideKernels[L] { self: Base with KernelOps with RangeOps with SpireOps =>
   protected def doLeftInsideTermUpdates(out: Accumulator, leftTerm: ParseCell, right: ParseCell, rules: Rep[RuleCell], gram: Rep[Int]): Rep[Unit] = {
     doInsideBinaryUpdates(out, leftTerm, right, grammar.leftTermRules, rules, gram)
   }

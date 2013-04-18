@@ -3,7 +3,7 @@ package puck.parser
 import epic.parser.projections.GrammarRefinements
 import epic.parser.BaseGrammar
 import epic.trees.{BinaryRule, UnaryRule}
-import scala.collection.immutable.BitSet
+import breeze.util.Index
 
 /**
  *
@@ -11,79 +11,95 @@ import scala.collection.immutable.BitSet
  */
 case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: BaseGrammar[L]) {
 
-
-  import grammar._
   def numSyms = grammar.labelIndex.size
   def numCoarseSyms = refinements.labels.coarseIndex.size
-  def root = grammar.rootIndex
-  val (binaryRules, unaryRules) = (0 until index.size).partition(isBinary(_))
 
-  def numBinaries = binaryRules.length
-  def numUnaries = unaryRules.length
-  def numRules: Int = numBinaries + numUnaries
+  val (symIndex,
+  nontermIndex,
+  termIndex,
+  leftTermRules,
+  rightTermRules,
+  nontermRules,
+  bothTermRules,
+  unaryRules,
+  unaryTermRules,
+  identityTermUnaries,
+  root: Int) = {
+    val rules = grammar.index.zipWithIndex.toIndexedSeq
+    // jesus
+    val termIndex, nontermIndex,symIndex = Index[L]()
+    val nonterms = rules.collect {
+      case (BinaryRule(p,_,_),_) => p
+      case (UnaryRule(p,c, _),_) if p != c => p
+    }.toSet
 
-  val unaryRulesWithIndices = unaryRules.map { r => indexedRule(r).asInstanceOf[UnaryRule[Int]] -> (r-binaryRules.length)}
-  val binaryRulesWithIndices = binaryRules.map { r => indexedRule(r).asInstanceOf[BinaryRule[Int]] -> r }
 
-  val terminalSymbols = {
-    val onLHS = Set.empty ++ binaryRulesWithIndices.map(_._1.parent)
-    val onURHS = Set.empty ++ unaryRulesWithIndices.map(_._1.child)
-    BitSet.empty ++ (0 until labelIndex.size).filterNot(onLHS).filter(onURHS)
-  }
-  val numNonTerms = numSyms - terminalSymbols.size
+    val rhsSyms = rules.flatMap {
+      case (rule@BinaryRule(p,l,r),_) => Iterator(l,r)
+      case (rule@UnaryRule(p,c,_),_) if p != c => Iterator(c)
+      case (rule@UnaryRule(p,c,_),_) => Iterator.empty
+    }.toSet
 
-  val terminalMap = Array.tabulate(numSyms)(i => i)
-  val nonterminalMap = Array.tabulate(numSyms)(i => i)
+    val syms = nonterms ++ rhsSyms
 
-  val (ntRules, leftTermRules, rightTermRules, bothTermRules) = {
-    val ntRules, leftTermRules, rightTermRules, bothTermRules = ArrayBuffer[(BinaryRule[Int], Int)]()
-    for(r <- binaryRulesWithIndices) {
-      val leftTerm =  terminalSymbols(r._1.left)
-      val rightTerm =  terminalSymbols(r._1.right)
-      if(leftTerm && rightTerm) {
-        bothTermRules += r
-      } else if (rightTerm) {
-        rightTermRules += r
-      } else if(leftTerm) {
-        leftTermRules += r
-      } else {
-        ntRules += r
-      }
+    nonterms foreach {nontermIndex.index _}
+    syms -- nonterms foreach {termIndex.index _}
+    nontermIndex foreach {symIndex.index _}
+    termIndex foreach {symIndex.index _}
+
+    val rootSet = syms --rhsSyms
+    if (rootSet.size > 1) {
+      throw new RuntimeException("Too many roots in the grammar: " + rootSet)
+    } else if(rootSet.size == 0) {
+      throw new RuntimeException("No root symbol in the grammar!" + rhsSyms)
     }
 
-    (ntRules: IndexedSeq[(BinaryRule[Int], Int)], leftTermRules: IndexedSeq[(BinaryRule[Int], Int)], rightTermRules: IndexedSeq[(BinaryRule[Int], Int)], bothTermRules: IndexedSeq[(BinaryRule[Int], Int)])
+    val root = grammar.root
+
+    def doIndex(sym: L) = { val nt = nontermIndex(sym); if (nt >= 0) nt -> false else termIndex(sym) -> true }
+    val (binaries, unaries) = rules.map {
+      case (r,i) => (r.map(doIndex(_)), i)
+    }.partition(_._1.isInstanceOf[BinaryRule[_]])
+
+    val groupedByTerminess = binaries.asInstanceOf[IndexedSeq[(BinaryRule[(Int, Boolean)], Int)]].groupBy {case (r,i) => r.left._2 -> r.right._2}
+
+    def patchRules(pair: (BinaryRule[(Int, Boolean)], Int)) = pair._1.map(_._1) -> pair._2
+    val leftTermRules = groupedByTerminess.getOrElse(true -> false, IndexedSeq.empty).map(patchRules _)
+    val rightTermRules = groupedByTerminess.getOrElse(false -> true, IndexedSeq.empty).map(patchRules _)
+    val bothTermRules = groupedByTerminess.getOrElse(true -> true, IndexedSeq.empty).map(patchRules _)
+    val nontermRules = groupedByTerminess.getOrElse(false -> false, IndexedSeq.empty).map(patchRules _)
+
+    val uByTerminess = unaries.asInstanceOf[IndexedSeq[(UnaryRule[(Int, Boolean)], Int)]].filter(p => !p._1.child._2 || (p._1.child != p._1.parent)) groupBy {case (r,i) => r.child._2}
+    def patchU(pair: (UnaryRule[(Int, Boolean)], Int)) = pair._1.map(_._1) -> pair._2
+    val tUnaries = uByTerminess.getOrElse(true, IndexedSeq.empty).map(patchU _)
+    val ntUnaries = uByTerminess.getOrElse(false, IndexedSeq.empty).map(patchU _)
+    val tIdentUnaries = unaries.collect { case pair@(UnaryRule(p, c, _), _) if p == c => pair }
+
+    (symIndex, nontermIndex, termIndex, leftTermRules,
+      rightTermRules, nontermRules, bothTermRules, ntUnaries, tUnaries, tIdentUnaries, nontermIndex(root))
   }
-  lazy val partitionsParent: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(ntRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
+
+  def numTerms = termIndex.size
+  def numNonTerms = nontermIndex.size
+
+  /** Maps an indexed terminal symbol back to the grammar's index*/
+  val terminalMap = Array.tabulate(numTerms)(i => grammar.labelIndex(termIndex.get(i)))
+  /** Maps an indexed nonterminal symbol back to the grammar's index*/
+  val nonterminalMap = Array.tabulate(numNonTerms)(i => grammar.labelIndex(nontermIndex.get(i)))
+
+  lazy val partitionsParent: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
   lazy val partitionsLeft: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = partitionsParent
   lazy val partitionsRight: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = partitionsParent
-  lazy val partitionsSmall: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(ntRules, maxPartitionLabelSize = 30, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
+  lazy val partitionsSmall: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, maxPartitionLabelSize = 30, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
 
-  val (termUnaries, ntermUnaries, termIdentUnaries) = {
-    val termUnaries, ntermUnaries, termIdentUnaries = ArrayBuffer[(UnaryRule[Int], Int)]()
-    for(r <- unaryRulesWithIndices) {
-      val childTerm =  terminalSymbols(r._1.child)
-      val pTerm =  terminalSymbols(r._1.parent)
-      if(pTerm) assert(r._1.child == r._1.parent, grammar.labelIndex.get(r._1.parent) + " " + grammar.labelIndex.get(r._1.child))
-      if(childTerm) {
-        if(r._1.child != r._1.parent)
-          termUnaries += r
-        else termIdentUnaries += r
-      } else {
-        ntermUnaries += r
-      }
-    }
-
-
-    (termUnaries: IndexedSeq[(UnaryRule[Int], Int)], ntermUnaries: IndexedSeq[(UnaryRule[Int], Int)], termIdentUnaries.toIndexedSeq)
-  }
-
+  def numRules = grammar.index.size
 
   /**
    * 1 if the corresponding unary rule is not a terminal->terminal unary rule.
    */
   val nonIdentityMask = {
-    val arr = Array.fill(numUnaries)(1.0)
-    for(t <- termIdentUnaries) {
+    val arr = Array.fill(numRules)(1.0)
+    for(t <- identityTermUnaries) {
       arr(t._2) = 0.0
     }
     arr

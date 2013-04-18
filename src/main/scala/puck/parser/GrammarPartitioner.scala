@@ -3,18 +3,19 @@ package puck.parser
 
 import collection.mutable
 import collection.immutable.BitSet
+import epic.trees.BinaryRule
 
 object GrammarPartitioner {
   sealed trait TargetLabel {
     def clusterPieces(r: BinaryRule[Int]) = this match {
-      case Parent => BitSet(r.leftChild) -> BitSet(r.rightChild)
-      case LeftChild => BitSet(r.parent) -> BitSet(r.rightChild)
-      case RightChild => BitSet(r.parent) -> BitSet(r.leftChild)
+      case Parent => BitSet(r.left) -> BitSet(r.right)
+      case LeftChild => BitSet(r.parent) -> BitSet(r.right)
+      case RightChild => BitSet(r.parent) -> BitSet(r.left)
     }
 
     def target(r: BinaryRule[Int]) = this match {
       case Parent => r.parent
-      case LeftChild => r.leftChild
+      case LeftChild => r.left
       case RightChild => r.parent
     }
   }
