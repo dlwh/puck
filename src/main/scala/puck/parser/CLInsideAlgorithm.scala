@@ -38,7 +38,7 @@ trait CLInsideAlgorithm[C, L] {
        val b = binaries.map(_.enqueueNDRange(queue, Array(numSentences, maxLength + 1 - len, numGrammars), Array(1, 1, numGrammars), lastU))
        ib ++= b
 
-       termBinaries.setArg(7, len)
+       termBinaries.setArg(6, len)
        val t = termBinaries.enqueueNDRange(queue, Array(numSentences, maxLength + 1 - len, numGrammars), Array(1, 1, numGrammars), b:_*)
        it += t
 
@@ -61,7 +61,7 @@ trait CLInsideAlgorithm[C, L] {
 
    }
 
-  private lazy val binaries = Array.tabulate(partitionsParent.length){i => codegen.mkKernel(insideNonterms(i, partitionsParent(i)))}
+  private lazy val binaries = Array.tabulate(partitionsParent.length){i => println(codegen.emitKernelSource(insideNonterms(i, partitionsParent(i)))); codegen.mkKernel(insideNonterms(i, partitionsParent(i)))}
   private lazy val termBinaries = codegen.mkKernel(insideTermBinaries)
   private lazy val unaries = {codegen.mkKernel(insideUnaries)}
   private lazy val termUnaries = codegen.mkKernel(insideTermUnaries)

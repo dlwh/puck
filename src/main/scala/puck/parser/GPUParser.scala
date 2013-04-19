@@ -151,7 +151,7 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
     }
     assert(maxTotalLength >= totalLength, maxTotalLength -> totalLength)
 
-    val posTags = new Array[Float](totalLength * cellSize)
+    val posTags = new Array[Float](maxTotalLength * cellSize)
     val fullMask = Array.fill(maxCells * structure.pruningMaskFieldSize)(-1L)
 
 
