@@ -77,10 +77,10 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
     val arr = new Array[Float](rules.length.toInt)
     for(g <- 0 until numGrammars) {
       for(b <- 0 until ruleScores(g).binaries.length) {
-        arr(b * numGrammars + g) = math.exp(ruleScores(g).binaries(b)).toFloat
+        arr(b * numGrammars + g) = parserGen.fromLogSpace(ruleScores(g).binaries(b).toFloat)
       }
       for(u <- 0 until ruleScores(g).unaries.length) {
-        arr(nbinaries * numGrammars + u * numGrammars + g) = math.exp(ruleScores(g).unaries(u)).toFloat
+        arr(nbinaries * numGrammars + u * numGrammars + g) = parserGen.fromLogSpace(ruleScores(g).unaries(u).toFloat)
       }
     }
 
@@ -162,7 +162,7 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
           aa <- lexicon.tagsForWord(s(pos));
           a = termIndex(aa)) {
         for(g <- 0 until numGrammars)
-          posTags((a * maxTotalLength + (partialLengths(i) + pos))*numGrammars + g) = math.exp(tagScorers(g)(s, pos, a)).toFloat
+          posTags((a * maxTotalLength + (partialLengths(i) + pos))*numGrammars + g) = parserGen.fromLogSpace(tagScorers(g)(s, pos, a).toFloat)
       }
       for( m <- mask) {
         assert(m.bits.length == TriangularArray.arraySize(s.length + 1) * structure.pruningMaskFieldSize, m.bits.length + " " + TriangularArray.arraySize(s.length + 1))

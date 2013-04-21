@@ -14,14 +14,74 @@ import epic.trees.BinaryRule
  */
 trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with RangeOps =>
 
-  def insideTermBinaries = kernel8("inside_term_binaries"){ (insideBots: Rep[ParseChart with Global],
-                                                             insideTops: Rep[ParseChart with Global],
-                                                             posTags: Rep[TermChart with Global],
-                                                             offsets: Rep[Array[Int] with Global],
-                                                             lengths: Rep[Array[Int] with Global],
-                                                             lengthOffsets: Rep[Array[Int] with Global],
-                                                             spanLength: Rep[Int],
-                                                             rules: Rep[RuleCell with Global]) =>
+  def insideTermBinaries:IndexedSeq[Kernel] = IndexedSeq(insideLeftTerms, insideRightTerms)
+
+
+  lazy val insideBothTerms: Kernel =  kernel6("inside_both_term_binaries"){ (insideBots: Rep[ParseChart with Global],
+                                                                             posTags: Rep[TermChart with Global],
+                                                                             offsets: Rep[Array[Int] with Global],
+                                                                             lengths: Rep[Array[Int] with Global],
+                                                                             lengthOffsets: Rep[Array[Int] with Global],
+                                                                             rules: Rep[RuleCell with Global]) =>
+
+    val spanLength = 2
+    val sentence = globalId(0)
+    val begin = globalId(1)
+    val gram = globalId(2)
+    val end = begin + spanLength
+    val length = lengths(sentence)
+
+    if (end <= length) {
+      val out = accumulatorForRules(grammar.bothTermRules ++ grammar.leftTermRules ++ grammar.rightTermRules)
+
+      val sentOffset = offsets(sentence)
+      val lengthOff = lengthOffsets(sentence)
+      val leftTerm = posTags(lengthOff, begin, gram)
+      val rightTerm = posTags(lengthOff, (end-1), gram)
+      doBothInsideTermUpdates(out, leftTerm, rightTerm, rules, gram)
+
+      insideBots(sentOffset, begin, end, gram) = out
+    } else unit() // needed because scala is silly
+  }
+
+
+
+  lazy val insideLeftTerms = kernel8("inside_left_term_binaries"){ (insideBots: Rep[ParseChart with Global],
+                                                                    insideTops: Rep[ParseChart with Global],
+                                                                    posTags: Rep[TermChart with Global],
+                                                                    offsets: Rep[Array[Int] with Global],
+                                                                    lengths: Rep[Array[Int] with Global],
+                                                                    lengthOffsets: Rep[Array[Int] with Global],
+                                                                    spanLength: Rep[Int],
+                                                                    rules: Rep[RuleCell with Global]) =>
+    val sentence = globalId(0)
+    val begin = globalId(1)
+    val gram = globalId(2)
+    val end = begin + spanLength
+    val length = lengths(sentence)
+
+    if (end <= length) {
+      val out = accumulatorForRules(grammar.bothTermRules ++ grammar.leftTermRules ++ grammar.rightTermRules)
+
+      val sentOffset = offsets(sentence)
+      val lengthOff = lengthOffsets(sentence)
+      val right = insideTops(sentOffset, begin+1, end, gram)
+      val leftTerm = posTags(lengthOff, begin, gram)
+
+      doLeftInsideTermUpdates(out, leftTerm, right, rules, gram)
+      insideBots(sentOffset, begin, end, gram) = out
+
+    } else unit() // needed because scala is silly
+  }
+
+  lazy val insideRightTerms = kernel8("inside_right_term_binaries"){ (insideBots: Rep[ParseChart with Global],
+                                                                    insideTops: Rep[ParseChart with Global],
+                                                                    posTags: Rep[TermChart with Global],
+                                                                    offsets: Rep[Array[Int] with Global],
+                                                                    lengths: Rep[Array[Int] with Global],
+                                                                    lengthOffsets: Rep[Array[Int] with Global],
+                                                                    spanLength: Rep[Int],
+                                                                    rules: Rep[RuleCell with Global]) =>
     val sentence = globalId(0)
     val begin = globalId(1)
     val gram = globalId(2)
@@ -34,15 +94,9 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
       val sentOffset = offsets(sentence)
       val lengthOff = lengthOffsets(sentence)
       val left = insideTops(sentOffset, begin, end-1, gram)
-      val right = insideTops(sentOffset, begin+1, end, gram)
-      val leftTerm = posTags(lengthOff, begin, gram)
-      val rightTerm = posTags(lengthOff, (end-1), gram)
+      val rightTerm = posTags(lengthOff, end-1, gram)
 
-      doLeftInsideTermUpdates(out, leftTerm, right, rules, gram)
       doRightInsideTermUpdates(out, left, rightTerm, rules, gram)
-      if(spanLength == 2)
-        doBothInsideTermUpdates(out, leftTerm, rightTerm, rules, gram)
-      else unit()
       insideBots(sentOffset, begin, end, gram) = out
 
     } else unit() // needed because scala is silly

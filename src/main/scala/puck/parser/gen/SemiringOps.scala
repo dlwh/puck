@@ -34,6 +34,7 @@ trait SemiringOps extends SpireOps { this: Base with Variables =>
   def rig_plus(lhs: Rep[Real], rhs: Rep[Real])(implicit pos: SourceContext): Rep[Real]
   def rig_times(lhs: Rep[Real], rhs: Rep[Real])(implicit pos: SourceContext): Rep[Real]
   def rig_logSpace(a: Rep[Real])(implicit pos: SourceContext):Rep[Float]
+  def fromLogSpace(a: Float):Real
 }
 
 trait FloatOpsExp { this: BaseExp =>
@@ -66,6 +67,7 @@ trait SemringFloatOpsExp extends SemiringOps with SpireOpsExp with FloatOpsExp {
     Log(a)(pos)
   }
 
+  def fromLogSpace(a: Float):Real = math.exp(a).toFloat
 }
 
 trait LogSpaceFloatOpsExp extends SemiringOps with SpireOpsExp with FloatOpsExp {  this: BaseExp with BaseFatExp with Variables =>
@@ -94,5 +96,7 @@ trait LogSpaceFloatOpsExp extends SemiringOps with SpireOpsExp with FloatOpsExp 
   def rig_logSpace(a: Rep[Real])(implicit pos: SourceContext):Rep[Float] = {
     a
   }
+
+  def fromLogSpace(a: Float):Real = a
 
 }
