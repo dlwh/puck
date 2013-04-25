@@ -69,7 +69,8 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
     val bothTermRules = groupedByTerminess.getOrElse(true -> true, IndexedSeq.empty).map(patchRules _)
     val nontermRules = groupedByTerminess.getOrElse(false -> false, IndexedSeq.empty).map(patchRules _)
 
-    val uByTerminess = unaries.asInstanceOf[IndexedSeq[(UnaryRule[(Int, Boolean)], Int)]].filter(p => !p._1.child._2 || (p._1.child != p._1.parent)) groupBy {case (r,i) => r.child._2}
+    // exclude identity unaries for terminals, which have a terminal parent.
+    val uByTerminess = unaries.asInstanceOf[IndexedSeq[(UnaryRule[(Int, Boolean)], Int)]].filter(p => !p._1.parent._2) groupBy {case (r,i) => r.child._2}
     def patchU(pair: (UnaryRule[(Int, Boolean)], Int)) = pair._1.map(_._1) -> pair._2
     val tUnaries = uByTerminess.getOrElse(true, IndexedSeq.empty).map(patchU _)
     val ntUnaries = uByTerminess.getOrElse(false, IndexedSeq.empty).map(patchU _)
@@ -86,11 +87,15 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   val terminalMap = Array.tabulate(numTerms)(i => grammar.labelIndex(termIndex.get(i)))
   /** Maps an indexed nonterminal symbol back to the grammar's index*/
   val nonterminalMap = Array.tabulate(numNonTerms)(i => grammar.labelIndex(nontermIndex.get(i)))
+  println("ntmap: " + nonterminalMap.zipWithIndex.mkString(", "))
 
   lazy val partitionsParent: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
   lazy val partitionsLeft: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = partitionsParent
   lazy val partitionsRight: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = partitionsParent
   lazy val partitionsSmall: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, maxPartitionLabelSize = 30, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
+  lazy val partitionsLeftTermRules: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(leftTermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
+  lazy val partitionsRightTermRules: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(rightTermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
+  lazy val partitionsBothTermRules: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(bothTermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
 
   def numRules = grammar.index.size
 

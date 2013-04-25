@@ -12,11 +12,17 @@ import trochee.basic.SpireOps
  */
 trait InliningInsideKernels[L] extends UniformLoopInsideKernels[L] { self: Base with KernelOps with RangeOps with SpireOps =>
 
+  protected def expprintf(string: String, args: Rep[_]*):Rep[Unit]
+
 
   protected def doInsideUnaryUpdates(top: Accumulator, bot: ParseCell, rulePartition: IndexedSeq[(UnaryRule[Int], Int)], rules: Rep[RuleCell], gram: Rep[Int]): Rep[Unit] = {
     for( (parent, rr) <- rulePartition.groupBy(_._1.parent)) {
       for((r,id) <- rr) {
         val botScore = bot(r.child)
+//        if(r.child == 43)
+//          expprintf("Child! %f\n", botScore)
+//        if(r.parent == grammar.root)
+//          expprintf("ChildX! %f\n", botScore)
         top.mad(parent, botScore, rules.rules(id, gram))
       }
 
@@ -40,16 +46,16 @@ trait InliningInsideKernels[L] extends UniformLoopInsideKernels[L] { self: Base 
 }
 
 trait UniformLoopInsideKernels[L] extends InsideKernels[L] { self: Base with KernelOps with RangeOps with SpireOps =>
-  protected def doLeftInsideTermUpdates(out: Accumulator, leftTerm: ParseCell, right: ParseCell, rules: Rep[RuleCell], gram: Rep[Int]): Rep[Unit] = {
-    doInsideBinaryUpdates(out, leftTerm, right, grammar.leftTermRules, rules, gram)
+  protected def doLeftInsideTermUpdates(out: Accumulator, leftTerm: ParseCell, right: ParseCell, rules: Rep[RuleCell], gram: Rep[Int], rulePartition: IndexedSeq[(BinaryRule[Int], Int)]): Rep[Unit] = {
+    doInsideBinaryUpdates(out, leftTerm, right, rulePartition, rules, gram)
   }
 
-  protected def doBothInsideTermUpdates(out: Accumulator, leftTerm: ParseCell, rightTerm: ParseCell, rules: Rep[RuleCell], gram: Rep[Int]): Rep[Unit] = {
-    doInsideBinaryUpdates(out, leftTerm, rightTerm, grammar.bothTermRules, rules, gram)
+  protected def doBothInsideTermUpdates(out: Accumulator, leftTerm: ParseCell, rightTerm: ParseCell, rules: Rep[RuleCell], gram: Rep[Int], rulePartition: IndexedSeq[(BinaryRule[Int], Int)]): Rep[Unit] = {
+    doInsideBinaryUpdates(out, leftTerm, rightTerm, rulePartition, rules, gram)
   }
 
-  protected def doRightInsideTermUpdates(out: Accumulator, left: ParseCell, rightTerm: ParseCell, rules: Rep[RuleCell], gram: Rep[Int]): Rep[Unit] = {
-    doInsideBinaryUpdates(out, left, rightTerm, grammar.rightTermRules, rules, gram)
+  protected def doRightInsideTermUpdates(out: Accumulator, left: ParseCell, rightTerm: ParseCell, rules: Rep[RuleCell], gram: Rep[Int], rulePartition: IndexedSeq[(BinaryRule[Int], Int)]): Rep[Unit] = {
+    doInsideBinaryUpdates(out, left, rightTerm, rulePartition, rules, gram)
   }
 
   protected def doNTInsideRuleUpdates(out: Accumulator, left: ParseCell, right: ParseCell, rulePartition: IndexedSeq[(BinaryRule[Int], Int)], rules: Rep[RuleCell], gram: Rep[Int]): Rep[Unit] = {

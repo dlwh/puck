@@ -76,6 +76,7 @@ trait ParserCommonExp[L] extends ParserCommon[L] with BaseFatExp with CStructExp
   final case class NTCell(chart: Rep[ParseChart], offset: Rep[Int], begin: Rep[Int], end: Rep[Int], gram: Rep[Int]) extends ParseCell
   final case class TCell(chart: Rep[TermChart], offset: Rep[Int], pos: Rep[Int], gram: Rep[Int]) extends ParseCell
 
+  final case class Printf(string: String, args: Seq[Rep[_]]) extends Def[Unit]
 
   def manifestParseChart: Manifest[ParseChart] = implicitly
   def manifestRuleCell: Manifest[RuleCell] = implicitly
@@ -85,6 +86,7 @@ trait ParserCommonExp[L] extends ParserCommon[L] with BaseFatExp with CStructExp
   trait RuleCell
   trait ParseChart
   trait TermChart
+  protected def expprintf(string: String, args: Rep[_]*):Rep[Unit] = reflectEffect(Printf(string, args))
 
 
   lazy val structy = new CStruct { val rules: Array[Array[Real]] = Array.ofDim[Real](grammar.numRules, numGrammars)}

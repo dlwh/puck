@@ -20,17 +20,17 @@ import java.{util, lang}
 import org.bridj.Pointer
 import projections.{GrammarRefinements, ProjectionIndexer}
 import puck.util.{MemBufPair, ZeroMemoryKernel}
-import puck.parser.gen.{LogSpaceFloatOpsExp, ParserGenerator}
+import puck.parser.gen.{SemiringFloatOpsExp, LogSpaceFloatOpsExp, ParserGenerator}
 
 
 class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
-                          projections: GrammarRefinements[C, L],
-                          grammar: BaseGrammar[L],
-                          lexicon: Lexicon[L, W],
-                          private var _ruleScores: Array[RuleScores],
-                          var tagScorers: Array[(IndexedSeq[W],Int,Int)=>Double],
-                          profile: Boolean = true,
-                          maxSentences: Int = 1000)(implicit val context: CLContext) extends CLInsideAlgorithm[C, L] with CLPartitionCalculator[C, L] {
+                         projections: GrammarRefinements[C, L],
+                         grammar: BaseGrammar[L],
+                         lexicon: Lexicon[L, W],
+                         private var _ruleScores: Array[RuleScores],
+                         var tagScorers: Array[(IndexedSeq[W],Int,Int)=>Double],
+                         profile: Boolean = true,
+                         maxSentences: Int = 1000)(implicit val context: CLContext) extends CLInsideAlgorithm[C, L] with CLPartitionCalculator[C, L] {
   import GPUParser._
   def ruleScores = _ruleScores
 
@@ -46,20 +46,17 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
   import structure.{grammar=>_, _ }
 
   val nrules = grammar.index.size
-  val nbinaries = ruleScores.head.binaries.length
-  val nunaries = ruleScores.head.unaries.length
-  val root = grammar.labelIndex(grammar.root)
-  val totalRules: Int = nbinaries * numGrammars + nunaries * numGrammars
+  val totalRules: Int = ruleScores.length * ruleScores(0).scores.length
   val cellSize = numGrammars * structure.numNonTerms
   val termCellSize = numGrammars * structure.numTerms
 
   val (maxCells, maxTotalLength) = GPUCharts.computeMaxSizes(context.getDevices.map(_.getGlobalMemSize).min / 6, context.getMaxMemAllocSize, structure, numGrammars)
   parserGen.define("CHART_SIZE", maxCells)
+  parserGen.define("TERM_CHART_SIZE", maxTotalLength)
 
   val coarseCellSize = (structure.numCoarseSyms+1) * numGrammars
 
   private implicit val queue = if(profile) context.createDefaultProfilingQueue() else context.createDefaultOutOfOrderQueueIfPossible()
-  private val memZero = new ZeroMemoryKernel(parserGen._zero)
 //  private val projection = new ProjectionKernel(structure, numGrammars)
 //  private val decoder = new MaxRecallKernel(structure, numGrammars)
 
@@ -76,16 +73,15 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
     _ruleScores = newRules
     val arr = new Array[Float](rules.length.toInt)
     for(g <- 0 until numGrammars) {
-      for(b <- 0 until ruleScores(g).binaries.length) {
-        arr(b * numGrammars + g) = parserGen.fromLogSpace(ruleScores(g).binaries(b).toFloat)
-      }
-      for(u <- 0 until ruleScores(g).unaries.length) {
-        arr(nbinaries * numGrammars + u * numGrammars + g) = parserGen.fromLogSpace(ruleScores(g).unaries(u).toFloat)
+      for(b <- 0 until ruleScores(g).scores.length) {
+        arr(b * numGrammars + g) = parserGen.fromLogSpace(ruleScores(g).scores(b).toFloat)
       }
     }
 
     rules.data = arr
   }
+
+  println(grammar.index.get(2448) + " " + structure.termIndex.iterator.toIndexedSeq.indexWhere(_.toString == "RB"))
 
 
   /*
@@ -152,17 +148,23 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
     assert(maxTotalLength >= totalLength, maxTotalLength -> totalLength)
 
     val posTags = new Array[Float](maxTotalLength * cellSize)
+    util.Arrays.fill(posTags, parserGen._zero)
     val fullMask = Array.fill(maxCells * structure.pruningMaskFieldSize)(-1L)
-
 
 
     for( ((s, mask), i) <- sentences.zipWithIndex) {
       offsets += offset
+      println(s)
       for(pos <- (0 until s.length);
           aa <- lexicon.tagsForWord(s(pos));
           a = termIndex(aa)) {
-        for(g <- 0 until numGrammars)
-          posTags((a * maxTotalLength + (partialLengths(i) + pos))*numGrammars + g) = parserGen.fromLogSpace(tagScorers(g)(s, pos, a).toFloat)
+        for(g <- 0 until numGrammars) {
+          val score = tagScorers(g)(s, pos, grammar.labelIndex(aa))
+          if(g == 0)
+            println(aa + " " + pos + " " + score + " " + a)
+          posTags((a * maxTotalLength + (partialLengths(i) + pos)) * numGrammars + g) = parserGen.fromLogSpace(score.toFloat)
+          assert(!score.isNaN)
+        }
       }
       for( m <- mask) {
         assert(m.bits.length == TriangularArray.arraySize(s.length + 1) * structure.pruningMaskFieldSize, m.bits.length + " " + TriangularArray.arraySize(s.length + 1))
@@ -330,6 +332,7 @@ object GPUParser {
 //      println(inst.tree.render(inst.words, false))
 //    }
     println("Done: " + (System.currentTimeMillis() - timeIn))
+    println(kern.structure.nontermIndex.zipWithIndex)
 
     val timeX = System.currentTimeMillis()
     val marg = train.map(_.words).map { s =>
@@ -368,8 +371,6 @@ object GPUParser {
     val rscores = RuleScores.fromRefinedGrammar(grammar)
     val grammars = new Array[RuleScores](numGrammars)
     util.Arrays.fill(grammars.asInstanceOf[Array[AnyRef]], rscores)
-    // segfaults java. your guess is as good as mine.
-//    val grammars2 = Array.fill(numGrammars)(RuleScores.fromRefinedGrammar(grammar, numBits))
     val scorers = Array.fill(numGrammars){ (w: IndexedSeq[W], pos: Int, label: Int) =>
       grammar.anchor(w).scoreSpan(pos, pos+1, label, 0)
     }

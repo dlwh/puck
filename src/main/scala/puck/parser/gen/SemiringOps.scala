@@ -44,7 +44,7 @@ trait FloatOpsExp { this: BaseExp =>
 }
 
 
-trait SemringFloatOpsExp extends SemiringOps with SpireOpsExp with FloatOpsExp {  this: BaseExp with BaseFatExp with Variables =>
+trait SemiringFloatOpsExp extends SemiringOps with SpireOpsExp with FloatOpsExp {  this: BaseExp with BaseFatExp with Variables =>
   type Real = Float
   def manifestReal = manifest[Real]
   def ttReal = implicitly
@@ -81,7 +81,7 @@ trait LogSpaceFloatOpsExp extends SemiringOps with SpireOpsExp with FloatOpsExp 
   def _one = 0.0f
 
   def mad(a: Rep[Real], b: Rep[Real], c: Rep[Real])(implicit pos: SourceContext):Rep[Real] = {
-    rig_plus(a, rig_times(b,c))(pos)
+    rig_plus(rig_times(a,b), c)(pos)
   }
 
 

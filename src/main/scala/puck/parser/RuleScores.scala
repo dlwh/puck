@@ -3,28 +3,21 @@ package puck.parser
 import epic.parser._
 import epic.trees.BinaryRule
 
-case class RuleScores(binaries: Array[Double], unaries: Array[Double])
+case class RuleScores(scores: Array[Double])
 
 object RuleScores {
   def zeros[L](grammar: BaseGrammar[L]) = {
-    val (bin, un) = grammar.index.toIndexedSeq.zipWithIndex.partition(_._1.isInstanceOf[BinaryRule[_]])
-    val binaries = new Array[Double](bin.length)
-    val unaries = new Array[Double](un.length)
+    val binaries = new Array[Double](grammar.index.size)
 
-    RuleScores(binaries, unaries)
+    RuleScores(binaries)
   }
 
   def fromRefinedGrammar[L, W](grammar: SimpleRefinedGrammar[L, _, W]) = {
-    val (bin, un) = grammar.grammar.index.toIndexedSeq.zipWithIndex.partition(_._1.isInstanceOf[BinaryRule[_]])
-    val binaries = new Array[Double](bin.length)
-    val unaries = new Array[Double](un.length)
-    for( (b, i) <- bin) {
+    val binaries = new Array[Double](grammar.index.size)
+    for( i <- 0 until grammar.index.size) {
       binaries(i) = grammar.ruleScore(i, 0)
     }
-    for( (b, i) <- un) {
-      unaries(i - bin.length) = grammar.ruleScore(i, 0)
-    }
 
-    RuleScores(binaries, unaries)
+    RuleScores(binaries)
   }
 }

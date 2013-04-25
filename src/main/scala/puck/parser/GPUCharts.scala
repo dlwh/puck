@@ -49,7 +49,8 @@ case class GPUCharts[C, L](top: MemBufPair[Float],
     def top(begin: Int, end: Int, grammar: Int, label: Int):Double =  {
       val score = top(index(begin, end, grammar, label))
       //      java.lang.Math.scalb(score, -10 * ((end-begin)-1))
-      math.log(score) - Scaling.SCALE_FACTOR * ((end-begin)-1) * math.log(2)
+      score
+//      math.log(score) - Scaling.SCALE_FACTOR * ((end-begin)-1) * math.log(2)
     }
 
 
@@ -57,7 +58,8 @@ case class GPUCharts[C, L](top: MemBufPair[Float],
       val score = bot(index(begin, end, grammar, label))
       //      java.lang.Math.scalb(score, -10 * ((end-begin)-1))
       //      math.log(score)
-      math.log(score) - Scaling.SCALE_FACTOR * ((end-begin)-1) * math.log(2)
+      score
+//      math.log(score) - Scaling.SCALE_FACTOR * ((end-begin)-1) * math.log(2)
     }
 
     def tag(begin: Int, grammar: Int, label: Int) = {
