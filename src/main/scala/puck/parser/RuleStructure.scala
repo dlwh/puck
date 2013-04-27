@@ -70,15 +70,16 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
     val nontermRules = groupedByTerminess.getOrElse(false -> false, IndexedSeq.empty).map(patchRules _)
 
     // exclude identity unaries for terminals, which have a terminal parent.
-    val uByTerminess = unaries.asInstanceOf[IndexedSeq[(UnaryRule[(Int, Boolean)], Int)]].filter(p => !p._1.parent._2) groupBy {case (r,i) => r.child._2}
+    val uByTerminess = unaries.asInstanceOf[IndexedSeq[(UnaryRule[(Int, Boolean)], Int)]].filter{case (r,_) => !r.parent._2} groupBy {case (r,i) => r.child._2}
     def patchU(pair: (UnaryRule[(Int, Boolean)], Int)) = pair._1.map(_._1) -> pair._2
     val tUnaries = uByTerminess.getOrElse(true, IndexedSeq.empty).map(patchU _)
     val ntUnaries = uByTerminess.getOrElse(false, IndexedSeq.empty).map(patchU _)
-    val tIdentUnaries = unaries.collect { case pair@(UnaryRule(p, c, _), _) if p == c => pair }
+    val tIdentUnaries = unaries.collect { case pair@(UnaryRule(p, c, _), _) if p == c && p._2 => pair }
 
     (symIndex, nontermIndex, termIndex, leftTermRules,
       rightTermRules, nontermRules, bothTermRules, ntUnaries, tUnaries, tIdentUnaries, nontermIndex(root))
   }
+
 
   def numTerms = termIndex.size
   def numNonTerms = nontermIndex.size
@@ -87,7 +88,6 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   val terminalMap = Array.tabulate(numTerms)(i => grammar.labelIndex(termIndex.get(i)))
   /** Maps an indexed nonterminal symbol back to the grammar's index*/
   val nonterminalMap = Array.tabulate(numNonTerms)(i => grammar.labelIndex(nontermIndex.get(i)))
-  println("ntmap: " + nonterminalMap.zipWithIndex.mkString(", "))
 
   lazy val partitionsParent: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
   lazy val partitionsLeft: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = partitionsParent

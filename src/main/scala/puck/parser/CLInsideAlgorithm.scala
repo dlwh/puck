@@ -21,22 +21,18 @@ trait CLInsideAlgorithm[C, L] {
                  lengthOffsets: CLBuffer[Int],
                  rules: CLBuffer[Float],
                  events: CLEvent*)(implicit queue: CLQueue) = synchronized {
-     binaries.foreach(_.setArgs(inside.bot.dev, inside.top.dev, offsets, lengths, Integer.valueOf(1),  rules))
-     termBinaries.foreach(_.setArgs(inside.bot.dev, inside.top.dev, inside.tags.dev, offsets, lengths, lengthOffsets, Integer.valueOf(1), rules))
-     bothTermBinaries.map(_.setArgs(inside.bot.dev, inside.tags.dev, offsets, lengths, lengthOffsets, rules))
-     unaries.setArgs(inside.bot.dev, inside.top.dev, offsets, lengths, Integer.valueOf(2), rules)
-     termUnaries.setArgs(inside.tags.dev, inside.top.dev, offsets, lengths, lengthOffsets, rules)
-     val iu, ib, it, hooks = new ArrayBuffer[CLEvent]()
+    binaries.foreach(_.setArgs(inside.bot.dev, inside.top.dev, offsets, lengths, Integer.valueOf(1),  rules))
+    unaries.setArgs(inside.bot.dev, inside.top.dev, offsets, lengths, Integer.valueOf(2), rules)
+    leftTermBinaries.foreach(_.setArgs(inside.bot.dev, inside.top.dev, inside.tags.dev, offsets, lengths, lengthOffsets, Integer.valueOf(1), rules))
+    rightTermBinaries.foreach(_.setArgs(inside.bot.dev, inside.top.dev, inside.tags.dev, offsets, lengths, lengthOffsets, Integer.valueOf(1), rules))
+    bothTermBinaries.map(_.setArgs(inside.bot.dev, inside.tags.dev, offsets, lengths, lengthOffsets, rules))
+    termUnaries.setArgs(inside.tags.dev, inside.top.dev, offsets, lengths, lengthOffsets, rules)
+    val iu, ib, it, hooks = new ArrayBuffer[CLEvent]()
 
     var lastU:CLEvent = null
 
-    println("preu")
-
     lastU = termUnaries.enqueueNDRange(queue, Array(numSentences, maxLength, numGrammars), Array(1, 1, numGrammars), events:_*)
     iu += lastU
-    println("postu")
-
-//    println(bothTermBinaries.head.getProgram.getSource)
 
     val termBs = bothTermBinaries.map(_.enqueueNDRange(queue, Array(numSentences, maxLength, numGrammars), Array(1, 1, numGrammars), lastU))
     queue.finish()
@@ -47,19 +43,22 @@ trait CLInsideAlgorithm[C, L] {
        val b = binaries.map(_.enqueueNDRange(queue, Array(numSentences, maxLength + 1 - len, numGrammars), Array(1, 1, numGrammars), lastU))
        ib ++= b
 
-       termBinaries.foreach(_.setArg(6, len))
-       val t = termBinaries.map(_.enqueueNDRange(queue, Array(numSentences, maxLength + 1 - len, numGrammars), Array(1, 1, numGrammars), b:_*))
-       it ++= t
+       leftTermBinaries.foreach(_.setArg(6, len))
+       rightTermBinaries.foreach(_.setArg(6, len))
+       val t = (leftTermBinaries ++ rightTermBinaries).foldLeft(null:CLEvent){(ev, k) =>
+         if(ev != null) {
+          it += ev
+         }
+         k.enqueueNDRange(queue, Array(numSentences, maxLength + 1 - len, numGrammars), Array(1, 1, numGrammars), (ev +: b):_*)
+       }
 
-      queue.finish()
-      println("unaries")
 
        unaries.setArg(4, len)
-       lastU = unaries.enqueueNDRange(queue, Array(numSentences, maxLength + 1 - len, numGrammars), Array(1, 1, numGrammars))//, t:_*)
+       lastU = unaries.enqueueNDRange(queue, Array(numSentences, maxLength + 1 - len, numGrammars), Array(1, 1, numGrammars), t)
        iu += lastU
-      println("binaries")
 
      }
+
 
      if(queue.getProperties.contains(CLDevice.QueueProperties.ProfilingEnable)) {
        queue.finish()
@@ -75,8 +74,9 @@ trait CLInsideAlgorithm[C, L] {
    }
 
   private lazy val binaries = Array.tabulate(partitionsParent.length){i =>codegen.mkKernel(insideNonterms(i, partitionsParent(i)))}
-  private lazy val termBinaries = insideTermBinaries.map{x => codegen.mkKernel(x)}
+  private lazy val leftTermBinaries = insideLeftTermBinaries.map{x => codegen.mkKernel(x)}
+  private lazy val rightTermBinaries = insideRightTermBinaries.map{x => codegen.mkKernel(x)}
   private lazy val bothTermBinaries = insideBothTerms.map(codegen.mkKernel _ )
-  private lazy val unaries = {  codegen.mkKernel(insideUnaries)}
-  private lazy val termUnaries = {println(codegen.emitKernelSource(insideTermUnaries));codegen.mkKernel(insideTermUnaries)}
+  private lazy val unaries = { codegen.mkKernel(insideUnaries)}
+  private lazy val termUnaries = {codegen.mkKernel(insideTermUnaries)}
 }

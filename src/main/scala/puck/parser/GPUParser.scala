@@ -21,6 +21,7 @@ import org.bridj.Pointer
 import projections.{GrammarRefinements, ProjectionIndexer}
 import puck.util.{MemBufPair, ZeroMemoryKernel}
 import puck.parser.gen.{SemiringFloatOpsExp, LogSpaceFloatOpsExp, ParserGenerator}
+import epic.sequences.CRF.TransitionVisitor
 
 
 class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
@@ -80,9 +81,6 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
 
     rules.data = arr
   }
-
-  println(grammar.index.get(2448) + " " + structure.termIndex.iterator.toIndexedSeq.indexWhere(_.toString == "RB"))
-
 
   /*
   def parse(sentences: IndexedSeq[IndexedSeq[W]], masks: IndexedSeq[PruningMask] = null):IndexedSeq[BinarizedTree[C]] = synchronized {
@@ -154,14 +152,11 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
 
     for( ((s, mask), i) <- sentences.zipWithIndex) {
       offsets += offset
-      println(s)
       for(pos <- (0 until s.length);
           aa <- lexicon.tagsForWord(s(pos));
           a = termIndex(aa)) {
         for(g <- 0 until numGrammars) {
           val score = tagScorers(g)(s, pos, grammar.labelIndex(aa))
-          if(g == 0)
-            println(aa + " " + pos + " " + score + " " + a)
           posTags((a * maxTotalLength + (partialLengths(i) + pos)) * numGrammars + g) = parserGen.fromLogSpace(score.toFloat)
           assert(!score.isNaN)
         }
@@ -261,8 +256,10 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
     val maxLength = lengths.max
     offPair.data = offsets
     lenPair.data = lengths
-    offLenPair.data = lengths
+    offLenPair.data = lengthTotals
 
+    inside.setTo(parserGen._zero)
+    queue.finish()
     inside.tags.data = batch.posTags
 
 
@@ -332,7 +329,6 @@ object GPUParser {
 //      println(inst.tree.render(inst.words, false))
 //    }
     println("Done: " + (System.currentTimeMillis() - timeIn))
-    println(kern.structure.nontermIndex.zipWithIndex)
 
     val timeX = System.currentTimeMillis()
     val marg = train.map(_.words).map { s =>
@@ -365,8 +361,6 @@ object GPUParser {
       cpuPlatform.createContext(new java.util.HashMap(), cpuPlatform.listCPUDevices(true):_*)
     }
     println(context)
-
-    println(grammar.refinedGrammar.labelIndex)
 
     val rscores = RuleScores.fromRefinedGrammar(grammar)
     val grammars = new Array[RuleScores](numGrammars)

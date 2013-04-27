@@ -33,7 +33,7 @@ class MemBufPair[T](val dev: CLBuffer[T], val ptr: Pointer[T])(implicit queue: C
       case Manifest.Char => ptr.setChars(arr.asInstanceOf[Array[Char]])
       case _ => ptr.setArray(arr)
     }
-    dev.write(queue, ptr, true)
+    dev.write(queue, 0, dev.getElementCount, ptr, true)
   }
 
   def release() {

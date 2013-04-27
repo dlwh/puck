@@ -25,19 +25,23 @@ trait OpenCLParserGen[L] extends OpenCLKernelCodegen with OpenCLKernelGenVariabl
   override def emitNode(sym: Sym[Any], rhs: Def[Any]) {
     rhs match {
       case Mad(a,b,c) =>
-        cacheAndEmit(sym, s"mad(${quote(a)}, ${quote(b)}, ${quote(c)})")
+        emitValDef(sym, s"mad(${quote(a)}, ${quote(b)}, ${quote(c)})")
       case LogAdd(a, b) =>
-        cacheAndEmit(sym, s"${quote(a)} == -INFINITY ? ${quote(b)} : (${quote(a)} + log(1.0f + exp(${quote(b)} - ${quote(a)})))")
+        emitValDef(sym, s"${quote(a)} == -INFINITY ? ${quote(b)} : (${quote(a)} + log(1.0f + exp(${quote(b)} - ${quote(a)})))")
       case Log(a) =>
         cacheAndEmit(sym, s"log(${quote(a)})")
       case app@CellApply(NTCell(cell, off, begin, end, gram), symsym) =>
         cacheAndEmit(addPos(sym, app), s"${quote(cell)}[(${quote(symsym)} * CHART_SIZE + ${quote(off)} + TRIANGULAR_INDEX(${quote(begin)}, ${quote(end)}))*NUM_GRAMMARS + ${quote(gram)}]")
       case app@CellApply(TCell(cell, off, begin, gram), symsym) =>
-        cacheAndEmit(addPos(sym, app), s"${quote(cell)}[(${quote(symsym)} * TERM_CHART_SIZE + ${quote(off)} + ${quote(begin)})*NUM_GRAMMARS + ${quote(gram)}]")
+        cacheAndEmit(addPos(sym, app), s"""${quote(cell)}[(${quote(symsym)} * TERM_CHART_SIZE + ${quote(off)} + ${quote(begin)})*NUM_GRAMMARS + ${quote(gram)}]""")
       case app@CellUpdate(NTCell(cell, off, begin, end, gram), symsym, value) =>
-        cacheAndEmit(sym, s""" ${quote(cell)}[(${quote(symsym)} * CHART_SIZE + ${quote(off)} + TRIANGULAR_INDEX(${quote(begin)}, ${quote(end)}))*NUM_GRAMMARS + ${quote(gram)}] = ${quote(value)}; if (${quote(value)} != -INFINITY && ${quote(begin)} == ${quote(end)}-1) printf("%d %d %d %f\\n",${quote(begin)}, ${quote(end)}, ${quote(symsym)}, ${quote(value)})""")
+        emitValDef(sym, s""" ${quote(cell)}[(${quote(symsym)} * CHART_SIZE + ${quote(off)} + TRIANGULAR_INDEX(${quote(begin)}, ${quote(end)}))*NUM_GRAMMARS + ${quote(gram)}] = ${quote(value)}""")
+      case BooleanNegate(b) => emitValDef(sym, "!" + quote(b))
+      case BooleanAnd(lhs,rhs) => emitValDef(sym, quote(lhs) + " && " + quote(rhs))
+      case BooleanOr(lhs,rhs) => emitValDef(sym, quote(lhs) + " || " + quote(rhs))
       case Printf(str, args) =>
-        cacheAndEmit(sym, s"""printf(${quote(str)}, ${args.map(quote _).mkString(", ")});""")
+        val call = s"""printf(${(quote(str) +: args.map(quote _)).mkString(", ")});"""
+        cacheAndEmit(sym, call)
       case app@CellUpdate(TCell(cell, off, begin, gram), symsym, value) =>
         cacheAndEmit(sym, s"${quote(cell)}[(${quote(symsym)} * TERM_CHART_SIZE + ${quote(off)} + ${quote(begin)})*NUM_GRAMMARS + ${quote(gram)}] = ${quote(value)}")
       //case WriteOutput(NTCell(cell, off, begin, end, gram), acc) =>

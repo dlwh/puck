@@ -12,17 +12,12 @@ import trochee.basic.SpireOps
  */
 trait InliningInsideKernels[L] extends UniformLoopInsideKernels[L] { self: Base with KernelOps with RangeOps with SpireOps =>
 
-  protected def expprintf(string: String, args: Rep[_]*):Rep[Unit]
 
 
   protected def doInsideUnaryUpdates(top: Accumulator, bot: ParseCell, rulePartition: IndexedSeq[(UnaryRule[Int], Int)], rules: Rep[RuleCell], gram: Rep[Int]): Rep[Unit] = {
     for( (parent, rr) <- rulePartition.groupBy(_._1.parent)) {
       for((r,id) <- rr) {
         val botScore = bot(r.child)
-//        if(r.child == 43)
-//          expprintf("Child! %f\n", botScore)
-//        if(r.parent == grammar.root)
-//          expprintf("ChildX! %f\n", botScore)
         top.mad(parent, botScore, rules.rules(id, gram))
       }
 
@@ -72,4 +67,6 @@ trait UniformLoopInsideKernels[L] extends InsideKernels[L] { self: Base with Ker
 
   protected def doInsideBinaryUpdates(out: Accumulator, left: ParseCell, right: ParseCell, rulePartition: IndexedSeq[(BinaryRule[Int], Int)], rules: Rep[RuleCell], gram: Rep[Int]): Rep[Unit]
   protected def doInsideUnaryUpdates(top: Accumulator, bot: ParseCell, rulePartition: IndexedSeq[(UnaryRule[Int], Int)], rules: Rep[RuleCell], gram: Rep[Int]): Rep[Unit]
+
+
 }

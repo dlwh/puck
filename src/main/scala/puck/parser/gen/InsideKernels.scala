@@ -6,7 +6,7 @@ import spire.algebra._
 import spire.implicits._
 import spire.syntax._
 import spire.math._
-import epic.trees.BinaryRule
+import epic.trees.{AnnotatedLabel, BinaryRule}
 
 /**
  *
@@ -14,10 +14,8 @@ import epic.trees.BinaryRule
  */
 trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with RangeOps =>
 
-  def insideTermBinaries:IndexedSeq[Kernel] = (
-    (grammar.partitionsLeftTermRules.zipWithIndex map { case (p, i) => insideLeftTerms(i, p)})
-      ++ (grammar.partitionsRightTermRules.zipWithIndex map { case (p, i) => insideRightTerms(i, p)})
-    )
+  lazy val insideLeftTermBinaries =  (grammar.partitionsLeftTermRules.zipWithIndex map { case (p, i) => insideLeftTerms(i, p)})
+  lazy val insideRightTermBinaries =  (grammar.partitionsRightTermRules.zipWithIndex map { case (p, i) => insideRightTerms(i, p)})
 
   def insideBothTerms:IndexedSeq[Kernel] = grammar.partitionsBothTermRules.zipWithIndex map {case (p, i) => _insideBothTerms(i, p)}
 
@@ -42,9 +40,10 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
       val lengthOff = lengthOffsets(sentence)
       val leftTerm = posTags(lengthOff, begin, gram)
       val rightTerm = posTags(lengthOff, (end-1), gram)
+
       doBothInsideTermUpdates(out, leftTerm, rightTerm, rules, gram, partition)
 
-      insideBots(sentOffset, begin, end, gram) = out
+      insideBots(sentOffset, begin, end, gram) += out
     } else unit() // needed because scala is silly
   }
 
@@ -73,7 +72,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
       val leftTerm = posTags(lengthOff, begin, gram)
 
       doLeftInsideTermUpdates(out, leftTerm, right, rules, gram, partition)
-      insideBots(sentOffset, begin, end, gram) = out
+      insideBots(sentOffset, begin, end, gram) += out
 
     } else unit() // needed because scala is silly
   }
@@ -101,7 +100,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
       val rightTerm = posTags(lengthOff, end-1, gram)
 
       doRightInsideTermUpdates(out, left, rightTerm, rules, gram, partition)
-      insideBots(sentOffset, begin, end, gram) = out
+      insideBots(sentOffset, begin, end, gram) += out
 
     } else unit() // needed because scala is silly
   }
@@ -150,11 +149,13 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
     val length = lengths(sentence)
 
     if (end <= length) {
+
       val sentOffset = offsets(sentence)
       val out = accumulatorForRules(grammar.unaryRules)
       val bot = insideBots(sentOffset, begin, end, gram)
+
       doInsideUnaries(out, bot, rules, gram)
-      insideTops(sentOffset, begin, end, gram) = out
+      insideTops(sentOffset, begin, end, gram) += out
     } else unit() // needed because scala is silly
   }
 
@@ -204,7 +205,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
       val end = begin + spanLength
       val length = lengths(sentence)
 
-      if (end <= length) {
+      if ( end <= length) {
         val out = accumulatorForRules(rulePartition)
 
         val sentOffset = offsets(sentence)
@@ -217,7 +218,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
           unit()
         }
 
-        insideBots(sentOffset, begin, end, gram) = out
+        insideBots(sentOffset, begin, end, gram) += out
       } else unit() // needed because scala is silly
     }
   }
