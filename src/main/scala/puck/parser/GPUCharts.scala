@@ -63,7 +63,7 @@ case class GPUCharts[C, L](top: MemBufPair[Float],
     }
 
     def tag(begin: Int, grammar: Int, label: Int) = {
-      tags(label  * maxCells +(offset + begin)) * numGrammars + grammar
+      tags(label  * maxTotalLength +(lengthOff + begin)) * numGrammars + grammar
     }
 
     private def index(begin: Int, end: Int, grammar: Int, label: Int): Int = {

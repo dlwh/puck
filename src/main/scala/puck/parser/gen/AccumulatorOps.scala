@@ -26,12 +26,12 @@ trait AccumulatorOps extends SemiringOps  { self : Base with Variables =>
 
 
 trait AccumulatorOpsExp extends AccumulatorOps with VariablesExp { self: BaseExp with Variables with Effects =>
-  case class Accumulator(ids: Set[Int]) extends AccumulatorBase {
-    val vars = ids.toArray.map{ i => i -> var_new(zero)}.toMap
+  case class Accumulator(ids: Set[Int])(implicit pos: SourceContext) extends AccumulatorBase {
+    val vars = ids.toArray.map{ i => i -> var_new(zero)(implicitly, pos)}.toMap
     def apply(sym: Int) = vars(sym)
     def update(sym: Int, score: Rep[Real]) = {self.__assign(apply(sym), score) }
     def mad(sym: Int, score1: Rep[Real], score2: Rep[Real]): Rep[Unit] = update(sym, self.mad(score1, score2, apply(sym)))
   }
 
-  def accumulator(ids: Set[Int])(implicit pos: SourceContext) = new Accumulator(ids)
+  def accumulator(ids: Set[Int])(implicit pos: SourceContext) = new Accumulator(ids)(pos)
 }

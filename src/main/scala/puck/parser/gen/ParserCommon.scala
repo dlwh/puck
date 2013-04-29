@@ -14,7 +14,7 @@ import scala.virtualization.lms.util.OverloadHack
 import scala.collection.mutable.ArrayBuffer
 import scala.virtualization.lms.internal.Effects
 import puck.parser.RuleStructure
-import epic.trees.Rule
+import epic.trees.{BinaryRule, Rule}
 
 /**
  * 
@@ -37,10 +37,12 @@ trait ParserCommon[L] extends ExtraBase with AccumulatorOps with SpireOps with O
 
   type ParseCell
   def infix_apply(cell: ParseCell, sym: Rep[Int])(implicit pos: SourceContext):Rep[Real]
+  def infix_update(cell: ParseCell, sym: Rep[Int], v: Rep[Real])(implicit pos: SourceContext):Rep[Unit]
   def infix_+=(cell: ParseCell, acc: Accumulator)(implicit pos: SourceContext):Rep[Unit]
 
   implicit class RichParseCell(cell: ParseCell) {
     def apply(sym: Rep[Int])(implicit pos: SourceContext) = infix_apply(cell, sym)(pos)
+    def update(sym: Rep[Int], v: Rep[Real])(implicit pos: SourceContext) = infix_update(cell, sym, v)(pos)
     def +=(acc: Accumulator)(implicit pos: SourceContext) = infix_+=(cell, acc)(pos)
   }
 
@@ -67,6 +69,9 @@ trait ParserCommon[L] extends ExtraBase with AccumulatorOps with SpireOps with O
 
   def grammar: RuleStructure[_, L]
   def accumulatorForRules(rules: IndexedSeq[(Rule[Int], Int)]) = accumulator(rules.map(_._1.parent).toSet)
+  def accumulatorForChildren(rules: IndexedSeq[(Rule[Int], Int)]) = accumulator(rules.flatMap(_._1.children).toSet)
+  def accumulatorForRightChildren(rules: IndexedSeq[(BinaryRule[Int], Int)]) = accumulator(rules.map(_._1.right).toSet)
+  def accumulatorForLeftChildren(rules: IndexedSeq[(BinaryRule[Int], Int)]) = accumulator(rules.map(_._1.left).toSet)
 
   def numSyms: Int = grammar.numSyms
 
@@ -130,6 +135,10 @@ trait ParserCommonExp[L] extends ParserCommon[L] with BaseFatExp with CStructExp
     for((id, vr) <- acc.vars) {
       reflectWrite(chart)(CellUpdate(TCell(chart, offset, pos, gram), id, ReadVar(vr)))
     }
+  }
+
+  def infix_update(chart: ParseCell, sym: Rep[Int], v: Rep[Real])(implicit pos: SourceContext): Rep[Unit] = {
+    reflectWrite(chart.chart)(CellUpdate(chart, sym, v))
   }
 
   def infix_+=(chart: ParseCell, acc: Accumulator)(implicit pos: SourceContext): Rep[Unit] = {//reflectEffect(WriteOutput(TCell(chart, offset, pos, gram), acc), infix_andAlso(Simple(), Write(List(chart.asInstanceOf[Sym[Any]])) ))

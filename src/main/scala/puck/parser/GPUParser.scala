@@ -31,7 +31,7 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
                          private var _ruleScores: Array[RuleScores],
                          var tagScorers: Array[(IndexedSeq[W],Int,Int)=>Double],
                          profile: Boolean = true,
-                         maxSentences: Int = 1000)(implicit val context: CLContext) extends CLInsideAlgorithm[C, L] with CLPartitionCalculator[C, L] {
+                         maxSentences: Int = 1000)(implicit val context: CLContext) extends CLInsideAlgorithm[C, L] with CLOutsideAlgorithm[C, L] with CLPartitionCalculator[C, L] {
   import GPUParser._
   def ruleScores = _ruleScores
 
@@ -107,7 +107,19 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
   }
 
   private def computePartitions(batch: Batch, events: CLEvent*):Array[Double] = {
-    this.partitions(inside.top.dev, offPair.dev, lenPair.dev, batch.numSentences, events: _*).map(_.toDouble)
+    val parts = this.partitions(inside.top.dev, offPair.dev, lenPair.dev, batch.numSentences, events: _*).map(_.toDouble)
+    import batch._
+    val outsideCharts = outside.scoresForBatch(offsets, lengthTotals)
+    val insideCharts = inside.scoresForBatch(offsets, lengthTotals)
+    for( (s, p) <- 0 until numSentences zip parts) {
+      val ys = for(l <- 0 until nontermIndex.size) yield (outsideCharts(s).bot(0, lengths(s), 0, l) + insideCharts(s).bot(0, lengths(s), 0, l)).toDouble
+      println( s"$s $p ${breeze.numerics.logSum(ys)}")
+    }
+//    for( (s, p) <- 0 until numSentences zip parts; i <- 0 until lengths(s)) {
+//      val ys = for(l <- 0 until termIndex.size) yield (outsideCharts(s).tag(i, 0, l) + insideCharts(s).tag(i, 0, l)).toDouble
+//      println( (s,i) + " " + p + " " + breeze.numerics.logSum(ys))
+//    }
+    parts
   }
 
   private def doGetPartitions(batch: Batch):Array[Double] = {
@@ -135,14 +147,15 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
 
     var offset = 0
 
-    val partialLengths = new Array[Int](lengths.size)
+    val partialLengths = new Array[Int](lengths.size+1)
     var totalLength = 0
     var i = 0
-    while(i < partialLengths.length) {
+    while(i < lengths.length) {
       partialLengths(i) = totalLength
       totalLength += lengths(i)
       i += 1
     }
+    partialLengths(partialLengths.size-1) = totalLength
     assert(maxTotalLength >= totalLength, maxTotalLength -> totalLength)
 
     val posTags = new Array[Float](maxTotalLength * cellSize)
@@ -259,12 +272,14 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
     offLenPair.data = lengthTotals
 
     inside.setTo(parserGen._zero)
+    outside.setTo(parserGen._zero)
     queue.finish()
     inside.tags.data = batch.posTags
 
 
     var lastU: CLEvent = insidePass(numSentences, inside, offPair.dev, lenPair.dev, maxLength, offLenPair.dev, rules.dev)
-//    lastU = outsideKernel.outsidePass(numSentences, outside, inside, offPair.dev, lenPair.dev, offLenPair.dev,  maxLength, rules.dev, lastU)
+    lastU = outsidePass(numSentences, outside, inside, offPair.dev, lenPair.dev, offLenPair.dev,  maxLength, rules.dev, lastU)
+
 
 //    if(queue.getProperties.contains(CLDevice.QueueProperties.ProfilingEnable)) {
 //      queue.finish()

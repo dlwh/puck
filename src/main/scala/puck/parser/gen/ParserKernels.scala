@@ -20,7 +20,7 @@ abstract class ParserKernels[L] extends InsideKernels[L] with KernelOps with Ran
 
 }
 
-abstract class ParserGenerator[L](val grammar: RuleStructure[_, L], val numGrammars: Int = 1) extends ParserKernels[L] with InliningInsideKernels[L] with ParserCommonExp[L] with KernelOpsExp with RangeOpsExp with IfThenElseExp with SpireOpsExp with FloatOpsExp { self =>
+abstract class ParserGenerator[L](val grammar: RuleStructure[_, L], val numGrammars: Int = 1) extends ParserKernels[L] with InliningInsideKernels[L] with InliningOutsideKernels[L] with ParserCommonExp[L] with KernelOpsExp with RangeOpsExp with IfThenElseExp with SpireOpsExp with FloatOpsExp { self =>
   val codegen = new OpenCLKernelCodegen with OpenCLKernelGenArrayOps with OpenCLParserGen[L] with OpenCLKernelGenRangeOps {
     val IR: self.type = self
   }

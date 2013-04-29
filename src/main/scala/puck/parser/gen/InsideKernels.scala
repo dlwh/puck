@@ -19,7 +19,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
 
   def insideBothTerms:IndexedSeq[Kernel] = grammar.partitionsBothTermRules.zipWithIndex map {case (p, i) => _insideBothTerms(i, p)}
 
-  def _insideBothTerms(id: Int, partition: IndexedSeq[(BinaryRule[Int], Int)]): Kernel =  kernel6("inside_both_term_binaries_"+id){ (insideBots: Rep[ParseChart with Global],
+  def _insideBothTerms(id: Int, partition: IndexedSeq[(BinaryRule[Int], Int)]): Kernel =  kernel("inside_both_term_binaries_"+id, { (insideBots: Rep[ParseChart with Global],
                                                                                                                                     posTags: Rep[TermChart with Global],
                                                                                                                                     offsets: Rep[Array[Int] with Global],
                                                                                                                                     lengths: Rep[Array[Int] with Global],
@@ -45,11 +45,11 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
 
       insideBots(sentOffset, begin, end, gram) += out
     } else unit() // needed because scala is silly
-  }
+  })
 
 
 
-  def insideLeftTerms(id: Int, partition: IndexedSeq[(BinaryRule[Int], Int)]) = kernel8("inside_left_term_binaries_" + id){ (insideBots: Rep[ParseChart with Global],
+  def insideLeftTerms(id: Int, partition: IndexedSeq[(BinaryRule[Int], Int)]) = kernel("inside_left_term_binaries_" + id, { (insideBots: Rep[ParseChart with Global],
                                                                                                                              insideTops: Rep[ParseChart with Global],
                                                                                                                              posTags: Rep[TermChart with Global],
                                                                                                                              offsets: Rep[Array[Int] with Global],
@@ -75,9 +75,9 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
       insideBots(sentOffset, begin, end, gram) += out
 
     } else unit() // needed because scala is silly
-  }
+  })
 
-  def insideRightTerms(id: Int, partition: IndexedSeq[(BinaryRule[Int], Int)]) = kernel8("inside_right_term_binaries_"+id){ (insideBots: Rep[ParseChart with Global],
+  def insideRightTerms(id: Int, partition: IndexedSeq[(BinaryRule[Int], Int)]) = kernel("inside_right_term_binaries_"+id, { (insideBots: Rep[ParseChart with Global],
                                                                                                                              insideTops: Rep[ParseChart with Global],
                                                                                                                              posTags: Rep[TermChart with Global],
                                                                                                                              offsets: Rep[Array[Int] with Global],
@@ -103,7 +103,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
       insideBots(sentOffset, begin, end, gram) += out
 
     } else unit() // needed because scala is silly
-  }
+  })
 
 
   protected def doLeftInsideTermUpdates(out: Accumulator,
@@ -136,7 +136,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
                                       gram: Rep[Int]):Rep[Unit]
 
 
-  def insideUnaries = kernel6("inside_unaries"){ (insideBots: Rep[ParseChart with Global],
+  def insideUnaries = kernel("inside_unaries", { (insideBots: Rep[ParseChart with Global],
                                                   insideTops: Rep[ParseChart with Global],
                                                   offsets: Rep[Array[Int] with Global],
                                                   lengths: Rep[Array[Int] with Global],
@@ -157,9 +157,9 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
       doInsideUnaries(out, bot, rules, gram)
       insideTops(sentOffset, begin, end, gram) += out
     } else unit() // needed because scala is silly
-  }
+  })
 
-  def insideTermUnaries = kernel6("inside_term_unaries"){ (insidePos: Rep[TermChart with Global],
+  def insideTermUnaries = kernel("inside_term_unaries", { (insidePos: Rep[TermChart with Global],
                                                            insideTops: Rep[ParseChart with Global],
                                                            offsets: Rep[Array[Int] with Global],
                                                            lengths: Rep[Array[Int] with Global],
@@ -179,7 +179,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
       doInsideTermUnaries(out, bot, rules, gram)
       insideTops(sentOffset, begin, end, gram) = out
     } else unit() // needed because scala is silly
-  }
+  })
 
   protected def doInsideUnaries(top: Accumulator,
                                 bot: ParseCell,
@@ -193,7 +193,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
 
 
   def insideNonterms(partitionId: Int, rulePartition: IndexedSeq[(BinaryRule[Int], Int)]) = {
-    kernel6("inside_nonterms_"+partitionId){ (insideBots: Rep[ParseChart with Global],
+    kernel("inside_nonterms_"+partitionId, { (insideBots: Rep[ParseChart with Global],
                                               insideTops: Rep[ParseChart with Global],
                                               offsets: Rep[Array[Int] with Global],
                                               lengths: Rep[Array[Int] with Global],
@@ -220,7 +220,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
 
         insideBots(sentOffset, begin, end, gram) += out
       } else unit() // needed because scala is silly
-    }
+    })
   }
 
 
