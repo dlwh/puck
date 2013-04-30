@@ -111,9 +111,13 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
     import batch._
     val outsideCharts = outside.scoresForBatch(offsets, lengthTotals)
     val insideCharts = inside.scoresForBatch(offsets, lengthTotals)
-    for( (s, p) <- 0 until numSentences zip parts) {
-      val ys = for(l <- 0 until nontermIndex.size) yield (outsideCharts(s).bot(0, lengths(s), 0, l) + insideCharts(s).bot(0, lengths(s), 0, l)).toDouble
-      println( s"$s $p ${breeze.numerics.logSum(ys)}")
+    for( (s, p) <- 0 until numSentences zip parts; i <- 0 until lengths(s); j <- (i +1) to lengths(s)) {
+      val ys = for(l <- 0 until nontermIndex.size) yield (outsideCharts(s).bot(i, j, 0, l) + insideCharts(s).bot(i, j, 0, l)).toDouble
+      println( s"$s ($i, $j) $p ${breeze.numerics.logSum(ys)}")
+      if(i == j - 1) {
+        val ys = for(l <- 0 until structure.termIndex.size) yield (outsideCharts(s).tag(i, 0, l) + insideCharts(s).tag(i, 0, l)).toDouble
+        println( s"$s ($i) ${breeze.numerics.logSum(ys)}")
+      }
     }
 //    for( (s, p) <- 0 until numSentences zip parts; i <- 0 until lengths(s)) {
 //      val ys = for(l <- 0 until termIndex.size) yield (outsideCharts(s).tag(i, 0, l) + insideCharts(s).tag(i, 0, l)).toDouble
@@ -349,6 +353,14 @@ object GPUParser {
     val marg = train.map(_.words).map { s =>
       val m = ChartMarginal(AugmentedGrammar.fromRefined(grammar), s)
       val counts = m.logPartition
+      for(i <- 0 until s.length; j <- (i +1) to s.length) {
+        val ys = for(ll <- 0 until kern.structure.nontermIndex.size; l = kern.structure.nonterminalMap(ll)) yield (m.outside.bot(i, j, l, 0) + m.inside.bot(i, j, l, 0)).toDouble
+        println( s"$s ($i, $j) ${breeze.numerics.logSum(ys)}")
+        if(i == j - 1) {
+          val ys = for(ll <- 0 until kern.structure.termIndex.size; l = kern.structure.terminalMap(ll)) yield (m.outside.bot(i, j, l, 0) + m.inside.bot(i, j, l, 0)).toDouble
+          println( s"$s ($i) ${breeze.numerics.logSum(ys)}")
+        }
+      }
       counts
     }
     println("Done: " + (System.currentTimeMillis() - timeX))

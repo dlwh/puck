@@ -41,7 +41,11 @@ trait OutsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with
       val rightInside = insidePos(lengthOff, (end-1), gram)
       val parentOutside = outsideBots(sentOffset, begin, end, gram)
 
+      if(begin === 0)
+        expprintf("QQQ\n")
       doBothOutsideUpdates(leftOut, rightOut, parentOutside, leftInside, rightInside, rules, gram, partition)
+      if(begin === 0)
+        expprintf("ZZZ\n")
 
       outsidePos(lengthOff, begin, gram) += leftOut
       outsidePos(lengthOff, (end-1), gram) += rightOut
@@ -67,19 +71,21 @@ trait OutsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with
     val length = lengths(sentence)
 
     if (end <= length) {
-      val leftOut = accumulatorForLeftChildren(grammar.leftTermRules)
-      val rightOut = accumulatorForRightChildren(grammar.leftTermRules)
+      if(begin !== 0) { // && causes crashes i nthe compiler
+        val leftOut = accumulatorForLeftChildren(grammar.leftTermRules)
+        val rightOut = accumulatorForRightChildren(grammar.leftTermRules)
 
-      val sentOffset = offsets(sentence)
-      val lengthOff = lengthOffsets(sentence)
-      val rightInside = insideTops(sentOffset, begin+1, end, gram)
-      val leftTermInside = insideTags(lengthOff, begin, gram)
-      val parentOutside = outsideBots(sentOffset, begin, end, gram)
+        val sentOffset = offsets(sentence)
+        val lengthOff = lengthOffsets(sentence)
+        val rightInside = insideTops(sentOffset, begin, end, gram)
+        val leftTermInside = insideTags(lengthOff, begin-1, gram)
+        val parentOutside = outsideBots(sentOffset, begin-1, end, gram)
 
-      doBothOutsideUpdates(leftOut, rightOut, parentOutside, leftTermInside, rightInside, rules, gram, partition)
+        doBothOutsideUpdates(leftOut, rightOut, parentOutside, leftTermInside, rightInside, rules, gram, partition)
 
-      outsideTops(sentOffset, begin+1, end, gram)  += rightOut
-      outsideTags(lengthOff, begin, gram) += leftOut
+        outsideTops(sentOffset, begin, end, gram)  += rightOut
+        outsideTags(lengthOff, begin-1, gram) += leftOut
+      }
     } else unit() // needed because scala is silly
   })
 
@@ -99,19 +105,19 @@ trait OutsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with
     val end = begin + spanLength
     val length = lengths(sentence)
 
-    if (end <= length) {
+    if (end < length) {
       val leftOut = accumulatorForLeftChildren(grammar.rightTermRules)
       val rightOut = accumulatorForRightChildren(grammar.rightTermRules)
 
       val sentOffset = offsets(sentence)
       val lengthOff = lengthOffsets(sentence)
-      val leftInside = insideTops(sentOffset, begin, end-1, gram)
-      val rightTermInside = insideTags(lengthOff, end-1, gram)
-      val parentOutside = outsideBots(sentOffset, begin, end, gram)
+      val leftInside = insideTops(sentOffset, begin, end, gram)
+      val rightTermInside = insideTags(lengthOff, end, gram)
+      val parentOutside = outsideBots(sentOffset, begin, end+1, gram)
 
       doBothOutsideUpdates(leftOut, rightOut, parentOutside, leftInside, rightTermInside, rules, gram, partition)
-      outsideTops(sentOffset, begin, end-1, gram)  += leftOut
-      outsideTags(lengthOff, end-1, gram) += rightOut
+      outsideTops(sentOffset, begin, end, gram)  += leftOut
+      outsideTags(lengthOff, end, gram) += rightOut
 
     } else unit() // needed because scala is silly
   })

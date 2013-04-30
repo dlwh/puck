@@ -25,6 +25,10 @@ trait InliningOutsideKernels[L] extends OutsideKernels[L] { self: Base with Kern
           val rscore = rightCache.getOrElseUpdate(right, rightInside(right))
           val rightJoint = pscore * rscore
           val ruleScore = rules.rules(id, gram)
+          if(lscore !== Float.NegativeInfinity)
+            expprintf("??? %d %d %f %f %f %f\\n", left, right, rightJoint, leftJoint, lscore, rscore)
+          if(rscore !== Float.NegativeInfinity)
+            expprintf("??? %d %d %f %f %f %f\\n", left, right, rightJoint, leftJoint, lscore, rscore)
           leftOut.mad(left, rightJoint, ruleScore)
           rightOut.mad(right, leftJoint, ruleScore)
 

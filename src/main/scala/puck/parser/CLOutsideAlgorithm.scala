@@ -3,6 +3,7 @@ package puck.parser
 import scala.collection.mutable.ArrayBuffer
 import puck.parser.gen.ParserGenerator
 import com.nativelibs4java.opencl._
+import puck.util.CollectionImplicits._
 
 trait CLOutsideAlgorithm[C, L] {
 
@@ -31,33 +32,45 @@ trait CLOutsideAlgorithm[C, L] {
     unaries.setArgs(outside.top.dev, outside.bot.dev, offsets, lengths, Integer.valueOf(maxLength), rules)
     tunaries.setArgs(outside.top.dev, outside.tags.dev, offsets, lengthOffsets, lengths, rules)
 
+    // updates bot(len)
     lastU = unaries.enqueueNDRange(queue, Array(numSentences, 1, numGrammars), Array(1, 1, numGrammars), events:_*)
     ou += lastU
 
     for (len <- (maxLength - 1) to 1 by -1) {
       lbinaries.foreach(_.setArg(5, len))
       rbinaries.foreach(_.setArg(5, len))
-      val lastLB = lbinaries.map(_.enqueueNDRange(queue, Array(numSentences, maxLength + 1 - len, numGrammars), Array(1, 1, numGrammars), lastU))
+      // updates top(len) depending on bot(>len)
+      val lastLB = (lbinaries ++ rbinaries).scanLeft(lastU)( (e,k) => k.enqueueNDRange(queue, Array(numSentences, maxLength + 1 - len, numGrammars), Array(1, 1, numGrammars), e)).drop(1)
       ob ++= lastLB
-      val lastRB:Seq[CLEvent] = for( (rb, block) <- rbinaries zip lastLB) yield rb.enqueueNDRange(queue, Array(numSentences, maxLength + 1 - len, numGrammars), Array(1, 1, numGrammars), block)
-      ob ++= lastRB
+      lastU = lastLB.lastOption.getOrElse(lastU)
+
+      // updates top(len) and pos depending on bot(len+1)
       termBinaries.foreach(_.setArg(8, len))
-      lastU = termBinaries.foldLeft(lastU){ (e,k) =>
-        val ee = k.enqueueNDRange(queue, Array(numSentences, maxLength + 1 - len, numGrammars), Array(1, 1, numGrammars), (if(e eq null) lastRB else Seq(e)):_*)
-        if (ee ne null) otb += ee
-        ee
+      val tbs = termBinaries.scanLeft(lastU){ (e,k) =>
+         k.enqueueNDRange(queue, Array(numSentences, maxLength + 1 - len, numGrammars), Array(1, 1, numGrammars), e)
       }
-      if(len == 2) {
-        val events = bothTermBinaries.map(_.enqueueNDRange(queue, Array(numSentences, maxLength, numGrammars), Array(1, 1, numGrammars), lastU))
-        ot ++= events
-        queue.finish()
-      } else  if(len == 1) {
-        lastU = tunaries.enqueueNDRange(queue, Array(numSentences, maxLength, numGrammars), Array(1, 1, numGrammars), lastU)
-      }
+      otb ++= tbs.drop(1)
+      lastU = tbs.lastOption.getOrElse(lastU)
+
+
+      // updates bot(len) depending on top(len)
       unaries.setArg(4, len)
       lastU = unaries.enqueueNDRange(queue, Array(numSentences, maxLength + 1 - len, numGrammars), Array(1, 1, numGrammars), lastU)
-
       ou += lastU
+
+
+      if(len == 2) {
+        // updates pos depending on bot(2)
+        val ots = bothTermBinaries.scanLeft(lastU){ (e,k) =>
+          k.enqueueNDRange(queue, Array(numSentences, maxLength, numGrammars), Array(1, 1, numGrammars), e)
+        }
+        ot ++= ots.drop(1)
+        lastU = ot.lastOption.getOrElse(lastU)
+      } else  if(len == 1) {
+        // updates pos depending on bot(1)
+        lastU = tunaries.enqueueNDRange(queue, Array(numSentences, maxLength, numGrammars), Array(1, 1, numGrammars), lastU)
+      }
+
     }
 
     if(queue.getProperties.contains(CLDevice.QueueProperties.ProfilingEnable)) {
