@@ -1,13 +1,15 @@
 package puck.util
 
 import com.nativelibs4java.opencl.{CLMem, CLQueue, CLBuffer}
-import org.bridj.Pointer
+import org.bridj.{PointerIO, Pointer}
 
 /**
  *
  * @author dlwh
  */
-class MemBufPair[T](val dev: CLBuffer[T], val ptr: Pointer[T])(implicit queue: CLQueue, man: Manifest[T]) {
+class MemBufPair[T](val dev: CLBuffer[T], val ptr: Pointer[T])(implicit queue: CLQueue, alloc: MemoryAllocator, man: Manifest[T]) {
+
+  def memSize: Long = this.dev.getElementCount * this.dev.getElementSize
 
   def data: Array[T] = {
     dev.read(queue, ptr, true)
@@ -36,23 +38,33 @@ class MemBufPair[T](val dev: CLBuffer[T], val ptr: Pointer[T])(implicit queue: C
     dev.write(queue, 0, dev.getElementCount, ptr, true)
   }
 
+  private var released = false
+
   def release() {
-    dev.release()
-    ptr.release()
+    if(!released) {
+      alloc.externalRelease(memSize)
+      dev.release()
+      ptr.release()
+      released = true
+    }
   }
 
   def length = dev.getElementCount
 
+  override protected def finalize() {
+    release()
+  }
+
 }
 
 object MemBufPair {
-  def apply[T](length: Long, usage: CLMem.Usage = CLMem.Usage.InputOutput)(implicit queue: CLQueue, man: Manifest[T]): MemBufPair[T] = {
+  def apply[T](length: Long, usage: CLMem.Usage = CLMem.Usage.InputOutput)(implicit queue: CLQueue, man: Manifest[T], alloc: MemoryAllocator): MemBufPair[T] = {
+    val buf = alloc.externalAllocate[T](usage, length)
     val ptr = Pointer.allocateArray(man.runtimeClass.asInstanceOf[Class[T]], length)
-    val buf = queue.getContext.createBuffer(usage, ptr)
     new MemBufPair(buf, ptr)
   }
 
-  def apply[T](usage: CLMem.Usage, length: Long)(implicit queue: CLQueue, man: Manifest[T]): MemBufPair[T] = {
+  def apply[T](usage: CLMem.Usage, length: Long)(implicit queue: CLQueue, man: Manifest[T], alloc: MemoryAllocator): MemBufPair[T] = {
     apply(length, usage)
   }
 }

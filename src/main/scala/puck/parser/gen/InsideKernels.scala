@@ -34,7 +34,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
     val length = lengths(sentence)
 
     if (end <= length) {
-      val out = accumulatorForRules(grammar.bothTermRules)
+      val out = accumulatorForParents(grammar.bothTermRules)
 
       val sentOffset = offsets(sentence)
       val lengthOff = lengthOffsets(sentence)
@@ -64,7 +64,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
     val length = lengths(sentence)
 
     if (end <= length) {
-      val out = accumulatorForRules(partition)
+      val out = accumulatorForParents(partition)
 
       val sentOffset = offsets(sentence)
       val lengthOff = lengthOffsets(sentence)
@@ -92,7 +92,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
     val length = lengths(sentence)
 
     if (end <= length) {
-      val out = accumulatorForRules(partition)
+      val out = accumulatorForParents(partition)
 
       val sentOffset = offsets(sentence)
       val lengthOff = lengthOffsets(sentence)
@@ -151,7 +151,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
     if (end <= length) {
 
       val sentOffset = offsets(sentence)
-      val out = accumulatorForRules(grammar.unaryRules)
+      val out = accumulatorForParents(grammar.unaryRules)
       val bot = insideBots(sentOffset, begin, end, gram)
 
       doInsideUnaries(out, bot, rules, gram)
@@ -174,7 +174,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
 
     if (end <= length) {
       val sentOffset = offsets(sentence)
-      val out = accumulatorForRules(grammar.unaryTermRules)
+      val out = accumulatorForParents(grammar.unaryTermRules)
       val bot = insidePos(lengthOff, begin, gram)
       doInsideTermUnaries(out, bot, rules, gram)
       insideTops(sentOffset, begin, end, gram) = out
@@ -206,7 +206,7 @@ trait InsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with 
       val length = lengths(sentence)
 
       if ( end <= length) {
-        val out = accumulatorForRules(rulePartition)
+        val out = accumulatorForParents(rulePartition)
 
         val sentOffset = offsets(sentence)
 

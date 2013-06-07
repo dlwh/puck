@@ -41,7 +41,6 @@ trait OutsideKernels[L] extends ParserCommon[L] { self: Base with KernelOps with
       val rightInside = insidePos(lengthOff, (end-1), gram)
       val parentOutside = outsideBots(sentOffset, begin, end, gram)
 
-      if(begin === 0)
       doBothOutsideUpdates(leftOut, rightOut, parentOutside, leftInside, rightInside, rules, gram, partition)
 
       outsidePos(lengthOff, begin, gram) += leftOut

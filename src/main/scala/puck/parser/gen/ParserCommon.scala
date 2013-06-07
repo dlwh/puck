@@ -68,10 +68,11 @@ trait ParserCommon[L] extends ExtraBase with AccumulatorOps with SpireOps with O
   def infix_rules(cell: Rep[RuleCell], r: Rep[Int], g: Rep[Int]):Rep[Real]
 
   def grammar: RuleStructure[_, L]
-  def accumulatorForRules(rules: IndexedSeq[(Rule[Int], Int)]) = accumulator(rules.map(_._1.parent).toSet)
+  def accumulatorForParents(rules: IndexedSeq[(Rule[Int], Int)]) = accumulator(rules.map(_._1.parent).toSet)
   def accumulatorForChildren(rules: IndexedSeq[(Rule[Int], Int)]) = accumulator(rules.flatMap(_._1.children).toSet)
   def accumulatorForRightChildren(rules: IndexedSeq[(BinaryRule[Int], Int)]) = accumulator(rules.map(_._1.right).toSet)
   def accumulatorForLeftChildren(rules: IndexedSeq[(BinaryRule[Int], Int)]) = accumulator(rules.map(_._1.left).toSet)
+  def accumulatorForRules(rules: IndexedSeq[(BinaryRule[Int], Int)]) = accumulator(rules.map(_._2).toSet)
 
   def numSyms: Int = grammar.numSyms
 

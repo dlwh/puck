@@ -19,7 +19,7 @@ import java.nio.{FloatBuffer, ByteBuffer}
 import java.{util, lang}
 import org.bridj.Pointer
 import projections.{GrammarRefinements, ProjectionIndexer}
-import puck.util.{MemBufPair, ZeroMemoryKernel}
+import puck.util.{MemoryAllocator, MemBufPair, ZeroMemoryKernel}
 import puck.parser.gen.{SemiringFloatOpsExp, LogSpaceFloatOpsExp, ParserGenerator}
 import epic.sequences.CRF.TransitionVisitor
 
@@ -31,13 +31,12 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
                          private var _ruleScores: Array[RuleScores],
                          var tagScorers: Array[(IndexedSeq[W],Int,Int)=>Double],
                          profile: Boolean = true,
-                         maxSentences: Int = 1000)(implicit val context: CLContext) extends CLInsideAlgorithm[C, L] with CLOutsideAlgorithm[C, L] with CLPartitionCalculator[C, L] {
+                         maxSentences: Int = 1000)(implicit val context: CLContext, alloc: MemoryAllocator) extends CLInsideAlgorithm[C, L] with CLOutsideAlgorithm[C, L] with CLPartitionCalculator[C, L] {
   import GPUParser._
   def ruleScores = _ruleScores
 
   val numGrammars = _ruleScores.length
   val structure = RuleStructure[C, L](projections, grammar)
-
 
   val parserGen = new ParserGenerator[L](structure, numGrammars) with LogSpaceFloatOpsExp
 
@@ -55,16 +54,14 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
   parserGen.define("CHART_SIZE", maxCells)
   parserGen.define("TERM_CHART_SIZE", maxTotalLength)
 
-  val coarseCellSize = (structure.numCoarseSyms+1) * numGrammars
-
   private implicit val queue = if(profile) context.createDefaultProfilingQueue() else context.createDefaultOutOfOrderQueueIfPossible()
 //  private val projection = new ProjectionKernel(structure, numGrammars)
 //  private val decoder = new MaxRecallKernel(structure, numGrammars)
 
-  private val inside, outside = GPUCharts.forGrammar(structure, numGrammars, maxCells, maxTotalLength)
   private val offPair = MemBufPair[Int](Usage.Input, maxSentences + 1)
   private val offLenPair = MemBufPair[Int](Usage.Input, maxSentences)
   private val lenPair = MemBufPair[Int](Usage.Input, maxSentences)
+  private val inside, outside = GPUCharts.forGrammar(structure, numGrammars, maxCells, maxTotalLength)
 //  private val decodePair = MemBufPair[Int](maxCells * 4, Usage.InputOutput) // top, bot, split, score
 
   private val rules = MemBufPair[Float](totalRules, Usage.Input)
@@ -374,7 +371,9 @@ object GPUParser {
 //    println(marg)
   }
 
-  def fromSimpleGrammar[L, L2, W](grammar: SimpleRefinedGrammar[L, L2, W], useGPU: Boolean = true, numGrammars: Int = 1) = {
+  def fromSimpleGrammar[L, L2, W](grammar: SimpleRefinedGrammar[L, L2, W],
+                                  useGPU: Boolean = true,
+                                  numGrammars: Int = 1) = {
     import grammar.refinedGrammar._
 
     implicit val context = if(useGPU) {
@@ -391,6 +390,7 @@ object GPUParser {
     val scorers = Array.fill(numGrammars){ (w: IndexedSeq[W], pos: Int, label: Int) =>
       grammar.anchor(w).scoreSpan(pos, pos+1, label, 0)
     }
+    implicit val alloc = new MemoryAllocator()
 
     val kern = new GPUParser(grammar.grammar, grammar.refinements, grammar.refinedGrammar, grammar.lexicon.flatMap(grammar.refinements.labels.refinementsOf _), grammars, scorers)
 
