@@ -7,7 +7,7 @@ import org.bridj.{PointerIO, Pointer}
  *
  * @author dlwh
  */
-class MemBufPair[T](val dev: CLBuffer[T], val ptr: Pointer[T])(implicit queue: CLQueue, alloc: MemoryAllocator, man: Manifest[T]) {
+class MemBufPair[T](val dev: CLBuffer[T], val ptr: Pointer[T])(implicit queue: CLQueue, alloc: MemoryAllocator = null, man: Manifest[T]) {
 
   def memSize: Long = this.dev.getElementCount * this.dev.getElementSize
 

@@ -3,25 +3,18 @@ package puck.parser
 
 import breeze.collection.mutable.TriangularArray
 import breeze.config.{Configuration, CommandLineParser}
-import breeze.linalg.{DenseMatrix, DenseVector}
-import breeze.util.{Index, Encoder}
 import collection.mutable.ArrayBuffer
-import collection.{immutable, mutable}
 import com.nativelibs4java.opencl.CLMem.Usage
 import com.nativelibs4java.opencl._
-import epic._
 import epic.parser._
-import epic.parser.models._
 import epic.trees._
 import epic.trees.annotations._
 import java.io.File
-import java.nio.{FloatBuffer, ByteBuffer}
-import java.{util, lang}
-import org.bridj.Pointer
-import projections.{GrammarRefinements, ProjectionIndexer}
-import puck.util.{MemoryAllocator, MemBufPair, ZeroMemoryKernel}
-import puck.parser.gen.{SemiringFloatOpsExp, LogSpaceFloatOpsExp, ParserGenerator}
-import epic.sequences.CRF.TransitionVisitor
+import java.util
+import projections.GrammarRefinements
+import puck.util.{MemoryAllocator, MemBufPair}
+import puck.parser.gen.{LogSpaceFloatOpsExp, ParserGenerator}
+import epic.lexicon.Lexicon
 
 
 class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
@@ -32,7 +25,6 @@ class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
                          var tagScorers: Array[(IndexedSeq[W],Int,Int)=>Double],
                          profile: Boolean = true,
                          maxSentences: Int = 1000)(implicit val context: CLContext, alloc: MemoryAllocator) extends CLInsideAlgorithm[C, L] with CLOutsideAlgorithm[C, L] with CLPartitionCalculator[C, L] {
-  import GPUParser._
   def ruleScores = _ruleScores
 
   val numGrammars = _ruleScores.length
@@ -321,7 +313,6 @@ object GPUParser {
       println(breeze.config.GenerateHelp[JointParams[Params]](config))
       System.exit(1)
     }
-    import params._
     import params.trainer._
     println("Training Parser...")
     println(params)
@@ -374,7 +365,6 @@ object GPUParser {
   def fromSimpleGrammar[L, L2, W](grammar: SimpleRefinedGrammar[L, L2, W],
                                   useGPU: Boolean = true,
                                   numGrammars: Int = 1) = {
-    import grammar.refinedGrammar._
 
     implicit val context = if(useGPU) {
       JavaCL.createBestContext()
