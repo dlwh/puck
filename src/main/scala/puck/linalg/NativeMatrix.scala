@@ -37,7 +37,7 @@ final class NativeMatrix[@specialized(Int, Float, Double) V](val rows: Int,
                                                              val isTranspose: Boolean = false)
   extends Matrix[V] with MatrixLike[V, NativeMatrix[V]] with Serializable {
   /** Creates a matrix with the specified data array, rows, and columns. */
-  def this(rows: Int, cols: Int)(implicit man: ClassTag[V]) = this(rows, cols, NativeArray(rows * cols), 0, rows)
+  def this(rows: Int, cols: Int)(implicit man: ClassTag[V]) = this(rows, cols, NativeArray[V](rows * cols), 0, rows)
   /** Creates a matrix with the specified data array, rows, and columns. Data must be column major */
   def this(rows: Int, cols: Int, data: NativeArray[V], offset: Int = 0) = this(rows, cols, data, offset, rows)
 
@@ -46,6 +46,8 @@ final class NativeMatrix[@specialized(Int, Float, Double) V](val rows: Int,
     if(col < 0 || col >= cols) throw new IndexOutOfBoundsException((row,col) + " not in [0,"+rows+") x [0," + cols+")")
     data(linearIndex(row, col))
   }
+
+  def pointer = data.pointer
 
 
   /** Calculates the index into the data array for row and column */
@@ -60,41 +62,6 @@ final class NativeMatrix[@specialized(Int, Float, Double) V](val rows: Int,
     if(row < 0 || row > rows) throw new IndexOutOfBoundsException((row,col) + " not in [0,"+rows+") x [0," + cols+")")
     if(col < 0 || col > cols) throw new IndexOutOfBoundsException((row,col) + " not in [0,"+rows+") x [0," + cols+")")
     data(linearIndex(row, col)) = v
-  }
-
-  private def canFlattenView = if(isTranspose) majorStride == cols else majorStride == rows
-  private def canReshapeView = if(isTranspose) majorStride == cols else majorStride == rows
-
-  /** Reshapes this matrix to have the given number of rows and columns
-    * If view = true (or View.Require), throws an exception if we cannot return a view. otherwise returns a view.
-    * If view == false (or View.Copy) returns a copy
-    * If view == View.Prefer (the default), returns a view if possible, otherwise returns a copy.
-    *
-    * Views are only possible (if(isTranspose) majorStride == cols else majorStride == rows) == true
-    *
-    * rows * cols must equal size, or cols < 0 && (size / rows * rows == size)
-    * @param rows the number of rows
-    * @param cols the number of columns, or -1 to auto determine based on size and rows
-    */
-  def reshape(rows: Int, cols: Int, view: View=View.Prefer):NativeMatrix[V] = {
-    require(rows > 0)
-    val _cols = cols//if(cols < 0) size / rows else cols
-    require(rows * _cols == size, "Cannot reshape a (%d,%d) matrix to a (%d,%d) matrix!".format(this.rows, this.cols, rows, _cols))
-
-    view match {
-      case View.Require =>
-        if(!canFlattenView)
-          throw new UnsupportedOperationException("Cannot make a view of this matrix.")
-        else
-          new NativeMatrix(rows, _cols, data, offset, if(isTranspose) cols else rows, isTranspose)
-      case View.Copy =>
-        // calling copy directly gives a verify error. TODO: submit bug
-        val result = new NativeMatrix[V](this.rows, this.cols, NativeArray(rows * cols))
-        result := this
-        result.reshape(rows, _cols, View.Require)
-      case View.Prefer =>
-        reshape(rows, cols, canReshapeView)
-    }
   }
 
   def repr = this
@@ -576,14 +543,20 @@ trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
 
   class SetDMDMOp[@specialized(Int, Double, Float) V] extends BinaryUpdateOp[NativeMatrix[V], NativeMatrix[V], OpSet] {
     def apply(a: NativeMatrix[V], b: NativeMatrix[V]) {
-      require(a.rows == b.rows, "Matrixs must have same number of rows")
-      require(a.cols == b.cols, "Matrixs must have same number of columns")
+      require(a.rows == b.rows, "Matrices must have same number of rows")
+      require(a.cols == b.cols, "Matrices must have same number of columns")
       if(a.data.length - a.offset == a.rows * a.cols
         && b.data.length - b.offset == a.rows * a.cols
         && a.majorStride == b.majorStride
         && a.isTranspose == b.isTranspose) {
         b.data.pointer.next(b.offset).copyTo(a.data.pointer.next(a.offset), a.size)
         System.arraycopy(b.data, b.offset, a.data, a.offset, a.size)
+        return
+      } else if(!a.isTranspose && !b.isTranspose) {
+        // copy one column at a time
+        for(column <- 0 until a.cols) {
+          b.data.pointer.next(b.offset + b.majorStride * column).copyTo(a.data.pointer.next(a.offset + column * a.majorStride), a.rows)
+        }
         return
       }
 
@@ -629,33 +602,35 @@ trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
       override def initialValue() = new Array[V](1000)
     }
     def apply(a: NativeMatrix[V], b: V) {
-      if(a.data.length - a.offset == a.rows * a.cols) {
+      if(b == null.asInstanceOf[V]) {
+        val casted = a.data.pointer.as(java.lang.Byte.TYPE)
+        casted.clearBytes(casted.getValidElements)
+      } else if(a.data.length - a.offset == a.rows * a.cols) {
         val buf = buffer.get()
         // There's no array fill method for native arrays, so we do this instead.
         ArrayUtil.fill(buf, 0, buf.length, b)
         for(start <- 0L until a.data.length by buf.length) {
           a.data.pointer.setArrayAtOffset(start, if(start + buf.length >= a.data.length) buf.take(a.data.length-start toInt) else buf)
         }
-        return
-      }
-
-      // slow path when we don't have a trivial matrix
-      val ad = a.data
-      var c = 0
-      while(c < a.cols) {
-        var r = 0
-        while(r < a.rows) {
-          ad(a.linearIndex(r, c)) = b
-          r += 1
+      } else {
+        // slow path when we don't have a trivial matrix
+        val ad = a.data
+        var c = 0
+        while(c < a.cols) {
+          var r = 0
+          while(r < a.rows) {
+            ad(a.linearIndex(r, c)) = b
+            r += 1
+          }
+          c += 1
         }
-        c += 1
       }
     }
   }
 
   implicit def setDMDM[V]: BinaryUpdateOp[NativeMatrix[V], NativeMatrix[V], OpSet] = new SetDMDMOp[V]
 //  implicit def setDMDV[V]: BinaryUpdateOp[NativeMatrix[V], NativeMatrix[V], OpSet] = new SetDMDVOp[V]
-  implicit def setDMS[V]: BinaryUpdateOp[NativeMatrix[V], V, OpSet] = new SetMSOp[V]
+  implicit def setDMS[V:ClassTag]: BinaryUpdateOp[NativeMatrix[V], V, OpSet] = new SetMSOp[V]
 }
 
 

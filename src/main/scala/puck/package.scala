@@ -6,7 +6,7 @@ import org.bridj.Pointer
  * @author dlwh
  **/
 package object puck {
-  implicit class RichPointer[T](pointer: Pointer[T]) extends AnyVal {
+  implicit class RichPointer[T](val pointer: Pointer[T]) extends AnyVal {
     def update(v: T) {pointer.set(v)}
     def update(off: Long, v: T) {pointer.set(off, v)}
     def apply(off: Long = 0) {pointer.get(off)}
@@ -15,7 +15,7 @@ package object puck {
     def +(off: Long) = pointer.next(off)
   }
 
-  implicit class RichFloatPointer(pointer: Pointer[Float]) extends AnyVal {
+  implicit class RichFloatPointer(val pointer: Pointer[Float]) extends AnyVal {
     def update(v: Float) {pointer.setFloat(v)}
     def update(off: Long, v: Float) {pointer.setFloatAtIndex(off, v)}
     def apply(off: Long = 0) {pointer.getFloatAtIndex(off)}
@@ -27,7 +27,7 @@ package object puck {
     def +(off: Long) = pointer.next(off)
   }
 
-  implicit class RichIntPointer(pointer: Pointer[Int]) extends AnyVal {
+  implicit class RichIntPointer(val pointer: Pointer[Int]) extends AnyVal {
     def update(v: Int) {pointer.setInt(v)}
     def update(off: Long, v: Int) {pointer.setIntAtIndex(off, v)}
     def apply(off: Long = 0) {pointer.getIntAtIndex(off)}
@@ -39,7 +39,7 @@ package object puck {
     def +(off: Long) = pointer.next(off)
   }
 
-  implicit class RichDoublePointer(pointer: Pointer[Double]) extends AnyVal {
+  implicit class RichDoublePointer(val pointer: Pointer[Double]) extends AnyVal {
     def update(v: Double) {pointer.setDouble(v)}
     def update(off: Long, v: Double) {pointer.setDoubleAtIndex(off, v)}
     def apply(off: Long = 0) {pointer.getDoubleAtIndex(off)}
@@ -52,7 +52,7 @@ package object puck {
     def +(off: Long) = pointer.next(off)
   }
 
-  implicit class RichCharPointer(pointer: Pointer[Char]) extends AnyVal {
+  implicit class RichCharPointer(val pointer: Pointer[Char]) extends AnyVal {
     def update(v: Char) {pointer.setChar(v)}
     def update(off: Long, v: Char) {pointer.setCharAtIndex(off, v)}
     def apply(off: Long = 0) {pointer.getCharAtIndex(off)}
@@ -64,7 +64,7 @@ package object puck {
     def +(off: Long) = pointer.next(off)
   }
 
-  implicit class RichLongPointer(pointer: Pointer[Long]) extends AnyVal {
+  implicit class RichLongPointer(val pointer: Pointer[Long]) extends AnyVal {
     def update(v: Long) {pointer.setLong(v)}
     def update(off: Long, v: Long) {pointer.setLongAtIndex(off, v)}
     def apply(off: Long = 0) {pointer.getLongAtIndex(off)}

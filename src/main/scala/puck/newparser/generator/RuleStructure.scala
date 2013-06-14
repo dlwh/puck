@@ -1,9 +1,10 @@
-package puck.parser
+package puck.newparser.generator
 
 import epic.parser.projections.GrammarRefinements
 import epic.parser.BaseGrammar
 import epic.trees.{BinaryRule, UnaryRule}
 import breeze.util.Index
+import puck.newparser.GrammarPartitioner
 
 /**
  *

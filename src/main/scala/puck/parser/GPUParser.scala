@@ -16,7 +16,7 @@ import puck.util.{MemoryAllocator, MemBufPair}
 import puck.parser.gen.{LogSpaceFloatOpsExp, ParserGenerator}
 import epic.lexicon.Lexicon
 
-
+/*
 class GPUParser[C, L, W](coarseGrammar: BaseGrammar[C],
                          projections: GrammarRefinements[C, L],
                          grammar: BaseGrammar[L],
@@ -390,3 +390,4 @@ object GPUParser {
 
 }
 
+*/

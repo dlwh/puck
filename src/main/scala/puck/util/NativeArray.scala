@@ -8,7 +8,7 @@ import scala.reflect.ClassTag
  *
  * @author dlwh
  **/
-class NativeArray[@specialized(Int, Float, Double) T](val pointer: Pointer[T], val length: Long, var autorelease: Boolean = true)(implicit manifest: ClassTag[T]) {
+class NativeArray[@specialized(Int, Float, Double) T](val pointer: Pointer[T], val length: Long, var autorelease: Boolean = true) {
   def apply(i: Long) = {require(i < length); pointer.get(i)}
   def toArray = {require(length <= Int.MaxValue); pointer.toArray.take(length.toInt)}
   def update(i: Long, v: T) {
@@ -33,8 +33,8 @@ class NativeArray[@specialized(Int, Float, Double) T](val pointer: Pointer[T], v
 }
 
 object NativeArray {
-  def apply[T:ClassTag](length: Long) = new NativeArray(PointerUtil.allocate[T](length), length)
-  def apply[T: ClassTag](data: Array[T]):NativeArray[T] = {
+  def apply[T:ClassTag](length: Long) = new NativeArray[T](PointerUtil.allocate[T](length), length)
+  def apply[T](data: Array[T]):NativeArray[T] = {
     new NativeArray[T](Pointer.pointerToArray[T](data), data.length)
   }
 }

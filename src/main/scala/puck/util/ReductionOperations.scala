@@ -1,7 +1,7 @@
 package puck.util
 
 import scala.virtualization.lms.common.{NumericOps, ArrayOps}
-import trochee.kernels.{Local, KernelOps}
+import trochee.kernels.{Global, Local, KernelOps}
 
 /**
  *
@@ -38,6 +38,7 @@ trait ReductionOperations extends KernelOps with ArrayOps with NumericOps {
       dest(destOff + div + tid) += src(srcOff + div + tid)
     }
   }
+
 
 }
  */

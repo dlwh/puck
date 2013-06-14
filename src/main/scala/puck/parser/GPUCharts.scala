@@ -3,8 +3,9 @@ package puck.parser
 import com.nativelibs4java.opencl.{CLQueue, CLEvent, CLContext, CLBuffer}
 import java.lang.{Float=>JFloat}
 import com.nativelibs4java.opencl.CLMem.Usage
-import puck.util.{MemBufPair, ZeroMemoryKernel}
+import puck.util._
 import breeze.collection.mutable.TriangularArray
+import puck.newparser.generator.RuleStructure
 
 object Scaling {
   def SCALE_FACTOR = 10
@@ -76,7 +77,7 @@ case class GPUCharts[C, L](top: MemBufPair[Float],
 
 
 object GPUCharts {
-  def forGrammar[C, L](structure: RuleStructure[C, L], numGrammars: Int, maxCells: Int, maxTotalLength: Int)(implicit context: CLContext, queue: CLQueue) = {
+  def forGrammar[C, L](structure: RuleStructure[C, L], numGrammars: Int, maxCells: Int, maxTotalLength: Int)(implicit context: CLContext, alloc: MemoryAllocator, queue: CLQueue) = {
     val cellSize = structure.numNonTerms * numGrammars
     val insideTopDev, insideBotDev = MemBufPair[Float](maxCells * cellSize, Usage.InputOutput)
     val posTagsDev = MemBufPair[Float](maxTotalLength * cellSize, Usage.Input)

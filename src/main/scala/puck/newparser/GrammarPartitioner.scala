@@ -1,5 +1,4 @@
-package puck.parser
-
+package puck.newparser
 
 import collection.mutable
 import collection.immutable.BitSet

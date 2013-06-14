@@ -13,8 +13,8 @@ import trochee.basic._
 import scala.virtualization.lms.util.OverloadHack
 import scala.collection.mutable.ArrayBuffer
 import scala.virtualization.lms.internal.Effects
-import puck.parser.RuleStructure
 import epic.trees.{BinaryRule, Rule}
+import puck.newparser.generator.RuleStructure
 
 /**
  * 
@@ -86,8 +86,6 @@ trait ParserCommonExp[L] extends ParserCommon[L] with BaseFatExp with CStructExp
   sealed trait ParseCell { def chart: Rep[_]}
   final case class NTCell(chart: Rep[ParseChart], offset: Rep[Int], begin: Rep[Int], end: Rep[Int], gram: Rep[Int]) extends ParseCell
   final case class TCell(chart: Rep[TermChart], offset: Rep[Int], pos: Rep[Int], gram: Rep[Int]) extends ParseCell
-
-  final case class Printf(string: String, args: Seq[Rep[_]]) extends Def[Unit]
 
   def manifestParseChart: Manifest[ParseChart] = implicitly
   def manifestRuleCell: Manifest[RuleCell] = implicitly
