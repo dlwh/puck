@@ -89,6 +89,15 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   val terminalMap = Array.tabulate(numTerms)(i => grammar.labelIndex(termIndex.get(i)))
   /** Maps an indexed nonterminal symbol back to the grammar's index*/
   val nonterminalMap = Array.tabulate(numNonTerms)(i => grammar.labelIndex(nontermIndex.get(i)))
+  val reverseIndex = Array.fill[Int](grammar.labelIndex.size)(-1)
+  for(i <- 0 until terminalMap.length) {
+    reverseIndex(terminalMap(i)) = i
+  }
+  for(i <- 0 until nonterminalMap.length) {
+    reverseIndex(nonterminalMap(i)) = i
+  }
+  def labelIndexToTerminal(label: Int) = reverseIndex(label)
+  def labelIndexToNonterminal(label: Int) = reverseIndex(label)
 
   lazy val partitionsParent: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
   lazy val partitionsLeft: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = partitionsParent

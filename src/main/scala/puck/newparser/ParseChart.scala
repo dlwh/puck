@@ -3,13 +3,14 @@ package puck.newparser
 import puck.linalg.NativeMatrix
 import breeze.collection.mutable.TriangularArray
 
-class ParseChart(val length: Int, numLabels: Int, numTermLabels: Int) {
-  val top, bot = new ChartHalf(length, numLabels)
-  val terms = new TermChart(length, numTermLabels)
+class ParseChart(val length: Int, numLabels: Int, numTermLabels: Int, zero: Float) {
+  val top, bot = new ChartHalf(length, numLabels, zero)
+  val terms = new TermChart(length, numTermLabels, zero)
 }
 
-class ChartHalf(val length: Int, val numLabels: Int) {
+class ChartHalf(val length: Int, val numLabels: Int, zero: Float) {
   val array = new NativeMatrix[Float](TriangularArray.arraySize(length+1), numLabels)
+  array := zero
 
   def apply(begin: Int, end: Int, label: Int) = array(ChartHalf.chartIndex(begin, end, length), label)
 
@@ -29,8 +30,9 @@ object ChartHalf {
   }
 }
 
-class TermChart(length: Int, numTermLabels: Int) {
-  val array = new NativeMatrix[Float](TriangularArray.arraySize(length+1), numTermLabels)
+class TermChart(length: Int, numTermLabels: Int, zero: Float) {
+  val array = new NativeMatrix[Float](length, numTermLabels)
+  array := zero
   def rowSlice(begin: Int, end: Int) = array(begin until end, ::)
   def apply(begin: Int, label: Int) = array(begin, label)
 }

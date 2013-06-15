@@ -17,6 +17,7 @@ import puck.util.{BitHacks, ZeroMemoryKernel}
 import scala.virtualization.lms.common.ArrayOpsExp
 import trochee.kernels.KernelOpsExp
 import puck.newparser.generator._
+import collection.mutable.ArrayBuffer
 
 /**
  * TODO
@@ -26,6 +27,23 @@ import puck.newparser.generator._
 class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
                         maxAllocSize: Long = 1<<30,
                         profile: Boolean = true)(implicit val context: CLContext) extends Logging {
+
+  /*
+  def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
+    {for {
+      partition <- getBatches(sentences, masks).iterator
+      batch = createBatch(partition)
+      //    _ = getMarginals(batch)
+      t <- doParse(batch)
+    } yield {
+      t
+    }}.toIndexedSeq
+  }
+  */
+
+
+
+
   val structure = RuleStructure[C, L](grammar.refinements, grammar.refinedGrammar)
   private implicit val queue = if(profile) context.createDefaultProfilingQueue() else context.createDefaultOutOfOrderQueueIfPossible()
 
@@ -66,6 +84,8 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 
 
 
+
+
   val gen = new CLParserKernelGenerator[C, L](structure)
   import gen.insideGen
 
@@ -93,23 +113,82 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
   // other stuff
   private val zmk = new ZeroMemoryKernel(_zero)
 
-  def inside(charts: IndexedSeq[ParseChart]) = synchronized {
-    val maxLength = charts.map(_.length).max
+  private case class Batch(lengthTotals: Array[Int],
+                           sentences: IndexedSeq[IndexedSeq[W]],
+                           charts: IndexedSeq[ParseChart]) {
+    def totalLength = lengthTotals.last
+    def numSentences = sentences.length
+
+    val maxLength = sentences.map(_.length).max
+
+    def offsetForSpanLength(sent: Int, spanLength: Int) = {
+      ??? haveo 0 out spans that are longer
+      lengthTotals(sent) - (spanLength-1) * sent
+    }
+
+    def totalLengthForSpan(spanLength:Int) = lengthTotals.last - charts.length * (spanLength-1)
+
+    def offsetsForSpan(sent: Int, spanLength: Int) = Range(offsetForSpanLength(sent, spanLength), offsetForSpanLength(sent+1,spanLength))
+  }
+
+  private def getBatches(sentences: IndexedSeq[IndexedSeq[W]]): IndexedSeq[IndexedSeq[IndexedSeq[W]]] = {
+    val result = ArrayBuffer[IndexedSeq[IndexedSeq[W]]]()
+    var current = ArrayBuffer[IndexedSeq[W]]()
+    var currentLengthTotal = 0
+    for( (s, i) <- sentences.zipWithIndex) {
+      currentLengthTotal += s.length
+      if(currentLengthTotal > numGPUAccCells) {
+        assert(current.nonEmpty)
+        result += current
+        currentLengthTotal = s.length
+        current = ArrayBuffer()
+      }
+      current += s
+    }
+
+    if(current.nonEmpty) result += current
+    result
+  }
+
+  private def createBatch(sentences: IndexedSeq[IndexedSeq[W]]): Batch = {
+    val lengthTotals = sentences.scanLeft(0)((acc, sent) => acc + sent.length)
+    val posTags = for( (s, i) <- sentences.zipWithIndex) yield {
+      val anch  = grammar.tagScorer.anchor(s)
+      val lexAnch = grammar.lexicon.anchor(s)
+      val chart = new ParseChart(s.length, cellSize, cellSize, gen.IR._zero)
+      for {
+        pos <- (0 until s.length)
+        a <- lexAnch.allowedTags(pos)
+        refA <- grammar.refinements.labels.refinementsOf(a)
+      } {
+        val global = grammar.refinements.labels.globalize(a, refA)
+        val score = anch.scoreTag(pos, grammar.refinedGrammar.labelIndex.get(global))
+        chart.terms.array(pos, structure.labelIndexToTerminal(global)) = gen.IR.fromLogSpace(score.toFloat)
+        assert(!score.isNaN)
+      }
+      chart
+    }
+
+    Batch(lengthTotals.toArray, sentences, posTags)
+  }
+
+
+  def inside(batch: Batch) = synchronized {
     var eZpb = zmk.zeroMemory(devParentBot)
     var eZpt = zmk.zeroMemory(devParentTop)
     var eZpa = zmk.zeroMemory(devParentAcc)
     hostParentTop := _zero
     hostParentBot := _zero
-    val (tuEndEvents: IndexedSeq[CLEvent], offsets) = doTUnaryUpdates(charts, maxLength, eZpt)
-    copyBackToHost(devParentTop, hostParentTop, charts, _.top, 1, offsets, tuEndEvents:_*)
-    val ttdone = doTTUpdates(charts, maxLength, eZpa +: eZpb +: tuEndEvents:_*)
+    val (tuEndEvents, offsets) = doTUnaryUpdates(batch, eZpt)
+    copyBackToHost(devParentTop, hostParentTop, batch, _.top, 1, offsets, tuEndEvents:_*)
+    val ttdone = doTTUpdates(batch, maxLength, eZpa +: eZpb +: tuEndEvents:_*)
     for(span <- 2 until maxLength) {
-      val nt = doNTUpdates(charts, span, ttdone._1)
-      doTNUpdates(charts, span, nt)
-      val (doneNN,offsets) = doNNUpdates(charts, span, maxLength, tuEndEvents:_*)
-      copyBackToHost(devParentAcc, hostParentBot, charts, _.bot, span, offsets, doneNN:_*)
-      val doneU = doUnaryUpdates(charts, span)
-      copyBackToHost(devParentTop, hostParentTop, charts, _.top, span, offsets, doneU:_*)
+      val nt = doNTUpdates(batch, span, ttdone._1)
+      doTNUpdates(batch, span, nt)
+      val (doneNN,offsets) = doNNUpdates(batch, span, tuEndEvents:_*)
+      copyBackToHost(devParentAcc, hostParentBot, batch, _.bot, span, offsets, doneNN:_*)
+      val doneU = doUnaryUpdates(batch, span)
+      copyBackToHost(devParentTop, hostParentTop, batch, _.top, span, offsets, doneU:_*)
 
       eZpb = zmk.zeroMemory(devParentBot)
       eZpt = zmk.zeroMemory(devParentTop)
@@ -117,13 +196,13 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     }
   }
 
-  def doTUnaryUpdates(charts: IndexedSeq[ParseChart], maxLength: Int, events: CLEvent*) = {
-    val offsets = charts.scanLeft(0)((off, chart) => off + chart.length)
+  def doTUnaryUpdates(batch: Batch, events: CLEvent*) = {
+    import batch._
     for(sent <- 0 until charts.length) {
       val lslice = charts(sent).terms
-      hostParentBot(offsets(sent) until offsets(sent+1), ::) := lslice.array
+      hostParentBot(offsetsForSpan(sent, 1), ::) := lslice.array
     }
-    val wL = devParentBot.write(queue:CLQueue, 0, offsets.last * cellSize, hostParentBot.pointer.as(jl.Float.TYPE), false, events:_*)
+    val wL = devParentBot.write(queue:CLQueue, 0, totalLengthForSpan(1) * cellSize, hostParentBot.pointer.as(jl.Float.TYPE), false, events:_*)
     val endEvents = insideGen.insideTUKernels.map{(kernel) =>
       kernel.setArgs(devParentTop, devParentBot, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(numGPUCells), Integer.valueOf(offsets.last))
       kernel.enqueueNDRange(queue, Array(offsets.length), wL)
@@ -254,14 +333,13 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 
   private def copyBackToHost(devParent: CLBuffer[jl.Float],
                      hostParent: NativeMatrix[Float],
-                     charts: IndexedSeq[ParseChart],
+                     batch: Batch,
                      level: ParseChart=>ChartHalf,
-                     span: Int,
-                     offsets: IndexedSeq[Int], events: CLEvent*) = {
+                     span: Int, events: CLEvent*) = {
     devParent.read(queue, hostParent.pointer.as(jl.Float.TYPE), true, events:_*)
-    for(sent <- (0 until charts.length).par) {
-      val lslice = level(charts(sent)).spanSlice(1)
-      lslice := hostParent(offsets(sent) until offsets(sent+1), ::)
+    for(sent <- (0 until batch.numSentences).par) {
+      val lslice = level(batch.charts(sent)).spanSlice(span)
+      lslice := hostParent(batch.offsetsForSpan(sent,span) until batch.offsetsForSpan(sent, span), ::)
     }
   }
 }
