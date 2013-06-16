@@ -16,17 +16,15 @@ trait RuleMultiply[L] extends Base with KernelOps with ExtraBase with Accumulato
                                                                                 right: Rep[Array[Real] with Global],
                                                                                 rules: Rep[Array[Real]],
                                                                                 parentRows: Rep[Int], // number of tree indices
-                                                                                leftChildRows: Rep[Int], // number of tree indices
-                                                                                rightChildRows: Rep[Int], // number of tree indices
                                                                                 numToDo: Rep[Int] // number of tree indices to do
                                                                                  ) =>
     val row = globalId(0)
     if(row < numToDo) {
       val out = accumulator(rulePartition.map(_._1.parent).toSet)
       for( (lc, rr) <- rulePartition.groupBy(_._1.left)) {
-        val leftScore:Rep[Real] = left(leftChildRows * lc + row)
+        val leftScore:Rep[Real] = left(parentRows * lc + row)
         for((rc,rrr) <- rr.groupBy(_._1.right)) {
-          val rightScore = right(rightChildRows * rc + row)
+          val rightScore = right(parentRows * rc + row)
           val joint:Rep[Real] = leftScore * rightScore
           for((r,id) <- rrr) {
             out.mad(r.parent, joint, rules(id))

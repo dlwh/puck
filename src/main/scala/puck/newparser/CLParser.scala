@@ -1,6 +1,8 @@
-package puck.newparser
+package puck
+package newparser
 
 import breeze.config._
+import breeze.collection.mutable.TriangularArray
 import com.nativelibs4java.opencl._
 import com.typesafe.scalalogging.log4j._
 import epic.lexicon.{TagScorer, Lexicon}
@@ -11,13 +13,14 @@ import epic.trees.annotations._
 import java.io._
 import java.nio.FloatBuffer
 import java.{lang=>jl}
-import puck.linalg.NativeMatrix
+import puck.linalg.CLMatrix
 import puck.parser.gen.SemiringFloatOpsExp
 import puck.util.{BitHacks, ZeroMemoryKernel}
 import scala.virtualization.lms.common.ArrayOpsExp
 import trochee.kernels.KernelOpsExp
 import puck.newparser.generator._
 import collection.mutable.ArrayBuffer
+import java.util
 
 /**
  * TODO
@@ -31,8 +34,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
   /*
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
     {for {
-      partition <- getBatches(sentences, masks).iterator
-      batch = createBatch(partition)
+      batch <- getBatches(sentences, masks).iterator
       //    _ = getMarginals(batch)
       t <- doParse(batch)
     } yield {
@@ -41,28 +43,24 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
   }
   */
 
-
-
-
   val structure = RuleStructure[C, L](grammar.refinements, grammar.refinedGrammar)
   private implicit val queue = if(profile) context.createDefaultProfilingQueue() else context.createDefaultOutOfOrderQueueIfPossible()
 
   val nrules = grammar.index.size
   // TODO: reinstate this difference if numTerms is really big.
-  val cellSize =  structure.numNonTerms max structure.numTerms
+  val cellSize = structure.numNonTerms max structure.numTerms
 
   val ruleScores = Array.tabulate(grammar.refinedGrammar.index.size){r =>
     val score = grammar.ruleScoreArray(grammar.refinements.rules.project(r))(grammar.refinements.rules.localize(r))
     gen.IR.fromLogSpace(score.toFloat)
   }
 
-
-  val (numGPUCells:Int, numGPUAccCells: Int) = {
+  val (numGPUCells:Int, numGPUChartCells: Int) = {
     val sizeOfFloat = 4
     val fractionOfMemoryToUse = 0.8 // slack!
     val amountOfMemory = ((context.getMaxMemAllocSize min maxAllocSize) * fractionOfMemoryToUse).toInt - ruleScores.length * 4
     val maxPossibleNumberOfCells = (amountOfMemory/sizeOfFloat) / cellSize
-    // We also want numGPUCells and numGPUAccCells to be divisible by 16, so that we get aligned strided access:
+    // We want numGPUCells and numGPUAccCells to be divisible by 16, so that we get aligned strided access:
     //       On devices of compute capability 1.0 or 1.1, the k-th thread in a half warp must access the
     //       k-th word in a segment aligned to 16 times the size of the elements being accessed; however,
     //       not all threads need to participate... If sequential threads in a half warp access memory that is
@@ -70,243 +68,227 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     //       requested on a device with compute capability 1.1 or lower.
     val numberOfUnitsOf16 = maxPossibleNumberOfCells / 16
     // average sentence length of sentence, let's say n.
-    // for the "acc" part of the charts, we'll only need totallength cells, so n per sentence.
+    // for the gpu charts, we'll need (n choose 2) * 2 = n^2 - n cells
     // for the "P/L/R" parts, the maximum number of relaxations (P = L * R * rules) for a fixed span
-    // in a fixed sentence is (n/2)^2= n^2/4. this is (obviously) n/4 times bigger than the "acc"
-    // array, if we wanted to ensure that we don't have to do anything fancy.
-    // Take n = 32, then we want our P/L/R arrays to be 8 times longer.
-    // 8 * 3 + 1 = 25
-    val baseAccSize = numberOfUnitsOf16 / 25
-    val plrSize = baseAccSize * 8
+    // in a fixed sentence is (n/2)^2= n^2/4.
+    // Take n = 32, then we want our P/L/R arrays to be of the ratio (3 * 256):992 \approx 3/4 (3/4 exaclty if we exclude n)
+    //
+    val baseSize = numberOfUnitsOf16 / 7
+    val extra = numberOfUnitsOf16 % 7
+    val plrSize = baseSize
     // TODO, can probably do a better job of these calculations?
-    (plrSize * 16, baseAccSize * 16)
+    (plrSize * 16, (baseSize * 4 + extra) * 16)
   }
-
-
-
-
 
   val gen = new CLParserKernelGenerator[C, L](structure)
   import gen.insideGen
 
   // On the Device side we have 4 Matrices:
   // One is where we calculate P = L * R * rules, for fixed spans and split points (the "bot")
-  // One is the L part of the above, and also doubles as the sink for U = P * unaries (the "top")
+  // One is the L part of the above
   // Another is the R part.
-  // finally, we have the smaller "accumulator" array, where we store results from the P = L * R * rules
-  // and do rescaling and stuff
-  private val devParentBot, devLeft, devRight = context.createFloatBuffer(CLMem.Usage.InputOutput, numGPUCells * cellSize)
-  private val devParentTop = devLeft // reuse array
-  private val devParentAcc = context.createFloatBuffer(CLMem.Usage.InputOutput, numGPUAccCells * cellSize)
+  // finally, we have the array of parse charts, which is insanely large. It's also where
+  // we do rescaling, etc.
+  private val devParent, devLeft, devRight = new CLMatrix[Float](numGPUCells, cellSize)
+  private val devCharts = context.createFloatBuffer(CLMem.Usage.InputOutput, numGPUChartCells * cellSize)
 
   // also the rules
-
   private val ruleDev = context.createFloatBuffer(CLMem.Usage.Input, FloatBuffer.wrap(ruleScores), false)
-
-  // Corresponding Native Buffers on host side.
-  private val hostParentBot, hostLeft, hostRight = new NativeMatrix[Float](numGPUCells, cellSize)
-  private val hostParentTop = hostLeft // reuse array
-
 
   def _zero: Float = gen.IR._zero
 
   // other stuff
-  private val zmk = new ZeroMemoryKernel(_zero)
+  private val zmk = new ZeroMemoryKernel()
 
   private case class Batch(lengthTotals: Array[Int],
-                           sentences: IndexedSeq[IndexedSeq[W]],
-                           charts: IndexedSeq[ParseChart]) {
+                           cellTotals: Array[Int],
+                           sentences: IndexedSeq[IndexedSeq[W]]) {
     def totalLength = lengthTotals.last
     def numSentences = sentences.length
-
     val maxLength = sentences.map(_.length).max
 
-    def offsetForSpanLength(sent: Int, spanLength: Int) = {
-      ??? haveo 0 out spans that are longer
-      lengthTotals(sent) - (spanLength-1) * sent
+
+    val _workArrayOffsetsForSpan = Array.tabulate(maxLength)(span => sentences.scanLeft(0)((off, sent) => off + math.max(0,sent.length-span+1)))
+    def workArrayOffsetsForSpan(sent: Int, span: Int) = Range(_workArrayOffsetsForSpan(span)(sent), _workArrayOffsetsForSpan(span)(sent)) 
+
+    def totalLengthForSpan(span: Int) = _workArrayOffsetsForSpan(span).last
+
+    lazy val gpuCharts = for(i <- 0 until numSentences) yield {
+      val numCells = (cellTotals(i+1)-cellTotals(i))/2
+      val chart = new ParseChart(sentences(i).length, new CLMatrix(numCells, cellSize, devCharts, cellTotals(i)), new CLMatrix(numCells, cellSize, devCharts, cellTotals(i) + numCells))
+      chart.bot.spanSlice(1).write(tagScoresFor(sentences(i)), blocking=true)
+      chart
     }
 
-    def totalLengthForSpan(spanLength:Int) = lengthTotals.last - charts.length * (spanLength-1)
+    def tagScoresFor(sent: IndexedSeq[W]) = {
+      val anch = grammar.tagScorer.anchor(sent)
+      val lexAnch = grammar.lexicon.anchor(sent)
+      val tags = new Array[Float](sent.length * cellSize)
+      util.Arrays.fill(tags, _zero)
+      for(pos <- 0 until sent.length; t <- lexAnch.validTags(pos); ref <- grammar.refinements.labels.refinementsOf(t)) {
+        val index = grammar.refinements.labels.globalize(t, ref)
+        val score = lexAnch.score(pos, grammar.refinedGrammar.labelIndex.get(index))
+        val gpuIndex = structure.labelIndexToTerminal(index)
+        tags(gpuIndex * sent.length + pos) = gen.IR.fromLogSpace(score)
+      }
+      tags
 
-    def offsetsForSpan(sent: Int, spanLength: Int) = Range(offsetForSpanLength(sent, spanLength), offsetForSpanLength(sent+1,spanLength))
+    }
   }
 
-  private def getBatches(sentences: IndexedSeq[IndexedSeq[W]]): IndexedSeq[IndexedSeq[IndexedSeq[W]]] = {
-    val result = ArrayBuffer[IndexedSeq[IndexedSeq[W]]]()
+  private def getBatches(sentences: IndexedSeq[IndexedSeq[W]]): IndexedSeq[Batch] = {
+    val result = ArrayBuffer[Batch]()
     var current = ArrayBuffer[IndexedSeq[W]]()
     var currentLengthTotal = 0
+    var currentCellTotal = 0
     for( (s, i) <- sentences.zipWithIndex) {
       currentLengthTotal += s.length
-      if(currentLengthTotal > numGPUAccCells) {
+      currentCellTotal += TriangularArray.arraySize(s.length+1) * 2
+      if(currentLengthTotal > numGPUCells || currentCellTotal > numGPUChartCells) {
         assert(current.nonEmpty)
-        result += current
+        result += createBatch(current)
         currentLengthTotal = s.length
+        currentCellTotal = TriangularArray.arraySize(s.length+1) * 2
         current = ArrayBuffer()
       }
       current += s
     }
 
-    if(current.nonEmpty) result += current
+    if(current.nonEmpty) result += createBatch(current)
     result
   }
 
   private def createBatch(sentences: IndexedSeq[IndexedSeq[W]]): Batch = {
     val lengthTotals = sentences.scanLeft(0)((acc, sent) => acc + sent.length)
-    val posTags = for( (s, i) <- sentences.zipWithIndex) yield {
-      val anch  = grammar.tagScorer.anchor(s)
-      val lexAnch = grammar.lexicon.anchor(s)
-      val chart = new ParseChart(s.length, cellSize, cellSize, gen.IR._zero)
-      for {
-        pos <- (0 until s.length)
-        a <- lexAnch.allowedTags(pos)
-        refA <- grammar.refinements.labels.refinementsOf(a)
-      } {
-        val global = grammar.refinements.labels.globalize(a, refA)
-        val score = anch.scoreTag(pos, grammar.refinedGrammar.labelIndex.get(global))
-        chart.terms.array(pos, structure.labelIndexToTerminal(global)) = gen.IR.fromLogSpace(score.toFloat)
-        assert(!score.isNaN)
+    val cellTotals = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length+1))
+    Batch(lengthTotals.toArray, cellTotals.toArray, sentences)
+  }
+
+
+  private def inside(batch: Batch) = synchronized {
+    var eZp = zmk.fillMemory(devParent.data, _zero)
+
+    val doneTUnary = doUnaryUpdates(batch, 1, eZp)
+    eZp = zmk.fillMemory(devParent.data, _zero, doneTUnary: _*)
+
+    val ttdone = doTTUpdates(batch, eZp +: doneTUnary:_*)
+    var events = ttdone:Seq[CLEvent]
+
+    for(span <- 2 until batch.maxLength) {
+      // TODO: there's got to be a better way. implicits?
+      events = Seq[Seq[CLEvent]=>Seq[CLEvent]](
+        doNTUpdates(batch, span, _ :_*),
+        doTNUpdates(batch, span, _ :_*),
+        doNNUpdates(batch, span, batch.maxLength, _ :_*),
+        sumBackToCharts(batch, _.bot, span, _ :_*),
+        {(x: Seq[CLEvent]) => Seq(zmk.fillMemory(devParent.data, _zero, x:_*))},
+        doUnaryUpdates(batch, span, _ : _*),
+        sumBackToCharts(batch, _.top, span, _ :_*),
+        {(x: Seq[CLEvent]) => Seq(zmk.fillMemory(devParent.data, _zero, x:_*))}
+      ).foldLeft(events)((a,b) => b apply a)
+    }
+    events
+  }
+
+  private def doBinaryRules(batch: Batch,
+    kernels: IndexedSeq[CLKernel],
+    span: Int,
+    splitRange: Range,
+    leftChart: ParseChart=>ChartHalf,
+    rightChart: ParseChart=>ChartHalf,
+    events: CLEvent*) = {
+    var ev = events
+
+    var offset = 0 // number of cells used so far.
+
+    val usedPerSplit = batch.totalLengthForSpan(span)
+    var maxOffset = 0 // maximum number of cells used in one kernel execution.
+                      // will be a multiple of usedPerSplit
+
+    for(leftChildLength <- splitRange) {
+      // if we fill up the buffer, run a pass.
+      if(offset + usedPerSplit >= numGPUCells)  {
+        assert(offset != 0)
+        ev = kernels.map{ kernel =>
+          kernel.setArgs(devParent, devLeft, devRight, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
+          kernel.enqueueNDRange(queue, Array(offset), ev:_*)
+        } 
+        maxOffset = maxOffset max offset
+        offset = 0
       }
-      chart
+      // add next split point
+      val evWrite = new ArrayBuffer[CLEvent]()
+      evWrite.sizeHint(batch.numSentences * 2)
+      for(sent <- 0 until batch.numSentences) {
+        val lslice = leftChart(batch.gpuCharts(sent)).spanSlice(leftChildLength, 0, batch.gpuCharts(sent).length-span+1)
+        val rslice = rightChart(batch.gpuCharts(sent)).spanSlice(span-leftChildLength, leftChildLength)
+
+        assert(lslice.rows == rslice.rows)
+        val offsets = batch.workArrayOffsetsForSpan(sent, span) 
+
+        val wl = devLeft(offsets.map(_ + offset), ::).write(lslice,ev:_*)
+        val wr = devRight(offsets.map(_ + offset), ::).write(rslice,ev:_*)
+        evWrite += wl
+        evWrite += wr
+      }
+
+      ev = evWrite
+      offset += usedPerSplit
     }
 
-    Batch(lengthTotals.toArray, sentences, posTags)
+
+    if(offset > 0) {
+      maxOffset = maxOffset max offset
+      ev = kernels.map{ kernel =>
+        kernel.setArgs(devParent, devLeft, devRight, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
+        kernel.enqueueNDRange(queue, Array(offset), ev:_*)
+      }
+    } 
+
+    if(maxOffset > usedPerSplit)
+      ev = sumSplitBlocks(usedPerSplit, maxOffset, ev:_*)
+
+    ev
   }
 
-
-  def inside(batch: Batch) = synchronized {
-    var eZpb = zmk.zeroMemory(devParentBot)
-    var eZpt = zmk.zeroMemory(devParentTop)
-    var eZpa = zmk.zeroMemory(devParentAcc)
-    hostParentTop := _zero
-    hostParentBot := _zero
-    val (tuEndEvents, offsets) = doTUnaryUpdates(batch, eZpt)
-    copyBackToHost(devParentTop, hostParentTop, batch, _.top, 1, offsets, tuEndEvents:_*)
-    val ttdone = doTTUpdates(batch, maxLength, eZpa +: eZpb +: tuEndEvents:_*)
-    for(span <- 2 until maxLength) {
-      val nt = doNTUpdates(batch, span, ttdone._1)
-      doTNUpdates(batch, span, nt)
-      val (doneNN,offsets) = doNNUpdates(batch, span, tuEndEvents:_*)
-      copyBackToHost(devParentAcc, hostParentBot, batch, _.bot, span, offsets, doneNN:_*)
-      val doneU = doUnaryUpdates(batch, span)
-      copyBackToHost(devParentTop, hostParentTop, batch, _.top, span, offsets, doneU:_*)
-
-      eZpb = zmk.zeroMemory(devParentBot)
-      eZpt = zmk.zeroMemory(devParentTop)
-      eZpa = zmk.zeroMemory(devParentAcc)
-    }
-  }
-
-  def doTUnaryUpdates(batch: Batch, events: CLEvent*) = {
-    import batch._
-    for(sent <- 0 until charts.length) {
-      val lslice = charts(sent).terms
-      hostParentBot(offsetsForSpan(sent, 1), ::) := lslice.array
-    }
-    val wL = devParentBot.write(queue:CLQueue, 0, totalLengthForSpan(1) * cellSize, hostParentBot.pointer.as(jl.Float.TYPE), false, events:_*)
-    val endEvents = insideGen.insideTUKernels.map{(kernel) =>
-      kernel.setArgs(devParentTop, devParentBot, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(numGPUCells), Integer.valueOf(offsets.last))
-      kernel.enqueueNDRange(queue, Array(offsets.length), wL)
-    }
-     endEvents -> offsets
-  }
-
-  private def doBinaryRules(kernels: IndexedSeq[CLKernel], leftCellSize: Int, rightCellSize: Int, numToDo: Int, distinctPositions: Int, events: CLEvent*) = {
-    val wL = devLeft.write(queue:CLQueue, 0, numToDo * leftCellSize, hostLeft.pointer.as(jl.Float.TYPE), false, events:_*)
-    val wR = devRight.write(queue:CLQueue, 0, numToDo * rightCellSize, hostRight.pointer.as(jl.Float.TYPE), false, events:_*)
-    val writeEvents = IndexedSeq(wL, wR)
-
-
-    val multiplies = kernels.map{ kernel =>
-      kernel.setArgs(devParentBot, devLeft, devRight, Integer.valueOf(0), ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(numToDo))
-      kernel.enqueueNDRange(queue, Array(numToDo), writeEvents:_*)
-    }
-    assert(distinctPositions <= numGPUAccCells)
-    val doneSum = {
-      if(numToDo > numGPUAccCells)
-        sumSplitBlocks(devParentBot, numToDo, distinctPositions, multiplies:_*)
-      else
-        multiplies
-    }
-    sumGrammarCells(devParentAcc, 0, devParentBot, 0, distinctPositions, doneSum:_*)
-  }
-
-  def doTTUpdates(charts: IndexedSeq[ParseChart], span: Int, events: CLEvent*) = {
+  def doTTUpdates(batch: Batch, events: CLEvent*) = {
     // layout:
     // Parents for each span of length 2 == n -1
     // [Sent0Span2Pos0, Sent0Span2Pos1, ..., Sent0Span2PosN-2, Sent1Span2Pos0, ...]
     // [Sent0Term0    , Sent0Term1    , ..., Sent0TermN-1    , Sent1Term0    , ...]
     // [Sent0Term1    , Sent0Term2    , ..., Sent0TermN      , Sent1Term1    , ...]
-    val offsets = charts.scanLeft(0)((off, chart) => off + chart.length-1)
-    for(sent <- 0 until charts.length) {
-      val lslice = charts(sent).terms.rowSlice(0, charts(sent).length-1)
-      val rslice = charts(sent).terms.rowSlice(1, charts(sent).length)
-      hostLeft(offsets(sent) until offsets(sent+1), ::) := lslice
-      hostRight(offsets(sent) until offsets(sent+1), ::) := rslice
-    }
-
-    val ret = doBinaryRules(insideGen.insideTTKernels, numGPUCells, numGPUCells, offsets.last, offsets.last, events:_*)
-    ret -> offsets
+    doBinaryRules(batch, insideGen.insideTTKernels, 2, 1 to 1, _.bot, _.bot, events:_*)
   }
 
 
-  def doTNUpdates(charts: IndexedSeq[ParseChart], span: Int, events: CLEvent*) = {
-    val offsets = charts.scanLeft(0)((off, chart) => off + chart.length-span)
-    val leftChildLength = 1
-    for(sent <- 0 until charts.length) {
-      val lslice = charts(sent).terms.rowSlice(0, charts(sent).length-span+1)
-      val rslice = charts(sent).top.spanSlice(span-leftChildLength, leftChildLength, charts(sent).length)
-      assert(lslice.rows == rslice.rows)
-      assert(offsets(sent+1) - offsets(sent) == lslice.rows)
-      hostLeft(offsets(sent) until offsets(sent+1), ::) := lslice
-      hostRight(offsets(sent) until offsets(sent+1), ::) := rslice
-    }
-    doBinaryRules(insideGen.insideTNKernels, numGPUCells, numGPUCells, offsets.last, offsets.last, events:_*)
+  def doTNUpdates(batch: Batch, span: Int, events: CLEvent*) = {
+    doBinaryRules(batch, insideGen.insideTNKernels, span, 1 to 1, _.bot, _.top, events:_*)
   }
 
-  def doNTUpdates(charts: IndexedSeq[ParseChart], span: Int, events: CLEvent*) = {
-    val offsets = charts.scanLeft(0)((off, chart) => off + chart.length-span)
-    val leftChildLength = span-1
-    for(sent <- 0 until charts.length) {
-      val lslice = charts(sent).top.spanSlice(leftChildLength, 0, charts(sent).length - leftChildLength)
-      val rslice = charts(sent).terms.rowSlice(leftChildLength, charts(sent).length)
-      assert(lslice.rows == rslice.rows)
-      assert(offsets(sent+1) - offsets(sent) == lslice.rows)
-      hostLeft(offsets(sent) until offsets(sent+1), ::) := lslice
-      hostRight(offsets(sent) until offsets(sent+1), ::) := rslice
-    }
-    doBinaryRules(insideGen.insideNTKernels, numGPUCells, numGPUCells, offsets.last, offsets.last, events:_*)
+  def doNTUpdates(batch: Batch, span: Int, events: CLEvent*) = {
+    doBinaryRules(batch, insideGen.insideNTKernels, span, (span-1) to (span-1), _.top, _.bot, events:_*)
   }
 
-  def doUnaryUpdates(charts: IndexedSeq[ParseChart], span: Int, events: CLEvent*): IndexedSeq[CLEvent] = {
-    val offsets = charts.scanLeft(0)((off, chart) => off + chart.length-span)
-    insideGen.insideNUKernels.map{(kernel) =>
-      kernel.setArgs(devParentTop, devParentAcc, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(numGPUCells), Integer.valueOf(offsets.last))
-      kernel.enqueueNDRange(queue, Array(offsets.length), events:_*)
-    }
-  }
-
-  def doNNUpdates(charts: IndexedSeq[ParseChart], span: Int, maxLength: Int, events: CLEvent*): (IndexedSeq[CLEvent], IndexedSeq[Int]) = {
-    var offset = 0 // number of cells used so far.
-    var blockSize = 0
-    val offsets = charts.scanLeft(0)((off, chart) => off + chart.length-span)
-    for(leftChildLength <- 1 until (maxLength - span)) {
-      for(sent <- 0 until charts.length) {
-        val lslice = charts(sent).top.spanSlice(leftChildLength, 0, charts(sent).length-span+1)
-        val rslice = charts(sent).top.spanSlice(span-leftChildLength, leftChildLength)
-        assert(lslice.rows == rslice.rows)
-        hostLeft(offset until (offset + lslice.rows), ::) := lslice
-        hostRight(offset until (offset + lslice.rows), ::) := charts(sent).top.spanSlice(span-leftChildLength, leftChildLength)
-        offset += lslice.rows
-      }
+  def doUnaryUpdates(batch: Batch, span: Int, events: CLEvent*): IndexedSeq[CLEvent] = {
+    import batch._
+    val writeEvents = for(sent <- 0 until batch.numSentences) yield {
+      val lslice = batch.gpuCharts(sent).bot.spanSlice(span)
+      devLeft(workArrayOffsetsForSpan(sent, span), ::).write(lslice, events: _*)
     }
 
-    val doneNN = doBinaryRules(insideGen.insideNNKernels, numGPUCells, numGPUCells, offset, offsets.last, events:_*)
-
-    IndexedSeq(doneNN) -> offsets
+    val kernels = if(span == 1) insideGen.insideTUKernels else insideGen.insideNUKernels
+    val endEvents = kernels.map{(kernel) =>
+      kernel.setArgs(devParent, devLeft, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(numGPUCells), Integer.valueOf(totalLengthForSpan(span)))
+      kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), writeEvents:_*)
+    }
+    endEvents
   }
 
-  private def sumSplitBlocks(devParentBot: CLBuffer[jl.Float], targetSize: Int, currentSize: Int, events: CLEvent*):IndexedSeq[CLEvent] = {
-    // TODO handle the remainder
+  def doNNUpdates(batch: Batch, span: Int, maxLength: Int, events: CLEvent*) = {
+    doBinaryRules(batch, insideGen.insideNNKernels, span, (1 until maxLength-span), _.bot, _.bot, events:_*)
+  }
+
+  private def sumSplitBlocks(targetSize: Int, currentSize: Int, events: CLEvent*):IndexedSeq[CLEvent] = {
     assert(currentSize % targetSize == 0)
     val multiple: Int = currentSize / targetSize
     val log2 = BitHacks.log2(multiple)
@@ -315,12 +297,12 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     var ev:IndexedSeq[CLEvent] = events.toIndexedSeq
     if(log2 != multiple) {
       val difference = multiple - log2
-      ev = IndexedSeq(sumGrammarCells(devParentBot, 0, devParentBot, currentSize - difference*targetSize, difference * targetSize, ev:_*))
+      ev = IndexedSeq(sumGrammarCells(devParent.data, 0, devParent.data, currentSize - difference*targetSize, difference * targetSize, ev:_*))
     }
     var size = size2
     while (size > targetSize) {
-      size >>= 1
-      ev = IndexedSeq(sumGrammarCells(devParentBot, 0, devParentBot, size, size, ev:_*))
+      size /= 2
+      ev = IndexedSeq(sumGrammarCells(devParent.data, 0, devParent.data, size, size, ev:_*))
     }
     assert(size == targetSize)
     ev
@@ -331,16 +313,13 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     insideGen.sumGrammarCellsKernel.enqueueNDRange(queue, Array(length, cellSize), Array(32, 1, 1), events:_*)
   }
 
-  private def copyBackToHost(devParent: CLBuffer[jl.Float],
-                     hostParent: NativeMatrix[Float],
-                     batch: Batch,
-                     level: ParseChart=>ChartHalf,
-                     span: Int, events: CLEvent*) = {
-    devParent.read(queue, hostParent.pointer.as(jl.Float.TYPE), true, events:_*)
-    for(sent <- (0 until batch.numSentences).par) {
-      val lslice = level(batch.charts(sent)).spanSlice(span)
-      lslice := hostParent(batch.offsetsForSpan(sent,span) until batch.offsetsForSpan(sent, span), ::)
+  private def sumBackToCharts(batch: Batch, level: ParseChart=>ChartHalf, span: Int, events: CLEvent*) = {
+    val evs = for(sent <- 0 until batch.numSentences) yield {
+      val offsets = batch.workArrayOffsetsForSpan(sent, span)
+      val lslice = level(batch.gpuCharts(sent)).spanSlice(span)
+      sumGrammarCells(lslice.data, lslice.offset, devParent.data, offsets.start, offsets.length, events:_*)
     }
+    evs
   }
 }
 

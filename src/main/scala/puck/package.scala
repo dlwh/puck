@@ -1,4 +1,6 @@
 import org.bridj.Pointer
+import com.nativelibs4java.opencl._
+import java.{lang=>jl}
 
 /**
  * TODO
@@ -76,5 +78,12 @@ package object puck {
     def +(off: Long) = pointer.next(off)
   }
 
+  implicit def bufFloatTojlFloatBuffer(buffer: CLBuffer[Float]) = buffer.asInstanceOf[CLBuffer[jl.Float]]
+  implicit def bufDoubleTojlDoubleBuffer(buffer: CLBuffer[Double]) = buffer.asInstanceOf[CLBuffer[jl.Double]]
+  implicit def bufIntTojlIntBuffer(buffer: CLBuffer[Int]) = buffer.asInstanceOf[CLBuffer[jl.Integer]]
+
+  implicit def bufjlFloatToFloatBuffer(buffer: CLBuffer[jl.Float]) = buffer.asInstanceOf[CLBuffer[Float]]
+  implicit def bufjlDoubleToDoubleBuffer(buffer: CLBuffer[jl.Double]) = buffer.asInstanceOf[CLBuffer[Double]]
+  implicit def bufjlIntToIntBuffer(buffer: CLBuffer[jl.Integer]) = buffer.asInstanceOf[CLBuffer[Int]]
 
 }

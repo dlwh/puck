@@ -50,4 +50,19 @@ class CLInside[C, L](ruleStructure: RuleStructure[C, L], val gen: ParserGen[L])(
     }
 
   }))
+
+/*
+   // TODO: before zeroing out on the last unary, copy partitions to devRight or something.
+  lazy val partitionKernel = gen.mkKernel(gen.IR.kernel("compute_partitions", { (partitions: Rep[Array[Float] with Global],
+                                                                 insideTops: Rep[Float with Global],
+                                                                 offsets: Rep[Array[Int] with Global],
+                                                                 lengths: Rep[Array[Int] with Global]) =>
+    val sentence = globalId(0)
+    val grammar = globalId(1)
+    val length = lengths(sentence)
+    val offset = offsets(sentence)
+    val cell = insideTops(offset, 0, length, grammar)
+    partitions(sentence * numGrammars + grammar) = (cell(root)).toLogSpace
+  }))
+*/
 }

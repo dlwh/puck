@@ -1,23 +1,21 @@
 package puck.newparser
 
-import puck.linalg.NativeMatrix
+import puck.linalg.CLMatrix
 import breeze.collection.mutable.TriangularArray
 
-class ParseChart(val length: Int, numLabels: Int, numTermLabels: Int, zero: Float) {
-  val top, bot = new ChartHalf(length, numLabels, zero)
-  val terms = new TermChart(length, numTermLabels, zero)
+class ParseChart(val length: Int, botMat: CLMatrix[Float], topMat: CLMatrix[Float]) {
+  val top = new ChartHalf(length, botMat)
+  val bot = new ChartHalf(length, topMat)
 }
 
-class ChartHalf(val length: Int, val numLabels: Int, zero: Float) {
-  val array = new NativeMatrix[Float](TriangularArray.arraySize(length+1), numLabels)
-  array := zero
+class ChartHalf(val length: Int, val matrix: CLMatrix[Float]) {
 
-  def apply(begin: Int, end: Int, label: Int) = array(ChartHalf.chartIndex(begin, end, length), label)
+  def apply(begin: Int, end: Int, label: Int) = matrix(ChartHalf.chartIndex(begin, end, length), label)
 
-  def spanSlice(spanLength: Int, offset: Int = 0, end: Int = length): NativeMatrix[Float] = {
+  def spanSlice(spanLength: Int, offset: Int = 0, end: Int = length): CLMatrix[Float] = {
     val firstIndex: Int = ChartHalf.chartIndex(offset, spanLength, length)
     val lastIndex = math.min(ChartHalf.chartIndex(0,spanLength+1,length), end + firstIndex)
-    array(firstIndex until lastIndex, ::)
+    matrix(firstIndex until lastIndex, ::)
   }
 }
 
@@ -30,9 +28,3 @@ object ChartHalf {
   }
 }
 
-class TermChart(length: Int, numTermLabels: Int, zero: Float) {
-  val array = new NativeMatrix[Float](length, numTermLabels)
-  array := zero
-  def rowSlice(begin: Int, end: Int) = array(begin until end, ::)
-  def apply(begin: Int, label: Int) = array(begin, label)
-}
