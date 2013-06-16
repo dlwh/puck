@@ -44,7 +44,7 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
   /** Creates a matrix with the specified data array, rows, and columns. Data must be column major */
   def this(rows: Int, cols: Int, data: CLBuffer[V], offset: Int = 0)(implicit queue: CLQueue) = this(rows, cols, data, offset, rows)
 
-  lazy val mappedPointer = data.map(queue, CLMem.MapFlags.ReadWrite)
+  def mappedPointer = data.map(queue, CLMem.MapFlags.ReadWrite)
 
   def apply(row: Int, col: Int) = {
     if(row < 0 || row >= rows) throw new IndexOutOfBoundsException((row,col) + " not in [0,"+rows+") x [0," + cols+")")
@@ -90,6 +90,40 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
 
   def isActive(i: Int) = true
   def allVisitableIndicesActive = true
+
+  def write(arr: Array[V], blocking: Boolean, events: CLEvent*):CLEvent = {
+    if(arr.length != size) throw new RuntimeException("Size mismatch between matrix and array!")
+    data.write(queue, offset, arr.length, Pointer.pointerToArray[V](arr), blocking, events:_*)
+  }
+
+  private def isGapless = (!this.isTranspose && this.majorStride == this.rows) || (this.isTranspose && this.majorStride == this.cols)
+
+
+  def write(b: CLMatrix[V], blocking: Boolean, events: CLEvent*):CLEvent = {
+    // TODO: probably make this factory
+    require(this.queue eq b.queue)
+    require(this.rows == b.rows, "Matrices must have same number of rows")
+    require(this.cols == b.cols, "Matrices must have same number of columns")
+    val ev = if(this.isGapless && b.isGapless && this.isTranspose == b.isTranspose) {
+       data.copyTo(queue, offset, rows * cols, b.data, b.offset)
+    } else if(this.isTranspose == b.isTranspose) {
+      // copy one "column" at this time
+      val rr = if(this.isTranspose) this.cols else this.rows
+      val cc = if(this.isTranspose) this.rows else this.cols
+      val ev = for(column <- 0 until cc) yield {
+        data.copyTo(queue, offset + majorStride * column, rr,
+                    b.data, b.offset + b.majorStride * column)
+      }
+      b.queue.enqueueMarker()
+    } else {
+      ???
+    }
+    if(blocking)
+      ev.waitFor()
+
+    ev
+
+  }
 
 
 }
@@ -163,7 +197,7 @@ object CLMatrix extends LowPriorityNativeMatrix {
     new CanSlice2[CLMatrix[V], ::.type, Range, CLMatrix[V]] {
       def apply(m: CLMatrix[V], ignored: ::.type, cols: Range) = {
         import m.queue
-        if(cols.isEmpty) new CLMatrix(0, 0, m.data, 0, 1)
+        if(cols.isEmpty) new CLMatrix(m.rows, 0, m.data, 0, 1)
         else if(!m.isTranspose) {
           val first = cols.head
           new CLMatrix(m.rows, cols.length, m.data, m.offset + first * m.majorStride, m.majorStride * cols.step)
@@ -462,31 +496,16 @@ trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
     }
   }
 
-  class SetDMDMFloatOp extends BinaryUpdateOp[CLMatrix[Float], CLMatrix[Float], OpSet] {
-    def isGapless(a: CLMatrix[Float]) = (!a.isTranspose && a.majorStride == a.rows)  ||(a.isTranspose && a.majorStride == a.cols)
-    def apply(a: CLMatrix[Float], b: CLMatrix[Float]) {
-      // TODO: probably make a factory
-      require(a.queue eq b.queue)
-      require(a.rows == b.rows, "Matrices must have same number of rows")
-      require(a.cols == b.cols, "Matrices must have same number of columns")
-      if(isGapless(a) && isGapless(b) && a.isTranspose == b.isTranspose) {
-        val ev = b.data.copyTo(b.queue, b.offset, a.rows * b.rows, a.data, a.offset)
-        b.queue.enqueueWaitForEvents(ev)
-        return
-      } else if(a.isTranspose == b.isTranspose) {
-        // copy one "column" at a time
-        val rr = if(a.isTranspose) a.cols else a.rows
-        val cc = if(a.isTranspose) a.rows else a.cols
-        val ev = for(column <- 0 until cc) yield {
-          b.data.copyTo(b.queue, b.offset + b.majorStride * cc, rr, a.data, a.offset + a.majorStride * cc)
-        }
-        b.queue.enqueueWaitForEvents(ev: _ *)
-        return
-      } else {
-        ???
-      }
+  class SetDMDMVOp[V] extends BinaryUpdateOp[CLMatrix[V], CLMatrix[V], OpSet] {
+    def apply(a: CLMatrix[V], b: CLMatrix[V]) {
+      b.write(a, true)
     }
   }
+
+  implicit object setDMDMFloat extends SetDMDMVOp[Float]
+  implicit object setDMDMLong extends SetDMDMVOp[Long]
+  implicit object setDMDMInt extends SetDMDMVOp[Int]
+  implicit object setDMDMDouble extends SetDMDMVOp[Double]
 
   /*
   class SetDMDVOp[@specialized(Int, Double, Float) V] extends BinaryUpdateOp[CLMatrix[V], CLMatrix[V], OpSet] {

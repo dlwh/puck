@@ -1,4 +1,5 @@
-package puck.parser
+package puck
+package parser
 
 import com.nativelibs4java.opencl.{CLQueue, CLEvent, CLContext, CLBuffer}
 import java.lang.{Float=>JFloat}
@@ -25,10 +26,10 @@ case class GPUCharts[C, L](top: MemBufPair[Float],
   def clear(events: CLEvent*)(implicit context: CLContext, queue: CLQueue) = setTo(0.0f, events:_*)
 
   def setTo(fl: Float, events: CLEvent*)(implicit context: CLContext, queue: CLQueue) = {
-    val zmk = ZeroMemoryKernel(0.0f)
-    var a  = zmk.fillMemory(top, fl, events:_*)
-    a = zmk.fillMemory(bot, fl, Seq(a) ++  events:_*)
-    zmk.fillMemory(tags, fl, Seq(a) ++  events:_*)
+    val zmk = ZeroMemoryKernel(context)
+    var a  = zmk.fillMemory(top.dev, fl, events:_*)
+    a = zmk.fillMemory(bot.dev, fl, Seq(a) ++  events:_*)
+    zmk.fillMemory(tags.dev, fl, Seq(a) ++  events:_*)
   }
 
   def release() {

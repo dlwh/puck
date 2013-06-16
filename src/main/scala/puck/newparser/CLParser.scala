@@ -125,11 +125,11 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
       val lexAnch = grammar.lexicon.anchor(sent)
       val tags = new Array[Float](sent.length * cellSize)
       util.Arrays.fill(tags, _zero)
-      for(pos <- 0 until sent.length; t <- lexAnch.validTags(pos); ref <- grammar.refinements.labels.refinementsOf(t)) {
+      for(pos <- 0 until sent.length; t <- lexAnch.allowedTags(pos); ref <- grammar.refinements.labels.refinementsOf(t)) {
         val index = grammar.refinements.labels.globalize(t, ref)
-        val score = lexAnch.score(pos, grammar.refinedGrammar.labelIndex.get(index))
+        val score = anch.scoreTag(pos, grammar.refinedGrammar.labelIndex.get(index))
         val gpuIndex = structure.labelIndexToTerminal(index)
-        tags(gpuIndex * sent.length + pos) = gen.IR.fromLogSpace(score)
+        tags(gpuIndex * sent.length + pos) = gen.IR.fromLogSpace(score.toFloat)
       }
       tags
 
@@ -225,9 +225,10 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 
         assert(lslice.rows == rslice.rows)
         val offsets = batch.workArrayOffsetsForSpan(sent, span) 
+        val mappedRange = Range(offsets.start + offset, offsets.end + offset)
 
-        val wl = devLeft(offsets.map(_ + offset), ::).write(lslice,ev:_*)
-        val wr = devRight(offsets.map(_ + offset), ::).write(rslice,ev:_*)
+        val wl = devLeft(mappedRange, ::).write(lslice,false,ev:_*)
+        val wr = devRight(mappedRange, ::).write(rslice,false,ev:_*)
         evWrite += wl
         evWrite += wr
       }
@@ -273,7 +274,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     import batch._
     val writeEvents = for(sent <- 0 until batch.numSentences) yield {
       val lslice = batch.gpuCharts(sent).bot.spanSlice(span)
-      devLeft(workArrayOffsetsForSpan(sent, span), ::).write(lslice, events: _*)
+      devLeft(workArrayOffsetsForSpan(sent, span), ::).write(lslice, false, events: _*)
     }
 
     val kernels = if(span == 1) insideGen.insideTUKernels else insideGen.insideNUKernels
