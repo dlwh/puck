@@ -94,12 +94,12 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
   def isActive(i: Int) = true
   def allVisitableIndicesActive = true
 
-  def writeFrom(b: DenseMatrix[V], blocking: Boolean, events: CLEvent*):CLEvent = {
+  def writeFrom(b: DenseMatrix[V], blocking: Boolean, events: CLEvent*):Seq[CLEvent] = {
     require(b.rows == this.rows, "Matrices must have same number of rows")
     require(b.cols == this.cols, "Matrices must have same number of columns")
     val floats =  Pointer.pointerToArray[V](b.data)
     val ev = if(isGapless(b) && this.isGapless && b.isTranspose == this.isTranspose) {
-       data.write(queue, offset, size, floats.next(b.offset), blocking, events:_*)
+       IndexedSeq(data.write(queue, offset, size, floats.next(b.offset), blocking, events:_*))
     } else if(b.isTranspose == this.isTranspose) {
       // copy one "column" at b time
       val rr = if(b.isTranspose) b.cols else b.rows
@@ -108,20 +108,16 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
        data.write(queue, offset + majorStride * column, 
          rr, floats.next(b.offset + b.majorStride * column), blocking, events:_*)
       }
-      this.queue.enqueueMarker()
+      ev
     } else {
       ???
     }
     if(blocking) {
-      ev.waitFor()
+      ev.foreach(_.waitFor())
       floats.release()
-    } else future {
-      ev.waitFor()
-      floats.release()
-    }
+    } 
 
     ev
-
   }
 
   private def isGapless = (!this.isTranspose && this.majorStride == this.rows) || (this.isTranspose && this.majorStride == this.cols)

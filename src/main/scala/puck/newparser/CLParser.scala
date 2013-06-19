@@ -137,11 +137,9 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 
     def initializeTagScores() = {
       for(i <- 0 until numSentences) yield {
-        gpuCharts(i).top.matrix := _zero
-        gpuCharts(i).bot.matrix := _zero
         gpuCharts(i).bot.spanSlice(1).writeFrom(tagScoresFor(sentences(i)), blocking=false)
       }
-    }
+    }.flatten
 
     def tagScoresFor(sent: IndexedSeq[W]) = {
       val anch = grammar.tagScorer.anchor(sent)
@@ -189,15 +187,22 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 
 
   private def inside(batch: Batch):Seq[CLEvent] = synchronized {
+    devCharts := _zero
     //devCharts := _zero
     val init = batch.initializeTagScores()
     var eZp = zmk.fillMemory(devParent.data, _zero)
+    println("!!!")
+    queue.finish()
+    println("???")
 
     var events:Seq[CLEvent] = doUnaryUpdates(batch, 1, eZp +: init :_*)
     events = sumBackToCharts(batch, _.top, 1, events :_*)
     events = IndexedSeq(zmk.fillMemory(devParent.data, _zero, events:_*))
 
     events = doTTUpdates(batch, events:_*)
+    println("!!!")
+    queue.finish()
+    println("???")
     events = sumBackToCharts(batch, _.bot, 2, events :_*)
     events = IndexedSeq(zmk.fillMemory(devParent.data, _zero, events:_*))
     queue.finish()
