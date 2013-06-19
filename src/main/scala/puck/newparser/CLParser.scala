@@ -206,7 +206,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 
     for(span <- 2 to batch.maxLength) {
       devParent := _zero
-      devParent := _zero
+      println(span)
       // TODO: there's got to be a better way. implicits?
       events = Seq[Seq[CLEvent]=>Seq[CLEvent]](
         doNTUpdates(batch, span, _ :_*),
@@ -274,6 +274,8 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
       offset += usedPerSplit
     }
 
+    println("SR: " + splitRange)
+
 
     if(offset > 0) {
       maxOffset = maxOffset max offset
@@ -310,6 +312,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 
   def doUnaryUpdates(batch: Batch, span: Int, events: CLEvent*): IndexedSeq[CLEvent] = {
     import batch._
+    val zeroOut = zmk.fillMemory(devParent.data, _zero, events:_*)
     val writeEvents = for(sent <- 0 until batch.numSentences) yield {
       val lslice = batch.gpuCharts(sent).bot.spanSlice(span)
       devLeft(workArrayOffsetsForSpan(sent, span), ::).writeFrom(lslice, false, events: _*)
@@ -318,7 +321,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     val kernels = if(span == 1) insideGen.insideTUKernels else insideGen.insideNUKernels
     val endEvents = kernels.map{(kernel) =>
       kernel.setArgs(devParent.data, devLeft.data, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(numGPUCells), Integer.valueOf(totalLengthForSpan(span)))
-      kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), writeEvents:_*)
+      kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), (zeroOut +: writeEvents):_*)
     }
     endEvents
   }
@@ -332,18 +335,22 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     val multiple: Int = currentSize / targetSize
     val log2 = BitHacks.log2(multiple)
     if(log2 == 0) return events.toIndexedSeq
-    val size2 = 1 << log2
+
+    var currentMultiple = 1 << log2
+
     var ev:IndexedSeq[CLEvent] = events.toIndexedSeq
-    if(log2 != multiple) {
-      val difference = multiple - log2
+    if(currentMultiple != multiple) {
+      println("fixing difference: " + targetSize,currentSize,multiple,log2,currentMultiple)
+      val difference = multiple - currentMultiple
       ev = IndexedSeq(sumGrammarCells(devParent(0 until difference * targetSize, ::), devParent(currentSize - difference*targetSize until currentSize, ::), ev:_*))
     }
-    var size = size2
-    while (size > 1) {
-      size /= 2
-      ev = IndexedSeq(sumGrammarCells(devParent(0 until size, ::), devParent(size until 2 * size, ::), ev:_*))
+
+    while (currentMultiple > 1) {
+      println("collapsing " + currentMultiple + " to " + currentMultiple/2)
+      currentMultiple /= 2
+      ev = IndexedSeq(sumGrammarCells(devParent(0 until currentMultiple * targetSize, ::), devParent(currentMultiple * targetSize until 2 * currentMultiple * targetSize, ::), ev:_*))
     }
-    assert(size == 1, size + " " + targetSize + " " + currentSize)
+    assert(currentMultiple == 1, currentMultiple + " " + targetSize + " " + currentSize)
     ev
   }
 
@@ -403,8 +410,8 @@ object CLParser extends Logging {
     val margs = train.map(w => ChartMarginal(AugmentedGrammar.fromRefined(grammar), w))
     for(i <- 0 until margs.length) {
       for(span <- 1 to margs(i).length; begin <- 0 until (margs(i).length-span+1)) {
-        println((begin,begin+span) + " TOP " + margs(i).inside.top.decodedLabelScores(begin,begin+span))
-        println((begin,begin+span) + " BOT " + margs(i).inside.bot.decodedLabelScores(begin,begin+span))
+      //  println((begin,begin+span) + " TOP " + margs(i).inside.top.decodedLabelScores(begin,begin+span))
+      //  println((begin,begin+span) + " BOT " + margs(i).inside.bot.decodedLabelScores(begin,begin+span))
       }
     }
 

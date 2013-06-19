@@ -28,8 +28,8 @@ trait RuleMultiply[L] extends Base with KernelOps with ExtraBase with Accumulato
           val joint:Rep[Real] = leftScore * rightScore
           for((r,id) <- rrr) {
 
-            if(joint !== zero) printf(unit("%s %d %d %d %f %f %f %f\n"), unit(name), r.parent, lc, rc, leftScore,rightScore,rules(id), joint * rules(id))
-            if(r.parent === 42) printf(unit("!!! %s %d %d %d %f %f %f %f\n"), unit(name), r.parent, lc, rc, leftScore,rightScore,rules(id), joint * rules(id))
+            if(joint !== zero) printf(unit("%s %d %d %d %d %f %f %f %f\n"), unit(name), row, r.parent, lc, rc, leftScore,rightScore,rules(id), joint * rules(id))
+            if(r.parent === 42) printf(unit("!!! %s %d %d %d %d %f %f %f %f\n"), unit(name), row, r.parent, lc, rc, leftScore,rightScore,rules(id), joint * rules(id))
             out.mad(r.parent, joint, rules(id))
           }
         }
@@ -55,7 +55,7 @@ trait RuleMultiply[L] extends Base with KernelOps with ExtraBase with Accumulato
       for( (lc, rrr) <- rulePartition.groupBy(_._1.child)) {
         val childScore:Rep[Real] = child(botRows * lc + row)
         for((r,id) <- rrr) {
-          if(childScore !== zero) printf(unit("%d %d %f %f %f\n"), r.parent, lc, childScore, rules(id), childScore * rules(id))
+          if(childScore !== zero) printf(unit("%s %d %d %d %f %f %f\n"), unit(name), row, r.parent, lc, childScore, rules(id), childScore * rules(id))
           out.mad(r.parent, childScore, rules(id))
         }
       }
