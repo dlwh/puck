@@ -2,6 +2,7 @@ package puck.linalg
 
 import breeze.linalg._
 import java.{lang=>jl}
+import java.nio._
 import scala.reflect.ClassTag
 import scala.Vector
 import breeze.util.ArrayUtil
@@ -14,6 +15,8 @@ import puck.util.{ZeroMemoryKernel, NativeArray}
 import com.nativelibs4java.opencl._
 import org.bridj.Pointer
 import com.nativelibs4java.opencl.util.Primitive
+import scala.concurrent._
+import ExecutionContext.Implicits.global
 
 /**
  * A CLMatrix is a matrix with all elements found in an NativeArray. It is column major unless isTranspose is true,
@@ -44,7 +47,7 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
   /** Creates a matrix with the specified data array, rows, and columns. Data must be column major */
   def this(rows: Int, cols: Int, data: CLBuffer[V], offset: Int = 0)(implicit queue: CLQueue) = this(rows, cols, data, offset, rows)
 
-  def mappedPointer = data.map(queue, CLMem.MapFlags.ReadWrite)
+  lazy val mappedPointer = data.map(queue, CLMem.MapFlags.ReadWrite)
 
   def apply(row: Int, col: Int) = {
     if(row < 0 || row >= rows) throw new IndexOutOfBoundsException((row,col) + " not in [0,"+rows+") x [0," + cols+")")
@@ -91,35 +94,62 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
   def isActive(i: Int) = true
   def allVisitableIndicesActive = true
 
-  def write(arr: Array[V], blocking: Boolean, events: CLEvent*):CLEvent = {
-    if(arr.length != size) throw new RuntimeException("Size mismatch between matrix and array!")
-    data.write(queue, offset, arr.length, Pointer.pointerToArray[V](arr), blocking, events:_*)
+  def writeFrom(b: DenseMatrix[V], blocking: Boolean, events: CLEvent*):CLEvent = {
+    require(b.rows == this.rows, "Matrices must have same number of rows")
+    require(b.cols == this.cols, "Matrices must have same number of columns")
+    val floats =  Pointer.pointerToArray[V](b.data)
+    val ev = if(isGapless(b) && this.isGapless && b.isTranspose == this.isTranspose) {
+       data.write(queue, offset, size, floats.next(b.offset), blocking, events:_*)
+    } else if(b.isTranspose == this.isTranspose) {
+      // copy one "column" at b time
+      val rr = if(b.isTranspose) b.cols else b.rows
+      val cc = if(b.isTranspose) b.rows else b.cols
+      val ev = for(column <- 0 until cc) yield {
+       data.write(queue, offset + majorStride * column, 
+         rr, floats.next(b.offset + b.majorStride * column), blocking, events:_*)
+      }
+      this.queue.enqueueMarker()
+    } else {
+      ???
+    }
+    if(blocking) {
+      ev.waitFor()
+      floats.release()
+    } else future {
+      ev.waitFor()
+      floats.release()
+    }
+
+    ev
+
   }
 
   private def isGapless = (!this.isTranspose && this.majorStride == this.rows) || (this.isTranspose && this.majorStride == this.cols)
+  private def isGapless(dm: DenseMatrix[V]) = (!dm.isTranspose && dm.majorStride == dm.rows) || (dm.isTranspose && dm.majorStride == dm.cols)
 
 
-  def write(b: CLMatrix[V], blocking: Boolean, events: CLEvent*):CLEvent = {
-    // TODO: probably make this factory
-    require(this.queue eq b.queue)
-    require(this.rows == b.rows, "Matrices must have same number of rows")
-    require(this.cols == b.cols, "Matrices must have same number of columns")
-    val ev = if(this.isGapless && b.isGapless && this.isTranspose == b.isTranspose) {
-       data.copyTo(queue, offset, rows * cols, b.data, b.offset)
-    } else if(this.isTranspose == b.isTranspose) {
-      // copy one "column" at this time
-      val rr = if(this.isTranspose) this.cols else this.rows
-      val cc = if(this.isTranspose) this.rows else this.cols
+  def writeFrom(b: CLMatrix[V], blocking: Boolean, events: CLEvent*):CLEvent = {
+    require(b.queue eq this.queue)
+    require(b.rows == this.rows, "Matrices must have same number of rows")
+    require(b.cols == this.cols, "Matrices must have same number of columns")
+    val ev = if(b.isGapless && this.isGapless && b.isTranspose == this.isTranspose) {
+       b.data.copyTo(queue, b.offset, rows * cols, this.data, this.offset)
+    } else if(b.isTranspose == this.isTranspose) {
+      // copy one "column" at b time
+      val rr = if(b.isTranspose) b.cols else b.rows
+      val cc = if(b.isTranspose) b.rows else b.cols
       val ev = for(column <- 0 until cc) yield {
-        data.copyTo(queue, offset + majorStride * column, rr,
-                    b.data, b.offset + b.majorStride * column)
+        b.data.copyTo(queue, b.offset + b.majorStride * column, rr,
+                    this.data, this.offset + this.majorStride * column)
       }
-      b.queue.enqueueMarker()
+      this.queue.enqueueMarker()
     } else {
       ???
     }
     if(blocking)
       ev.waitFor()
+
+
 
     ev
 
@@ -498,7 +528,7 @@ trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
 
   class SetDMDMVOp[V] extends BinaryUpdateOp[CLMatrix[V], CLMatrix[V], OpSet] {
     def apply(a: CLMatrix[V], b: CLMatrix[V]) {
-      b.write(a, true)
+      a.writeFrom(b, true)
     }
   }
 
