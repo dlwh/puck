@@ -48,9 +48,9 @@ class CLInside[C, L](ruleStructure: RuleStructure[C, L], val gen: ParserGen[L])(
     val label = globalId(1)
     if(row < rowsToDo) if(label < numLabels) {
       val score = dest(label * destRowSize + row + destOff) + source(label * srcRowSize + row + srcOff)
-      if(score !== zero) {
-        printf("%d %d %f %f %f\n", row, label, score, dest(label * destRowSize + row + destOff), source(label * srcRowSize + row + srcOff))
-      }
+      //if(score !== zero) {
+      //  printf("%d %d %f %f %f\n", row, label, score, dest(label * destRowSize + row + destOff), source(label * srcRowSize + row + srcOff))
+      //}
       dest(label * destRowSize + row + destOff) =  dest(label * destRowSize + row + destOff) + source(label * srcRowSize + row + srcOff)
     }
 
