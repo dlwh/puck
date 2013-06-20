@@ -16,7 +16,7 @@ import java.nio.FloatBuffer
 import java.{lang=>jl}
 import puck.linalg.CLMatrix
 import puck.parser.gen.SemiringFloatOpsExp
-import puck.util.{BitHacks, ZeroMemoryKernel}
+import puck.util._
 import scala.virtualization.lms.common.ArrayOpsExp
 import trochee.kernels.KernelOpsExp
 import puck.newparser.generator._
@@ -48,7 +48,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
   def partitions(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[Float] = synchronized {
     {for {
       batch <- getBatches(sentences).iterator
-          _ = inside(batch).foreach(_.waitFor())
+      _ = inside(batch).foreach(_.waitFor())
       i <- 0 until batch.numSentences
     } yield {
       batch.gpuCharts(i).top(0,batch.gpuCharts(i).length, structure.root)
@@ -56,9 +56,18 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
   }
 
   val structure = RuleStructure[C, L](grammar.refinements, grammar.refinedGrammar)
-  private implicit val queue = if(profile) context.createDefaultProfilingQueue() else context.createDefaultOutOfOrderQueueIfPossible()
   println(structure.nontermIndex.zipWithIndex)
   println(structure.termIndex.zipWithIndex)
+
+  private implicit val queue = if(profile) context.createDefaultProfilingQueue() else context.createDefaultOutOfOrderQueueIfPossible()
+  private val hdTransferEvents  = new CLProfiler("Host2Dev Transfer")
+  private val transferEvents  = new CLProfiler("Transfer")
+  private val binaryEvents  = new CLProfiler("Binary")
+  private val unaryEvents  = new CLProfiler("Unary")
+  private val sumToChartsEvents  = new CLProfiler("SumToCharts")
+  private val sumEvents  = new CLProfiler("Sum")
+  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, sumToChartsEvents, sumEvents)
+
 
   val nrules = grammar.index.size
   // TODO: reinstate this difference if numTerms is really big.
@@ -187,41 +196,49 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 
 
   private def inside(batch: Batch):Seq[CLEvent] = synchronized {
+    hdTransferEvents.clear()
+    hdTransferEvents.tick()
+
     devCharts := _zero
-    //devCharts := _zero
     val init = batch.initializeTagScores()
+    hdTransferEvents ++= init
+    CLEvent.invokeUponCompletion(new Runnable {
+      def run() {
+        hdTransferEvents.tock()
+        println("Inside " + hdTransferEvents)
+      }
+    }, init:_*)
     var eZp = zmk.fillMemory(devParent.data, _zero)
-    println("!!!")
-    queue.finish()
-    println("???")
+    allProfilers.foreach(_.clear())
+    allProfilers.foreach(_.tick())
+
 
     var events:Seq[CLEvent] = doUnaryUpdates(batch, 1, eZp +: init :_*)
     events = sumBackToCharts(batch, _.top, 1, events :_*)
     events = IndexedSeq(zmk.fillMemory(devParent.data, _zero, events:_*))
 
     events = doTTUpdates(batch, events:_*)
-    println("!!!")
-    queue.finish()
-    println("???")
     events = sumBackToCharts(batch, _.bot, 2, events :_*)
     events = IndexedSeq(zmk.fillMemory(devParent.data, _zero, events:_*))
-    queue.finish()
 
     for(span <- 2 to batch.maxLength) {
       println(span)
-      devParent := _zero
       // TODO: there's got to be a better way. implicits?
       events = Seq[Seq[CLEvent]=>Seq[CLEvent]](
         doNTUpdates(batch, span, _ :_*),
         doTNUpdates(batch, span, _ :_*),
         doNNUpdates(batch, span, batch.maxLength, _ :_*),
         sumBackToCharts(batch, _.bot, span, _ :_*),
+        {(x: Seq[CLEvent]) => Seq(zmk.fillMemory(devParent.data, _zero, x:_*))},
         doUnaryUpdates(batch, span, _ : _*),
         sumBackToCharts(batch, _.top, span, _ :_*),
         {(x: Seq[CLEvent]) => Seq(zmk.fillMemory(devParent.data, _zero, x:_*))}
       ).foldLeft(events)((a,b) => b apply a)
     }
     queue.finish()
+    allProfilers.foreach(_.tock())
+    allProfilers.foreach(p => println(s"Inside $p"))
+
     events
   }
 
@@ -250,6 +267,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
           kernel.setArgs(devParent, devLeft, devRight, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
           kernel.enqueueNDRange(queue, Array(offset), ev:_*)
         } 
+        binaryEvents ++= ev
         maxOffset = maxOffset max offset
         offset = 0
       }
@@ -271,6 +289,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
           evWrite += wr
         }
       }
+      transferEvents ++= evWrite
 
       ev = evWrite
       offset += usedPerSplit
@@ -284,10 +303,12 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
         kernel.setArgs(devParent.data, devLeft.data, devRight.data, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
         kernel.enqueueNDRange(queue, Array(offset), ev:_*)
       }
+      binaryEvents ++= ev
+
     } 
 
     if(maxOffset > usedPerSplit)
-      ev = sumSplitBlocks(usedPerSplit, maxOffset, ev:_*)
+      ev = sumEvents.adding(sumSplitBlocks(usedPerSplit, maxOffset, ev:_*))
 
     ev
   }
@@ -312,17 +333,19 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 
   def doUnaryUpdates(batch: Batch, span: Int, events: CLEvent*): IndexedSeq[CLEvent] = {
     import batch._
-    val zeroOut = zmk.fillMemory(devParent.data, _zero, events:_*)
     val writeEvents = for(sent <- 0 until batch.numSentences if batch.sentences(sent).length >= span) yield {
       val lslice = batch.gpuCharts(sent).bot.spanSlice(span)
       devLeft(workArrayOffsetsForSpan(sent, span), ::).writeFrom(lslice, false, events: _*)
     }
+    transferEvents ++= writeEvents
+
 
     val kernels = if(span == 1) insideGen.insideTUKernels else insideGen.insideNUKernels
     val endEvents = kernels.map{(kernel) =>
       kernel.setArgs(devParent.data, devLeft.data, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(numGPUCells), Integer.valueOf(totalLengthForSpan(span)))
-      kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), (zeroOut +: writeEvents):_*)
+      kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), writeEvents:_*)
     }
+    unaryEvents ++= endEvents
     endEvents
   }
 
@@ -349,6 +372,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
       ev = IndexedSeq(sumGrammarCells(devParent(0 until currentMultiple * targetSize, ::), devParent(currentMultiple * targetSize until 2 * currentMultiple * targetSize, ::), ev:_*))
     }
     assert(currentMultiple == 1, currentMultiple + " " + targetSize + " " + currentSize)
+    
     ev
   }
 
@@ -369,6 +393,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
       //queue.finish()
       ev
     }
+    sumToChartsEvents ++= evs
     evs
   }
 }
