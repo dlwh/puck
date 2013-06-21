@@ -10,7 +10,7 @@ import java.util
 class CLMatrixBulkRangeCopy private(numBlocks: Int, blockSize: Int, kernel: CLKernel) {
 
 
-  def bulkCopy(dst: CLMatrix[Float], src: CLMatrix[Float], ranges: IndexedSeq[Range], events: CLEvent*)(implicit queue: CLQueue) = synchronized {
+  def bulkCopySrcRanges(dst: CLMatrix[Float], src: CLMatrix[Float], ranges: IndexedSeq[Range], events: CLEvent*)(implicit queue: CLQueue) = synchronized {
     assert(dst.cols == src.cols)
     val _ranges = {
      val rr = ranges.filter(_.nonEmpty)
@@ -25,6 +25,35 @@ class CLMatrixBulkRangeCopy private(numBlocks: Int, blockSize: Int, kernel: CLKe
       array(arrOff+1) = r.length
       array(arrOff+2) = dstOff
       dstOff += r.length
+      arrOff += 3
+    }
+    val ptr = Pointer.pointerToArray[java.lang.Integer](array)
+    val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, array.length)
+    val ev = intBuffer.write(queue, 0, array.length, ptr, false, events:_*)
+    kernel.setArgs(dst.data, Integer.valueOf(dst.majorStride), intBuffer,
+      src.data, Integer.valueOf(src.majorStride), Integer.valueOf(src.cols))
+    val res = kernel.enqueueNDRange(queue, Array(numBlocks * blockSize, _ranges.length / numBlocks, 1), Array(numBlocks * blockSize, 1, 1), (ev +: events):_*)
+    res.invokeUponCompletion(new Runnable() {
+      def run() = { ptr.release(); intBuffer.release() }
+    })
+    res
+  }
+
+  def bulkCopyDstRanges(dst: CLMatrix[Float], ranges: IndexedSeq[Range], src: CLMatrix[Float],  events: CLEvent*)(implicit queue: CLQueue) = synchronized {
+    assert(dst.cols == src.cols)
+    val _ranges = {
+     val rr = ranges.filter(_.nonEmpty)
+     rr ++ Array.fill(rr.length % numBlocks)(0 until 0) 
+   }
+    val array = new Array[Int](_ranges.length * 3)
+    var arrOff = 0;
+    var srcOff = src.offset
+    for(r <- ranges) {
+      assert(r.step == 1)
+      array(arrOff)   = srcOff 
+      array(arrOff+1) = r.length
+      array(arrOff+2) = dst.offset + r.head
+      srcOff += r.length
       arrOff += 3
     }
     val ptr = Pointer.pointerToArray[java.lang.Integer](array)

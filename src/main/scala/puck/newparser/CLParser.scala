@@ -154,7 +154,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
         tagScoresFor(dm, i)
       }
       val ev = devParent(0 until totalLength, ::).writeFrom(dm, false)
-      sumBackToCharts(this, _.bot, 1, ev:_*)
+      IndexedSeq(rangeCopy.bulkCopyDstRanges(devCharts, gpuCharts.map(_.bot.spanRangeSlice(1)), devParent(0 until totalLength, ::), ev:_*))
     }
 
     private def tagScoresFor(dm: DenseMatrix[Float], i: Int) {
@@ -269,8 +269,8 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
       if(offset + usedPerSplit >= numGPUCells)  {
         println(s"flush! used $offset of $numGPUCells. Another split needs $usedPerSplit.")
         assert(offset != 0)
-        val wl = rangeCopy.bulkCopy(devLeft, devCharts, leftChildRanges, ev:_*)
-        val wr = rangeCopy.bulkCopy(devRight, devCharts, rightChildRanges, ev:_*)
+        val wl = rangeCopy.bulkCopySrcRanges(devLeft, devCharts, leftChildRanges, ev:_*)
+        val wr = rangeCopy.bulkCopySrcRanges(devRight, devCharts, rightChildRanges, ev:_*)
         transferEvents += wl
         transferEvents += wr
         ev = kernels.map{ kernel =>
@@ -304,8 +304,8 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 
 
     if(offset > 0) {
-      val wl = rangeCopy.bulkCopy(devLeft, devCharts, leftChildRanges, ev:_*)
-      val wr = rangeCopy.bulkCopy(devRight, devCharts, rightChildRanges, ev:_*)
+      val wl = rangeCopy.bulkCopySrcRanges(devLeft, devCharts, leftChildRanges, ev:_*)
+      val wr = rangeCopy.bulkCopySrcRanges(devRight, devCharts, rightChildRanges, ev:_*)
       transferEvents += wl
       transferEvents += wr
 
