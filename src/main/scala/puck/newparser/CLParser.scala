@@ -207,12 +207,6 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     devCharts := _zero
     val init = batch.initializeTagScores()
     hdTransferEvents ++= init
-    CLEvent.invokeUponCompletion(new Runnable {
-      def run() {
-        hdTransferEvents.tock()
-        println("Inside " + hdTransferEvents)
-      }
-    }, init.toArray[CLEvent]:_*)
     var eZp = zmk.fillMemory(devParent.data, _zero)
     allProfilers.foreach(_.clear())
     allProfilers.foreach(_.tick())
@@ -243,7 +237,9 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     queue.finish()
     if(profile) {
       allProfilers.foreach(_.tock())
+      hdTransferEvents.tock()
       allProfilers.foreach(p => println(s"Inside $p"))
+      println("Inside " + hdTransferEvents)
     }
 
     events
