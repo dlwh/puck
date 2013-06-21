@@ -28,7 +28,7 @@ class CLMatrixBulkRangeCopy private(numBlocks: Int, blockSize: Int, kernel: CLKe
       arrOff += 3
     }
     val ptr = Pointer.pointerToArray[java.lang.Integer](array)
-    val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.Input, array.length)
+    val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, array.length)
     val ev = intBuffer.write(queue, 0, array.length, ptr, false, events:_*)
     kernel.setArgs(dst.data, Integer.valueOf(dst.majorStride), intBuffer,
       src.data, Integer.valueOf(src.majorStride), Integer.valueOf(src.cols))
