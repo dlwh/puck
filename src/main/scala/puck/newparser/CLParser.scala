@@ -61,7 +61,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
   println(structure.nontermIndex.zipWithIndex)
   println(structure.termIndex.zipWithIndex)
 
-  private implicit val queue = if(profile) context.createDefaultProfilingQueue() else context.createDefaultOutOfOrderQueueIfPossible()
+  private implicit val queue = if(profile) context.createDefaultProfilingQueue() else context.createDefaultQueue()
   private val hdTransferEvents  = new CLProfiler("Host2Dev Transfer")
   private val transferEvents  = new CLProfiler("Transfer")
   private val binaryEvents  = new CLProfiler("Binary")
@@ -203,14 +203,14 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     hdTransferEvents.tick()
 
     devCharts := _zero
-    val init = batch.initializeTagScores()
+    val init = IndexedSeq.empty//batch.initializeTagScores()
     hdTransferEvents ++= init
     CLEvent.invokeUponCompletion(new Runnable {
       def run() {
         hdTransferEvents.tock()
         println("Inside " + hdTransferEvents)
       }
-    }, init:_*)
+    }, init.toArray[CLEvent]:_*)
     var eZp = zmk.fillMemory(devParent.data, _zero)
     allProfilers.foreach(_.clear())
     allProfilers.foreach(_.tick())
@@ -239,8 +239,10 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
       ).foldLeft(events)((a,b) => b apply a)
     }
     queue.finish()
-    allProfilers.foreach(_.tock())
-    allProfilers.foreach(p => println(s"Inside $p"))
+    if(profile) {
+      allProfilers.foreach(_.tock())
+      allProfilers.foreach(p => println(s"Inside $p"))
+    }
 
     events
   }
@@ -412,7 +414,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 object CLParser extends Logging {
 
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = FilterAnnotations(),
-                    useGPU: Boolean = true, numToParse: Int = 1000)
+                    useGPU: Boolean = true, profile: Boolean = false, numToParse: Int = 1000)
 
   def main(args: Array[String]) = {
     import ParserParams.JointParams
@@ -434,7 +436,7 @@ object CLParser extends Logging {
     }
     println(context)
 
-    val kern = fromSimpleGrammar[AnnotatedLabel, AnnotatedLabel, String](grammar)
+    val kern = fromSimpleGrammar[AnnotatedLabel, AnnotatedLabel, String](grammar, profile)
     val train = transformed.slice(0,numToParse).map(_.words)
    //val train = IndexedSeq(IndexedSeq("Ms.","Haag"))
     
@@ -451,8 +453,8 @@ object CLParser extends Logging {
     println(margs.map(_.logPartition))
   }
 
-  def fromSimpleGrammar[L, L2, W](grammar: SimpleRefinedGrammar[L, L2, W])(implicit context: CLContext) = {
-    val kern = new CLParser(grammar)
+  def fromSimpleGrammar[L, L2, W](grammar: SimpleRefinedGrammar[L, L2, W], profile: Boolean = false)(implicit context: CLContext) = {
+    val kern = new CLParser(grammar, profile = profile)
     kern
   }
 }
