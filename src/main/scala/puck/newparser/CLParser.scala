@@ -15,6 +15,7 @@ import java.io._
 import java.nio.FloatBuffer
 import java.{lang=>jl}
 import puck.linalg.CLMatrix
+import puck.linalg.kernels._
 import puck.parser.gen.SemiringFloatOpsExp
 import puck.util._
 import scala.virtualization.lms.common.ArrayOpsExp
@@ -29,7 +30,8 @@ import java.util
  * @author dlwh
  **/
 class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
-                        maxAllocSize: Long = 1<<30,
+                        maxAllocSize: Long = 1<<30, // 1 gig
+                        maxSentencesPerBatch: Long = 400, 
                         profile: Boolean = true)(implicit val context: CLContext) extends Logging {
 
   /*
@@ -84,8 +86,8 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
   val (numGPUCells:Int, numGPUChartCells: Int) = {
     val sizeOfFloat = 4
     val fractionOfMemoryToUse = 0.8 // slack!
-    val amountOfMemory = ((context.getMaxMemAllocSize min maxAllocSize) * fractionOfMemoryToUse).toInt - ruleScores.length * 4
-    val maxPossibleNumberOfCells = (amountOfMemory/sizeOfFloat) / cellSize
+    val amountOfMemory = ((context.getMaxMemAllocSize min maxAllocSize) * fractionOfMemoryToUse).toInt - ruleScores.length * sizeOfFloat - maxSentencesPerBatch * 3 * 4;
+    val maxPossibleNumberOfCells = (amountOfMemory/sizeOfFloat) / cellSize toInt
     // We want numGPUCells and numGPUAccCells to be divisible by 16, so that we get aligned strided access:
     //       On devices of compute capability 1.0 or 1.1, the k-th thread in a half warp must access the
     //       k-th word in a segment aligned to 16 times the size of the elements being accessed; however,
@@ -97,7 +99,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     // for the gpu charts, we'll need (n choose 2) * 2 = n^2 - n cells
     // for the "P/L/R" parts, the maximum number of relaxations (P = L * R * rules) for a fixed span
     // in a fixed sentence is (n/2)^2= n^2/4.
-    // Take n = 32, then we want our P/L/R arrays to be of the ratio (3 * 256):992 \approx 3/4 (3/4 exaclty if we exclude n)
+    // Take n = 32, then we want our P/L/R arrays to be of the ratio (3 * 256):992 \approx 3/4 (3/4 exaclty if we exclude the - n term)
     //
     val baseSize = numberOfUnitsOf16 / 7
     val extra = numberOfUnitsOf16 % 7
@@ -122,7 +124,8 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
   def _zero: Float = gen.IR._zero
 
   // other stuff
-  private val zmk = new ZeroMemoryKernel()
+  private val zmk = ZeroMemoryKernel()
+  private val rangeCopy = CLMatrixBulkRangeCopy()
 
   private case class Batch(lengthTotals: Array[Int],
                            cellTotals: Array[Int],
@@ -258,50 +261,58 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
                       // will be a multiple of usedPerSplit
     assert(splitRange.last < span, splitRange + " " + span)
 
+    val leftChildRanges, rightChildRanges = ArrayBuffer[Range]()
+
     for(leftChildLength <- splitRange) {
       println(span,leftChildLength)
       // if we fill up the buffer, run a pass.
       if(offset + usedPerSplit >= numGPUCells)  {
+        println(s"flush! used $offset of $numGPUCells. Another split needs $usedPerSplit.")
         assert(offset != 0)
+        val wl = rangeCopy.bulkCopy(devLeft, devCharts, leftChildRanges, ev:_*)
+        val wr = rangeCopy.bulkCopy(devRight, devCharts, rightChildRanges, ev:_*)
+        transferEvents += wl
+        transferEvents += wr
         ev = kernels.map{ kernel =>
           kernel.setArgs(devParent, devLeft, devRight, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
-          kernel.enqueueNDRange(queue, Array(offset), ev:_*)
+          kernel.enqueueNDRange(queue, Array(offset), wl, wr)
         } 
         binaryEvents ++= ev
         maxOffset = maxOffset max offset
         offset = 0
+        leftChildRanges.clear()
+        rightChildRanges.clear()
       }
+
       // add next split point
-      val evWrite = new ArrayBuffer[CLEvent]()
-      evWrite.sizeHint(batch.numSentences * 2)
       for(sent <- 0 until batch.numSentences) {
         if(span <= batch.sentences(sent).length) {
-          val lslice = leftChart(batch.gpuCharts(sent)).spanSlice(leftChildLength, 0, batch.gpuCharts(sent).length-span+1)
-          val rslice = rightChart(batch.gpuCharts(sent)).spanSlice(span-leftChildLength, leftChildLength)
+          val lslice:Range = leftChart(batch.gpuCharts(sent)).spanRangeSlice(leftChildLength, 0, batch.gpuCharts(sent).length-span+1)
+          val rslice:Range = rightChart(batch.gpuCharts(sent)).spanRangeSlice(span-leftChildLength, leftChildLength)
 
           val offsets = batch.workArrayOffsetsForSpan(sent, span) 
-          assert(lslice.rows == rslice.rows, lslice.rows + " " + rslice.rows + " " + offsets.length)
-          val mappedRange = Range(offsets.start + offset, offsets.end + offset)
-
-          val wl = devLeft(mappedRange, ::).writeFrom(lslice,false,ev:_*)
-          val wr = devRight(mappedRange, ::).writeFrom(rslice,false,ev:_*)
-          evWrite += wl
-          evWrite += wr
+          assert(lslice.length == rslice.length, lslice.length + " " + rslice.length + " " + offsets.length)
+          assert(offsets.length == lslice.length)
+          leftChildRanges += lslice
+          rightChildRanges += rslice
         }
       }
-      transferEvents ++= evWrite
 
-      ev = evWrite
       offset += usedPerSplit
     }
 
 
 
     if(offset > 0) {
+      val wl = rangeCopy.bulkCopy(devLeft, devCharts, leftChildRanges, ev:_*)
+      val wr = rangeCopy.bulkCopy(devRight, devCharts, rightChildRanges, ev:_*)
+      transferEvents += wl
+      transferEvents += wr
+
       maxOffset = maxOffset max offset
       ev = kernels.map{ kernel =>
         kernel.setArgs(devParent.data, devLeft.data, devRight.data, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
-        kernel.enqueueNDRange(queue, Array(offset), ev:_*)
+        kernel.enqueueNDRange(queue, Array(offset), wl, wr)
       }
       binaryEvents ++= ev
 

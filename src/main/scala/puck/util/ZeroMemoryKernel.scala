@@ -33,7 +33,7 @@ __kernel void mem_zero(__global float* data, int beginOffset, float x, int len) 
 
 
 object ZeroMemoryKernel {
-  def apply(implicit context: CLContext) = map.synchronized {
+  def apply()(implicit context: CLContext) = map.synchronized {
     import scala.collection.JavaConverters._
     map.asScala.getOrElseUpdate(context, new ZeroMemoryKernel)
   }

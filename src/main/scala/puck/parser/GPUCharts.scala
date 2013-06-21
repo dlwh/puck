@@ -26,7 +26,7 @@ case class GPUCharts[C, L](top: MemBufPair[Float],
   def clear(events: CLEvent*)(implicit context: CLContext, queue: CLQueue) = setTo(0.0f, events:_*)
 
   def setTo(fl: Float, events: CLEvent*)(implicit context: CLContext, queue: CLQueue) = {
-    val zmk = ZeroMemoryKernel(context)
+    val zmk = ZeroMemoryKernel()(context)
     var a  = zmk.fillMemory(top.dev, fl, events:_*)
     a = zmk.fillMemory(bot.dev, fl, Seq(a) ++  events:_*)
     zmk.fillMemory(tags.dev, fl, Seq(a) ++  events:_*)

@@ -10,6 +10,7 @@ class ParseChart(val length: Int, botMat: CLMatrix[Float], topMat: CLMatrix[Floa
 }
 
 class ChartHalf(val length: Int, val matrix: CLMatrix[Float], isBot: Boolean) {
+  val globalRowOffset = matrix.offset 
 
   def apply(begin: Int, end: Int, label: Int) = matrix(ChartHalf.chartIndex(begin, end, length), label)
 
@@ -20,6 +21,15 @@ class ChartHalf(val length: Int, val matrix: CLMatrix[Float], isBot: Boolean) {
     val lastIndex = math.min(ChartHalf.chartIndex(0,spanLength+1,length), end + firstIndex)
     assert(lastIndex >= 0)
     matrix(firstIndex until lastIndex, ::)
+  }
+
+    def spanRangeSlice(spanLength: Int, firstPos: Int = 0, end: Int = length): Range = {
+    assert(spanLength > 0)
+    val firstIndex: Int = ChartHalf.chartIndex(firstPos, firstPos + spanLength, length)
+    assert(firstIndex >= 0, (firstPos, spanLength, length, end))
+    val lastIndex = math.min(ChartHalf.chartIndex(0,spanLength+1,length), end + firstIndex)
+    assert(lastIndex >= 0)
+    (firstIndex + globalRowOffset until lastIndex + globalRowOffset)
   }
 
   def toString(structure: RuleStructure[_, _], zero: Float) = {

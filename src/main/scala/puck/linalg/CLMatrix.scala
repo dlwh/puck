@@ -557,7 +557,7 @@ trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
 
   implicit object SetMSFloatOp extends BinaryUpdateOp[CLMatrix[Float], Float, OpSet] {
     def apply(a: CLMatrix[Float], b: Float) {
-      val zmk = ZeroMemoryKernel(a.queue.getContext)
+      val zmk = ZeroMemoryKernel()(a.queue.getContext)
       import a.queue
       // nicely shaped matrix
       if( (!a.isTranspose && a.majorStride == a.rows)  ||(a.isTranspose && a.majorStride == a.cols)) {
