@@ -148,24 +148,26 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     }
 
     def initializeTagScores() = {
-      for(i <- 0 until numSentences) yield {
-        gpuCharts(i).bot.spanSlice(1).writeFrom(tagScoresFor(sentences(i)), blocking=false)
+      val dm = DenseMatrix.zeros[Float](totalLength, cellSize)
+      dm := _zero
+      for(i <- 0 until numSentences par) {
+        tagScoresFor(dm, i)
       }
-    }.flatten
+      val ev = devParent(0 until totalLength, ::).writeFrom(dm, false)
+      sumBackToCharts(this, _.bot, 1, ev:_*)
+    }
 
-    def tagScoresFor(sent: IndexedSeq[W]) = {
+    private def tagScoresFor(dm: DenseMatrix[Float], i: Int) {
+      val sent = sentences(i)
+      val tags = dm(workArrayOffsetsForSpan(i, 1), ::)
       val anch = grammar.tagScorer.anchor(sent)
       val lexAnch = grammar.lexicon.anchor(sent)
-      val tags = new DenseMatrix[Float](sent.length, cellSize)
-      tags := _zero
       for(pos <- 0 until sent.length; t <- lexAnch.allowedTags(pos); ref <- grammar.refinements.labels.refinementsOf(t)) {
         val index = ref
         val score = anch.scoreTag(pos, grammar.refinedGrammar.labelIndex.get(index))
         val gpuIndex = structure.labelIndexToTerminal(index)
         tags(pos, gpuIndex) = gen.IR.fromLogSpace(score.toFloat)
       }
-      tags
-
     }
   }
 
@@ -203,7 +205,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     hdTransferEvents.tick()
 
     devCharts := _zero
-    val init = IndexedSeq.empty//batch.initializeTagScores()
+    val init = batch.initializeTagScores()
     hdTransferEvents ++= init
     CLEvent.invokeUponCompletion(new Runnable {
       def run() {
@@ -403,7 +405,6 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
       val offsets = batch.workArrayOffsetsForSpan(sent, span)
       val lslice = level(batch.gpuCharts(sent)).spanSlice(span)
       val ev = sumGrammarCells(lslice, devParent(offsets, ::), events:_*)
-      //queue.finish()
       ev
     }
     sumToChartsEvents ++= evs
