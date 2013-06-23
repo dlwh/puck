@@ -353,17 +353,17 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
   def doUnaryUpdates(batch: Batch, span: Int, events: CLEvent*): IndexedSeq[CLEvent] = {
     import batch._
-    val writeEvents = for(sent <- 0 until batch.numSentences if batch.sentences(sent).length >= span) yield {
-      val lslice = batch.gpuCharts(sent).bot.spanSlice(span)
-      devLeft(workArrayOffsetsForSpan(sent, span), ::).writeFrom(lslice, false, events: _*)
+    val ranges = for(sent <- 0 until batch.numSentences if batch.sentences(sent).length >= span) yield {
+       gpuCharts(sent).bot.spanRangeSlice(span)
     }
-    transferEvents ++= writeEvents
+    val wl = rangeCopy.bulkCopySrcRanges(devLeft, devCharts, ranges, events:_*)
+    transferEvents += wl
 
 
     val kernels = if(span == 1) data.inside.insideTUKernels else data.inside.insideNUKernels
     val endEvents = kernels.map{(kernel) =>
       kernel.setArgs(devParent.data, devLeft.data, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(numGPUCells), Integer.valueOf(totalLengthForSpan(span)))
-      kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), writeEvents:_*)
+      kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), wl)
     }
     unaryEvents ++= endEvents
     endEvents
