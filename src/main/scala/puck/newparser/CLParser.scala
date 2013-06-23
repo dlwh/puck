@@ -216,21 +216,14 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
 
     var events:Seq[CLEvent] = doUnaryUpdates(batch, 1, eZp +: init :_*)
-    events = sumBackToCharts(batch, _.top, 1, events :_*)
-    events = IndexedSeq(zmk.fillMemory(devParent.data, _zero, events:_*))
-
-    events = doTTUpdates(batch, events:_*)
-    events = sumBackToCharts(batch, _.bot, 2, events :_*)
+    events = copyBackToCharts(batch, _.top, 1, events :_*)
     events = IndexedSeq(zmk.fillMemory(devParent.data, _zero, events:_*))
 
     for(span <- 2 to batch.maxLength) {
       println(span)
       // TODO: there's got to be a better way. implicits?
       events = Seq[Seq[CLEvent]=>Seq[CLEvent]](
-        doNTUpdates(batch, span, _ :_*),
-        doTNUpdates(batch, span, _ :_*),
-        doNNUpdates(batch, span, batch.maxLength, _ :_*),
-        sumBackToCharts(batch, _.bot, span, _ :_*),
+        binaryPass(batch, span, _:_*),
         {(x: Seq[CLEvent]) => Seq(zmk.fillMemory(devParent.data, _zero, x:_*))},
         doUnaryUpdates(batch, span, _ : _*),
         copyBackToCharts(batch, _.top, span, _ :_*),
@@ -248,7 +241,20 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     events
   }
 
-  private def doBinaryRules(batch: Batch,
+  private def binaryPass(batch: Batch, span: Int, events: CLEvent*) = {
+    var ev = events
+    if(span == 2) {
+      ev = doTTUpdates(batch, ev:_*)
+    }
+
+    ev = doNTUpdates(batch, span, ev :_*)
+    ev = doTNUpdates(batch, span, ev :_*)
+    ev = doNNUpdates(batch, span, batch.maxLength, ev :_*)
+    ev = copyBackToCharts(batch, _.bot, span, ev :_*)
+    ev
+  }
+
+  private def doBinaryUpdates(batch: Batch,
     kernels: IndexedSeq[CLKernel],
     span: Int,
     splitRange: Range,
@@ -333,16 +339,16 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     // [Sent0Span2Pos0, Sent0Span2Pos1, ..., Sent0Span2PosN-2, Sent1Span2Pos0, ...]
     // [Sent0Term0    , Sent0Term1    , ..., Sent0TermN-1    , Sent1Term0    , ...]
     // [Sent0Term1    , Sent0Term2    , ..., Sent0TermN      , Sent1Term1    , ...]
-    doBinaryRules(batch, data.inside.insideTTKernels, 2, 1 to 1, _.bot, _.bot, events:_*)
+    doBinaryUpdates(batch, data.inside.insideTTKernels, 2, 1 to 1, _.bot, _.bot, events:_*)
   }
 
 
   def doTNUpdates(batch: Batch, span: Int, events: CLEvent*) = {
-    doBinaryRules(batch, data.inside.insideTNKernels, span, 1 to 1, _.bot, _.top, events:_*)
+    doBinaryUpdates(batch, data.inside.insideTNKernels, span, 1 to 1, _.bot, _.top, events:_*)
   }
 
   def doNTUpdates(batch: Batch, span: Int, events: CLEvent*) = {
-    doBinaryRules(batch, data.inside.insideNTKernels, span, (span-1) to (span-1), _.top, _.bot, events:_*)
+    doBinaryUpdates(batch, data.inside.insideNTKernels, span, (span-1) to (span-1), _.top, _.bot, events:_*)
   }
 
   def doUnaryUpdates(batch: Batch, span: Int, events: CLEvent*): IndexedSeq[CLEvent] = {
@@ -364,7 +370,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   }
 
   def doNNUpdates(batch: Batch, span: Int, maxLength: Int, events: CLEvent*) = {
-    doBinaryRules(batch, data.inside.insideNNKernels, span, (1 to span-1), _.top, _.top, events:_*)
+    doBinaryUpdates(batch, data.inside.insideNNKernels, span, (1 to span-1), _.top, _.top, events:_*)
   }
 
   private def sumSplitBlocks(targetSize: Int, currentSize: Int, events: CLEvent*):IndexedSeq[CLEvent] = {
@@ -397,17 +403,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
                                              src.data, Integer.valueOf(src.offset),  Integer.valueOf(src.majorStride),
                                              Integer.valueOf(dest.cols), Integer.valueOf(dest.size))
     data.util.sumGrammarKernel.enqueueNDRange(queue, Array(dest.rows, dest.cols), /*Array(32, 1),*/ events:_*)
-  }
-
-  private def sumBackToCharts(batch: Batch, level: ParseChart=>ChartHalf, span: Int, events: CLEvent*) = {
-    val evs = for(sent <- 0 until batch.numSentences if batch.sentences(sent).length >= span) yield {
-      val offsets = batch.workArrayOffsetsForSpan(sent, span)
-      val lslice = level(batch.gpuCharts(sent)).spanSlice(span)
-      val ev = sumGrammarCells(lslice, devParent(offsets, ::), events:_*)
-      ev
-    }
-    sumToChartsEvents ++= evs
-    evs
   }
 
   private def copyBackToCharts(batch: Batch, level: ParseChart=>ChartHalf, span: Int, events: CLEvent*) = {
