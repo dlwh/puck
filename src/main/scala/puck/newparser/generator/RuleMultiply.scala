@@ -67,4 +67,24 @@ trait RuleMultiply[L] extends Base with KernelOps with ExtraBase with Accumulato
 
   })
 
+
+         val sumGrammarCellsKernel =  kernel[Array[Real] with Global, Int, Int, Array[Real] with Global, Int, Int, Int, Int]("sumGrammars", { (dest: Rep[Array[Real] with Global],
+                                                                                                                                                       destOff: Rep[Int],
+                                                                                                                                                       destRowSize: Rep[Int],
+                                                                                                                                                       source: Rep[Array[Real] with Global],
+                                                                                                                                                       srcOff: Rep[Int],
+                                                                                                                                                       srcRowSize: Rep[Int],
+                                                                                                                                                       numLabels: Rep[Int],
+                                                                                                                                                       rowsToDo: Rep[Int]) =>
+    val row = globalId(0)
+    val label = globalId(1)
+    if(row < rowsToDo) if(label < numLabels) {
+      val score = dest(label * destRowSize + row + destOff) + source(label * srcRowSize + row + srcOff)
+      //if(score !== zero) {
+      //  printf("%d %d %f %f %f\n", row, label, score, dest(label * destRowSize + row + destOff), source(label * srcRowSize + row + srcOff))
+      //}
+      dest(label * destRowSize + row + destOff) =  dest(label * destRowSize + row + destOff) + source(label * srcRowSize + row + srcOff)
+    }
+  })
+
 }

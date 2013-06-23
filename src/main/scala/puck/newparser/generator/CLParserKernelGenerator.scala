@@ -1,10 +1,11 @@
 package puck.newparser
 package generator
 
-import trochee.kernels.KernelOpsExp
 import scala.virtualization.lms.common._
 import trochee.basic.SpireOpsExp
+import epic.parser._
 import com.nativelibs4java.opencl._
+import trochee.kernels._
 import puck.parser.gen._
 
 /**
@@ -12,7 +13,8 @@ import puck.parser.gen._
  *
  * @author dlwh
  **/
-class CLParserKernelGenerator[C, L](structure: RuleStructure[C, L])(implicit context: CLContext) { self =>
+class CLParserKernelGenerator[C, L](val structure: RuleStructure[C, L])(implicit context: CLContext) { self =>
+  def this(grammar: SimpleRefinedGrammar[C, L, _])(implicit context: CLContext) = this(new RuleStructure(grammar.refinements, grammar.refinedGrammar))
   val IR = new KernelOpsExp with RangeOpsExp with IfThenElseExp with SpireOpsExp
     with FloatOpsExp with RuleMultiply[L] with LogSpaceFloatOpsExp with AccumulatorOpsExp with BooleanOpsExp {
 
@@ -20,6 +22,7 @@ class CLParserKernelGenerator[C, L](structure: RuleStructure[C, L])(implicit con
   val gen = new ParserGen[L] {
     val IR : self.IR.type = self.IR
     import IR._
+
 
     override def emitNode(sym: Sym[Any], rhs: Def[Any]) {
       rhs match {
@@ -40,7 +43,24 @@ class CLParserKernelGenerator[C, L](structure: RuleStructure[C, L])(implicit con
       }
 
     }
+
+
+
+
   }
-  val insideGen = new CLInside(structure, gen)
+
+ 
+
+
+
+
+
+
+  
+
+
 
 }
+
+
+

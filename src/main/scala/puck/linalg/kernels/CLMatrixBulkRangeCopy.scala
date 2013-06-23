@@ -97,7 +97,7 @@ object CLMatrixBulkRangeCopy {
 """
 #define NUM_BLOCKS """ + numBlocks + """
 #define BLOCK_SIZE """ + blockSize + """
-__kernel void bulk_copy(__global float* dst, int dstMajorStride, __constant int* ptrs,
+__kernel void bulk_copy(__global float* dst, int dstMajorStride, __global int* ptrs,
                         __global float* src, int srcMajorStride, int columns) {
                         
   int rowOffset = get_global_id(0);

@@ -23,16 +23,21 @@ import trochee.kernels.KernelOpsExp
 import puck.newparser.generator._
 import collection.mutable.ArrayBuffer
 import java.util
+import java.util.zip._
+import scala.collection.JavaConverters._
+
+
 
 /**
  * TODO
  *
  * @author dlwh
  **/
-class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
+class CLParser[C, L, W](data: CLParserData[C, L, W],
                         maxAllocSize: Long = 1<<30, // 1 gig
                         maxSentencesPerBatch: Long = 400, 
                         profile: Boolean = true)(implicit val context: CLContext) extends Logging {
+  import data._
 
   /*
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
@@ -57,7 +62,6 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     }}.toIndexedSeq
   }
 
-  val structure = RuleStructure[C, L](grammar.refinements, grammar.refinedGrammar)
   println(structure.nontermIndex.zipWithIndex)
   println(structure.termIndex.zipWithIndex)
 
@@ -76,7 +80,6 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
   val cellSize = structure.numNonTerms max structure.numTerms
 
   val gen = new CLParserKernelGenerator[C, L](structure)
-  import gen.insideGen
 
   val ruleScores = Array.tabulate(grammar.refinedGrammar.index.size){r =>
     val score = grammar.ruleScoreArray(grammar.refinements.rules.project(r))(grammar.refinements.rules.localize(r))
@@ -330,16 +333,16 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     // [Sent0Span2Pos0, Sent0Span2Pos1, ..., Sent0Span2PosN-2, Sent1Span2Pos0, ...]
     // [Sent0Term0    , Sent0Term1    , ..., Sent0TermN-1    , Sent1Term0    , ...]
     // [Sent0Term1    , Sent0Term2    , ..., Sent0TermN      , Sent1Term1    , ...]
-    doBinaryRules(batch, insideGen.insideTTKernels, 2, 1 to 1, _.bot, _.bot, events:_*)
+    doBinaryRules(batch, data.inside.insideTTKernels, 2, 1 to 1, _.bot, _.bot, events:_*)
   }
 
 
   def doTNUpdates(batch: Batch, span: Int, events: CLEvent*) = {
-    doBinaryRules(batch, insideGen.insideTNKernels, span, 1 to 1, _.bot, _.top, events:_*)
+    doBinaryRules(batch, data.inside.insideTNKernels, span, 1 to 1, _.bot, _.top, events:_*)
   }
 
   def doNTUpdates(batch: Batch, span: Int, events: CLEvent*) = {
-    doBinaryRules(batch, insideGen.insideNTKernels, span, (span-1) to (span-1), _.top, _.bot, events:_*)
+    doBinaryRules(batch, data.inside.insideNTKernels, span, (span-1) to (span-1), _.top, _.bot, events:_*)
   }
 
   def doUnaryUpdates(batch: Batch, span: Int, events: CLEvent*): IndexedSeq[CLEvent] = {
@@ -351,7 +354,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     transferEvents ++= writeEvents
 
 
-    val kernels = if(span == 1) insideGen.insideTUKernels else insideGen.insideNUKernels
+    val kernels = if(span == 1) data.inside.insideTUKernels else data.inside.insideNUKernels
     val endEvents = kernels.map{(kernel) =>
       kernel.setArgs(devParent.data, devLeft.data, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(numGPUCells), Integer.valueOf(totalLengthForSpan(span)))
       kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), writeEvents:_*)
@@ -361,7 +364,7 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
   }
 
   def doNNUpdates(batch: Batch, span: Int, maxLength: Int, events: CLEvent*) = {
-    doBinaryRules(batch, insideGen.insideNNKernels, span, (1 to span-1), _.top, _.top, events:_*)
+    doBinaryRules(batch, data.inside.insideNNKernels, span, (1 to span-1), _.top, _.top, events:_*)
   }
 
   private def sumSplitBlocks(targetSize: Int, currentSize: Int, events: CLEvent*):IndexedSeq[CLEvent] = {
@@ -387,13 +390,13 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     ev
   }
 
-  def sumGrammarCells(dest: CLMatrix[Float], src: CLMatrix[Float], events: CLEvent*) = {
+  def sumGrammarCells(dest: CLMatrix[Float], src: CLMatrix[Float], events: CLEvent*) = data.util.sumGrammarKernel.synchronized {
     assert(dest.rows == src.rows)
     assert(dest.size == src.size)
-    insideGen.sumGrammarCellsKernel.setArgs(dest.data, Integer.valueOf(dest.offset), Integer.valueOf(dest.majorStride),
+    data.util.sumGrammarKernel.setArgs(dest.data, Integer.valueOf(dest.offset), Integer.valueOf(dest.majorStride),
                                              src.data, Integer.valueOf(src.offset),  Integer.valueOf(src.majorStride),
                                              Integer.valueOf(dest.cols), Integer.valueOf(dest.size))
-    insideGen.sumGrammarCellsKernel.enqueueNDRange(queue, Array(dest.rows, dest.cols), /*Array(32, 1),*/ events:_*)
+    data.util.sumGrammarKernel.enqueueNDRange(queue, Array(dest.rows, dest.cols), /*Array(32, 1),*/ events:_*)
   }
 
   private def sumBackToCharts(batch: Batch, level: ParseChart=>ChartHalf, span: Int, events: CLEvent*) = {
@@ -406,12 +409,18 @@ class CLParser[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     sumToChartsEvents ++= evs
     evs
   }
+
+  private def copyBackToCharts(batch: Batch, level: ParseChart=>ChartHalf, span: Int, events: CLEvent*) = {
+    val ev = rangeCopy.bulkCopyDstRanges(devCharts, batch.gpuCharts.filter(_.length >= span).map(c => level(c).spanRangeSlice(span)), devParent, events:_*)
+    sumToChartsEvents += ev
+    IndexedSeq(ev)
+  }
 }
 
 object CLParser extends Logging {
 
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = FilterAnnotations(),
-                    useGPU: Boolean = true, profile: Boolean = false, numToParse: Int = 1000)
+                    useGPU: Boolean = true, profile: Boolean = false, numToParse: Int = 1000, jvmParse: Boolean = false)
 
   def main(args: Array[String]) = {
     import ParserParams.JointParams
@@ -435,23 +444,67 @@ object CLParser extends Logging {
 
     val kern = fromSimpleGrammar[AnnotatedLabel, AnnotatedLabel, String](grammar, profile)
     val train = transformed.slice(0,numToParse).map(_.words)
-   //val train = IndexedSeq(IndexedSeq("Ms.","Haag"))
     
 
+    var timeIn = System.currentTimeMillis()
     println(kern.partitions(train))
-    val margs = train.map(w => ChartMarginal(AugmentedGrammar.fromRefined(grammar), w))
-    for(i <- 0 until margs.length) {
-      for(span <- 1 to margs(i).length; begin <- 0 until (margs(i).length-span+1)) {
-      //  println((begin,begin+span) + " TOP " + margs(i).inside.top.decodedLabelScores(begin,begin+span))
-      //  println((begin,begin+span) + " BOT " + margs(i).inside.bot.decodedLabelScores(begin,begin+span))
-      }
+    var timeOut = System.currentTimeMillis()
+    println(s"CL Parsing took: ${(timeOut-timeIn)/1000.0}")
+    /*
+    timeIn = timeOut
+    println(kern.partitions(train))
+    timeOut = System.currentTimeMillis()
+    println(s"CL Parsing took x2: ${(timeOut-timeIn)/1000.0}")
+    */
+    if(jvmParse) {
+      timeIn = timeOut
+      val margs = train.map(w => ChartMarginal(AugmentedGrammar.fromRefined(grammar), w).logPartition)
+      timeOut = System.currentTimeMillis()
+      println(s"Scala Parsing took: ${(timeOut-timeIn)/1000.0}")
+      println(margs)
     }
 
-    println(margs.map(_.logPartition))
   }
 
   def fromSimpleGrammar[L, L2, W](grammar: SimpleRefinedGrammar[L, L2, W], profile: Boolean = false)(implicit context: CLContext) = {
-    val kern = new CLParser(grammar, profile = profile)
+    val data = CLParserData.make(grammar, new CLParserKernelGenerator(grammar))
+    val kern = new CLParser(data, profile = profile)
     kern
   }
 }
+
+
+case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
+                                 structure: RuleStructure[C, L],
+                                 inside: CLInsideKernels,
+                                 util: CLParserUtilKernels) {
+
+
+  def write(out: OutputStream) {
+    val zout = new ZipOutputStream(out)
+    ZipUtil.serializedEntry(zout, "grammar", grammar)
+    ZipUtil.serializedEntry(zout, "structure", structure)
+    inside.write(zout)
+    util.write(zout)
+    zout.close()
+  }
+}
+
+object CLParserData {
+  def make[C, L, W](grammar: SimpleRefinedGrammar[C, L, W], gen: CLParserKernelGenerator[C, L])(implicit context: CLContext) = {
+    val inside = CLInsideKernels.make(gen)
+    val util = CLParserUtilKernels.make(gen)
+    new CLParserData(grammar, gen.structure, inside, util)
+  }
+
+  def read[C, L, W](file: ZipFile)(implicit context: CLContext) = {
+    val gr = ZipUtil.deserializeEntry[SimpleRefinedGrammar[C, L, W]](file.getInputStream(file.getEntry("grammar")))
+    val structure = ZipUtil.deserializeEntry[RuleStructure[C, L]](file.getInputStream(file.getEntry("structure")))
+    val inside = CLInsideKernels.read(file)
+    val util = CLParserUtilKernels.read(file)
+
+    CLParserData(gr, structure, inside, util)
+  }
+}
+
+
