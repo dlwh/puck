@@ -16,7 +16,7 @@ import puck.parser.gen._
 class CLParserKernelGenerator[C, L](val structure: RuleStructure[C, L])(implicit context: CLContext) { self =>
   def this(grammar: SimpleRefinedGrammar[C, L, _])(implicit context: CLContext) = this(new RuleStructure(grammar.refinements, grammar.refinedGrammar))
   val IR = new KernelOpsExp with RangeOpsExp with IfThenElseExp with SpireOpsExp
-    with FloatOpsExp with RuleMultiply[L] with LogSpaceFloatOpsExp with AccumulatorOpsExp with BooleanOpsExp {
+    with FloatOpsExp with RuleMultiply[L] with ViterbiFloatOpsExp with AccumulatorOpsExp with BooleanOpsExp {
 
   }
   val gen = new ParserGen[L] {
@@ -26,6 +26,8 @@ class CLParserKernelGenerator[C, L](val structure: RuleStructure[C, L])(implicit
 
     override def emitNode(sym: Sym[Any], rhs: Def[Any]) {
       rhs match {
+        case Max(a,b) =>
+          emitValDef(sym, s"max(${quote(a)}, ${quote(b)})")
         case Mad(a,b,c) =>
           emitValDef(sym, s"mad(${quote(a)}, ${quote(b)}, ${quote(c)})")
         case LogAdd(a, b) =>

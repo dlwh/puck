@@ -41,6 +41,7 @@ trait FloatOpsExp { this: BaseExp =>
   case class Mad(a: Rep[Float], b: Rep[Float], c: Rep[Float])(implicit pos: SourceContext) extends Def[Float]
   case class Log(a: Rep[Float])(implicit pos: SourceContext) extends Def[Float]
   case class LogAdd(a: Rep[Float], b: Rep[Float])(implicit pos: SourceContext) extends Def[Float]
+  case class Max(a: Rep[Float], b: Rep[Float])(implicit pos: SourceContext) extends Def[Float]
 }
 
 
@@ -87,6 +88,37 @@ trait LogSpaceFloatOpsExp extends SemiringOps with SpireOpsExp with FloatOpsExp 
 
   def rig_plus(lhs: Rep[Real], rhs: Rep[Real])(implicit pos: SourceContext): Rep[Real] = {
     LogAdd(lhs, rhs)(pos)
+  }
+
+  def rig_times(lhs: Rep[Real], rhs: Rep[Real])(implicit pos: SourceContext): Rep[Real] = {
+    numeric_plus(lhs, rhs)(implicitly, implicitly, pos)
+  }
+
+  def rig_logSpace(a: Rep[Real])(implicit pos: SourceContext):Rep[Float] = {
+    a
+  }
+
+  def fromLogSpace(a: Float):Real = a
+
+}
+
+trait ViterbiFloatOpsExp extends SemiringOps with SpireOpsExp with FloatOpsExp {  this: BaseExp with BaseFatExp with Variables =>
+  type Real = Float
+  def manifestReal = manifest[Real]
+  def ttReal = implicitly
+  def zero: Rep[Real] = unit(Float.NegativeInfinity)
+  def one : Rep[Real] = unit(0.0f)
+
+  def _zero = Float.NegativeInfinity
+  def _one = 0.0f
+
+  def mad(a: Rep[Real], b: Rep[Real], c: Rep[Real])(implicit pos: SourceContext):Rep[Real] = {
+    rig_plus(rig_times(a,b), c)(pos)
+  }
+
+
+  def rig_plus(lhs: Rep[Real], rhs: Rep[Real])(implicit pos: SourceContext): Rep[Real] = {
+    Max(lhs, rhs)(pos)
   }
 
   def rig_times(lhs: Rep[Real], rhs: Rep[Real])(implicit pos: SourceContext): Rep[Real] = {
