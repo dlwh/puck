@@ -105,15 +105,20 @@ __kernel void bulk_copy(__global float* dst, int dstMajorStride, __global int* p
 
   // do two blocks, one per half warp
   __local int indices[3 * NUM_BLOCKS];
+  event_t event = async_work_group_copy(indices, ptrs + 3 * NUM_BLOCKS * ptrIndex, 3 * NUM_BLOCKS, 0);
+  
+  /*
   for(int i = rowOffset; i < 3 * NUM_BLOCKS; i += BLOCK_SIZE * NUM_BLOCKS) {
     indices[i] = ptrs[3 * NUM_BLOCKS * ptrIndex + i];
   }
   barrier(CLK_LOCAL_MEM_FENCE);
+  */
 
   // todo: adjust for different number of blocks....
   int groupId = rowOffset / BLOCK_SIZE;
   int groupRow = rowOffset % BLOCK_SIZE;
 
+  wait_group_events(1, &event);
   int srcOff = indices[groupId * 3 + 0]; 
   int length = indices[groupId * 3 + 1]; // number of rows to do total
   int dstOff = indices[groupId * 3 + 2];

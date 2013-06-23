@@ -233,7 +233,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
         sumBackToCharts(batch, _.bot, span, _ :_*),
         {(x: Seq[CLEvent]) => Seq(zmk.fillMemory(devParent.data, _zero, x:_*))},
         doUnaryUpdates(batch, span, _ : _*),
-        sumBackToCharts(batch, _.top, span, _ :_*),
+        copyBackToCharts(batch, _.top, span, _ :_*),
         {(x: Seq[CLEvent]) => Seq(zmk.fillMemory(devParent.data, _zero, x:_*))}
       ).foldLeft(events)((a,b) => b apply a)
     }
