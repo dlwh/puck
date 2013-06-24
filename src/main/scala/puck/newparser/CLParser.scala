@@ -273,7 +273,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     val leftChildRanges, rightChildRanges = ArrayBuffer[Range]()
 
     for(leftChildLength <- splitRange) {
-      println(span,leftChildLength)
+      //println(span,leftChildLength)
       // if we fill up the buffer, run a pass.
       if(offset + usedPerSplit >= numGPUCells)  {
         println(s"flush! used $offset of $numGPUCells. Another split needs $usedPerSplit.")
@@ -415,7 +415,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 object CLParser extends Logging {
 
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = FilterAnnotations(),
-                    useGPU: Boolean = true, profile: Boolean = false, numToParse: Int = 1000, jvmParse: Boolean = false)
+                    useGPU: Boolean = true, profile: Boolean = false, numToParse: Int = 1000, jvmParse: Boolean = false, parseTwice: Boolean = false)
 
   def main(args: Array[String]) = {
     import ParserParams.JointParams
@@ -442,15 +442,17 @@ object CLParser extends Logging {
     
 
     var timeIn = System.currentTimeMillis()
-    println(kern.partitions(train))
+    val parts = kern.partitions(train)
     var timeOut = System.currentTimeMillis()
+    println(parts)
     println(s"CL Parsing took: ${(timeOut-timeIn)/1000.0}")
-    /*
-    timeIn = timeOut
-    println(kern.partitions(train))
-    timeOut = System.currentTimeMillis()
-    println(s"CL Parsing took x2: ${(timeOut-timeIn)/1000.0}")
-    */
+    if(parseTwice) {
+      timeIn = timeOut
+      val parts2 = kern.partitions(train)
+      timeOut = System.currentTimeMillis()
+      println(parts2)
+      println(s"CL Parsing took x2: ${(timeOut-timeIn)/1000.0}")
+    }
     if(jvmParse) {
       timeIn = timeOut
       val margs = train.map(w => ChartMarginal(AugmentedGrammar.fromRefined(grammar), w).logPartition)
