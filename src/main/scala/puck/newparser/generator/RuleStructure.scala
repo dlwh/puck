@@ -100,12 +100,20 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   def labelIndexToNonterminal(label: Int) = reverseIndex(label)
 
   lazy val partitionsParent: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
-  lazy val partitionsLeft: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = partitionsParent
-  lazy val partitionsRight: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = partitionsParent
-  lazy val partitionsSmall: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, maxPartitionLabelSize = 30, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
-  lazy val partitionsLeftTermRules: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(leftTermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
+  lazy val partitionsLeftChild: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, targetLabel = GrammarPartitioner.LeftChild).toIndexedSeq
+  lazy val partitionsRightChild: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, targetLabel = GrammarPartitioner.RightChild).toIndexedSeq
+
+  lazy val partitionsLeftTermRules           : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(leftTermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
+  lazy val partitionsLeftTermRules_LeftChild : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(leftTermRules, targetLabel = GrammarPartitioner.LeftChild).toIndexedSeq
+  lazy val partitionsLeftTermRules_RightChild: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(leftTermRules, targetLabel = GrammarPartitioner.RightChild).toIndexedSeq
+
   lazy val partitionsRightTermRules: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(rightTermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
+  lazy val partitionsRightTermRules_LeftChild: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(rightTermRules, targetLabel = GrammarPartitioner.LeftChild).toIndexedSeq
+  lazy val partitionsRightTermRules_RightChild: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(rightTermRules, targetLabel = GrammarPartitioner.RightChild).toIndexedSeq
+
   lazy val partitionsBothTermRules: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(bothTermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
+  lazy val partitionsBothTermRules_LeftChild: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(bothTermRules, targetLabel = GrammarPartitioner.LeftChild).toIndexedSeq
+  lazy val partitionsBothTermRules_RightChild: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(bothTermRules, targetLabel = GrammarPartitioner.RightChild).toIndexedSeq
 
   def numRules = grammar.index.size
 
