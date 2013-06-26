@@ -9,6 +9,8 @@ import trochee.kernels._
 import scala.reflect.runtime.universe._
 import epic.trees._
 
+// These kernels assume that the parent and the child named (L or R) are swapped
+// in the workspace tables.
 case class CLOutsideKernels(outside_L_NNKernels: IndexedSeq[CLKernel],
                             outside_R_NNKernels: IndexedSeq[CLKernel],
                             outside_L_NTKernels: IndexedSeq[CLKernel],
@@ -35,6 +37,14 @@ case class CLOutsideKernels(outside_L_NNKernels: IndexedSeq[CLKernel],
 }
 
 object CLOutsideKernels {
+
+  def tryRead(in: ZipFile)(implicit context: CLContext) = {
+    if(ZipUtil.hasKernelSet(in, "outside_L_NN"))
+      Some(read(in))
+    else
+      None
+  }
+
   def read(in: ZipFile)(implicit context: CLContext) = {
     val outside_L_NN = ZipUtil.readKernelSet(in, "outside_L_NN")
     val outside_R_NN = ZipUtil.readKernelSet(in, "outside_R_NN")

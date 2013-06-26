@@ -19,6 +19,9 @@ class CLParserKernelGenerator[C, L](val structure: RuleStructure[C, L])(implicit
     with FloatOpsExp with RuleMultiply[L] with ViterbiFloatOpsExp with AccumulatorOpsExp with BooleanOpsExp {
 
   }
+
+  def isViterbi = IR.isInstanceOf[ViterbiFloatOpsExp]
+
   val gen = new ParserGen[L] {
     val IR : self.IR.type = self.IR
     import IR._

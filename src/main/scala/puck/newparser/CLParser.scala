@@ -474,6 +474,7 @@ object CLParser extends Logging {
 case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
                                  structure: RuleStructure[C, L],
                                  inside: CLInsideKernels,
+                                 outside: Option[CLOutsideKernels],
                                  util: CLParserUtilKernels) {
 
 
@@ -482,6 +483,7 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     ZipUtil.serializedEntry(zout, "grammar", grammar)
     ZipUtil.serializedEntry(zout, "structure", structure)
     inside.write(zout)
+    outside.foreach(_.write(zout))
     util.write(zout)
     zout.close()
   }
@@ -490,17 +492,19 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 object CLParserData {
   def make[C, L, W](grammar: SimpleRefinedGrammar[C, L, W], gen: CLParserKernelGenerator[C, L])(implicit context: CLContext) = {
     val inside = CLInsideKernels.make(gen)
+    val outside = if(!gen.isViterbi) Some(CLOutsideKernels.make(gen)) else None
     val util = CLParserUtilKernels.make(gen)
-    new CLParserData(grammar, gen.structure, inside, util)
+    new CLParserData(grammar, gen.structure, inside, outside, util)
   }
 
   def read[C, L, W](file: ZipFile)(implicit context: CLContext) = {
     val gr = ZipUtil.deserializeEntry[SimpleRefinedGrammar[C, L, W]](file.getInputStream(file.getEntry("grammar")))
     val structure = ZipUtil.deserializeEntry[RuleStructure[C, L]](file.getInputStream(file.getEntry("structure")))
     val inside = CLInsideKernels.read(file)
+    val outside = CLOutsideKernels.tryRead(file)
     val util = CLParserUtilKernels.read(file)
 
-    CLParserData(gr, structure, inside, util)
+    CLParserData(gr, structure, inside, outside, util)
   }
 }
 

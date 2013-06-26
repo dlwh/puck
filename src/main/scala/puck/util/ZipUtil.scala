@@ -51,6 +51,13 @@ object ZipUtil {
     ZipUtil.serializedEntry(out, s"$name/entries", entries)
   }
 
+  def hasKernelSet(in: ZipFile, name: String)(implicit ctxt: CLContext):Boolean = try {
+     deserializeEntry[IndexedSeq[String]](in.getInputStream(in.getEntry(name+"/entries")))
+     true
+  } catch {
+    case ex: Exception => false
+  }
+
   def readKernelSet(in: ZipFile, name: String)(implicit ctxt: CLContext): IndexedSeq[CLKernel] = {
     val entries = deserializeEntry[IndexedSeq[String]](in.getInputStream(in.getEntry(name+"/entries")))
     for(name <- entries) yield { readKernel(in, name) }
