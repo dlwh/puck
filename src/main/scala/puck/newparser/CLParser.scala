@@ -115,11 +115,12 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     // in a fixed sentence is (n/2)^2= n^2/4.
     // Take n = 32, then we want our P/L/R arrays to be of the ratio (3 * 256):992 \approx 3/4 (3/4 exaclty if we exclude the - n term)
     //
-    val baseSize = numberOfUnitsOf16 / 10
-    val extra = numberOfUnitsOf16 % 10
+    val relativeSizeOfChartsToP = if(needsOutside) 8 else 4
+    val baseSize = numberOfUnitsOf16 / (3 + relativeSizeOfChartsToP)
+    val extra = numberOfUnitsOf16 % (3 + relativeSizeOfChartsToP)
     val plrSize = baseSize
     // TODO, can probably do a better job of these calculations?
-    (plrSize * 16, (baseSize * 7 + extra) * 16)
+    (plrSize * 16, (baseSize * relativeSizeOfChartsToP + extra) * 16)
   }
 
 
@@ -161,6 +162,21 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       chart
     }
 
+    lazy val outsideCharts = if(!needsOutside) None else Some{
+      for(i <- 0 until numSentences) yield {
+
+        val numCells = (cellTotals(i+1)-cellTotals(i))/2
+        assert(numCells == TriangularArray.arraySize(sentences(i).length+1))
+        val botBegin = cellTotals.last + cellTotals(i)
+        val botEnd = botBegin + numCells
+        val topBegin = botEnd
+        val topEnd = topBegin + numCells
+        val chart = new ParseChart(sentences(i).length, devCharts(botBegin until botEnd,::), devCharts(topBegin until topEnd, ::))
+        chart
+      }
+    }
+
+
     def initializeTagScores() = {
       val dm = DenseMatrix.zeros[Float](totalLength, cellSize)
       dm := _zero
@@ -193,8 +209,9 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     for( (s, i) <- sentences.zipWithIndex) {
       currentLengthTotal += s.length
       currentCellTotal += TriangularArray.arraySize(s.length+1) * 2
+      if(needsOutside)
+        currentCellTotal += TriangularArray.arraySize(s.length+1) * 2
       if(currentLengthTotal > numGPUCells || currentCellTotal > numGPUChartCells) {
-        println(s"Occupancy: $currentLengthTotal/$numGPUCells $currentCellTotal/$numGPUChartCells") 
         assert(current.nonEmpty)
         result += createBatch(current)
         currentLengthTotal = s.length
