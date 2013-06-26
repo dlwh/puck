@@ -51,6 +51,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   }
   */
 
+  def needsOutside = data.outside.nonEmpty
+
 
   def partitions(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[Float] = synchronized {
     {for {
@@ -73,6 +75,15 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   private val sumToChartsEvents  = new CLProfiler("SumToCharts")
   private val sumEvents  = new CLProfiler("Sum")
   val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, sumToChartsEvents, sumEvents)
+
+  def release() {
+    queue.release()
+    devParent.release()
+    devCharts.release()
+    devLeft.release()
+    devRight.release()
+    devRules.release()
+  }
 
 
   val nrules = grammar.index.size
@@ -99,16 +110,16 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     //       requested on a device with compute capability 1.1 or lower.
     val numberOfUnitsOf16 = maxPossibleNumberOfCells / 16
     // average sentence length of sentence, let's say n.
-    // for the gpu charts, we'll need (n choose 2) * 2 = n^2 - n cells
+    // for the gpu charts, we'll need (n choose 2) * 2 = n^2 - n cells (*2 more if needsOutside)
     // for the "P/L/R" parts, the maximum number of relaxations (P = L * R * rules) for a fixed span
     // in a fixed sentence is (n/2)^2= n^2/4.
     // Take n = 32, then we want our P/L/R arrays to be of the ratio (3 * 256):992 \approx 3/4 (3/4 exaclty if we exclude the - n term)
     //
-    val baseSize = numberOfUnitsOf16 / 7
-    val extra = numberOfUnitsOf16 % 7
+    val baseSize = numberOfUnitsOf16 / 10
+    val extra = numberOfUnitsOf16 % 10
     val plrSize = baseSize
     // TODO, can probably do a better job of these calculations?
-    (plrSize * 16, (baseSize * 4 + extra) * 16)
+    (plrSize * 16, (baseSize * 7 + extra) * 16)
   }
 
 
@@ -122,7 +133,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   private val devCharts = new CLMatrix[Float](numGPUChartCells, cellSize)
 
   // also the rules
-  private val ruleDev = context.createFloatBuffer(CLMem.Usage.Input, FloatBuffer.wrap(ruleScores), false)
+  private val devRules = context.createFloatBuffer(CLMem.Usage.Input, FloatBuffer.wrap(ruleScores), false)
 
   def _zero: Float = gen.IR._zero
 
@@ -183,6 +194,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       currentLengthTotal += s.length
       currentCellTotal += TriangularArray.arraySize(s.length+1) * 2
       if(currentLengthTotal > numGPUCells || currentCellTotal > numGPUChartCells) {
+        println(s"Occupancy: $currentLengthTotal/$numGPUCells $currentCellTotal/$numGPUChartCells") 
         assert(current.nonEmpty)
         result += createBatch(current)
         currentLengthTotal = s.length
@@ -283,7 +295,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
         transferEvents += wl
         transferEvents += wr
         ev = kernels.map{ kernel =>
-          kernel.setArgs(devParent, devLeft, devRight, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
+          kernel.setArgs(devParent.data, devLeft.data, devRight.data, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
           kernel.enqueueNDRange(queue, Array(offset), wl, wr)
         } 
         binaryEvents ++= ev
@@ -320,7 +332,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
       maxOffset = maxOffset max offset
       ev = kernels.map{ kernel =>
-        kernel.setArgs(devParent.data, devLeft.data, devRight.data, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
+        kernel.setArgs(devParent.data, devLeft.data, devRight.data, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
         kernel.enqueueNDRange(queue, Array(offset), wl, wr)
       }
       binaryEvents ++= ev
@@ -362,7 +374,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
     val kernels = if(span == 1) data.inside.insideTUKernels else data.inside.insideNUKernels
     val endEvents = kernels.map{(kernel) =>
-      kernel.setArgs(devParent.data, devLeft.data, ruleDev, Integer.valueOf(numGPUCells), Integer.valueOf(numGPUCells), Integer.valueOf(totalLengthForSpan(span)))
+      kernel.setArgs(devParent.data, devLeft.data, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(numGPUCells), Integer.valueOf(totalLengthForSpan(span)))
       kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), wl)
     }
     unaryEvents ++= endEvents
@@ -455,11 +467,14 @@ object CLParser extends Logging {
     }
     if(jvmParse) {
       timeIn = timeOut
-      val margs = train.map(w => ChartMarginal(AugmentedGrammar.fromRefined(grammar), w).logPartition)
+      val margs = train.map(w => ChartMarginal(AugmentedGrammar.fromRefined(grammar).anchor(w), w, maxMarginal=kern.needsOutside).logPartition)
       timeOut = System.currentTimeMillis()
       println(s"Scala Parsing took: ${(timeOut-timeIn)/1000.0}")
       println(margs)
     }
+
+    kern.release()
+    context.release()
 
   }
 

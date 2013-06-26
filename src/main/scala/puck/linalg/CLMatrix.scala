@@ -151,6 +151,10 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
 
   }
 
+  /** Forcibly releases the buffer. Note that other slices will be invalidated! */
+  def release() {
+    data.release()
+  }
 
 }
 
