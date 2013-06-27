@@ -17,6 +17,7 @@ import org.bridj.Pointer
 import com.nativelibs4java.opencl.util.Primitive
 import scala.concurrent._
 import ExecutionContext.Implicits.global
+import kernels._
 
 /**
  * A CLMatrix is a matrix with all elements found in an NativeArray. It is column major unless isTranspose is true,
@@ -85,6 +86,8 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
     case _ => false
   }
 
+  def majorSize = if(isTranspose) rows else cols
+
   def activeSize = size
 
   def valueAt(i: Int) = mappedPointer.get(offset + i)
@@ -113,7 +116,7 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
       ???
     }
     if(blocking) {
-      ev.foreach(_.waitFor())
+      ev.filter(_ ne null).foreach(_.waitFor())
       floats.release()
     } 
 
@@ -140,7 +143,9 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
       }
       this.queue.enqueueMarker()
     } else {
-      ???
+      // TODO: currently assumes elements are 4 bytes long!!!!
+      val tc = CLMatrixTranposeCopy()(queue.getContext)
+      tc.permuteTransposeCopy(this.asInstanceOf[CLMatrix[Float]], b.asInstanceOf[CLMatrix[Float]], Array.range(0, b.cols), events:_*)
     }
     if(blocking)
       ev.waitFor()
@@ -444,9 +449,9 @@ object CLMatrix extends LowPriorityNativeMatrix {
   }
 
 
-  //  implicit val setMM_D: BinaryUpdateOp[CLMatrix[Double], CLMatrix[Double], OpSet] = new SetDMDMOp[Double]
-  //  implicit val setMM_F: BinaryUpdateOp[CLMatrix[Float], CLMatrix[Float], OpSet]  = new SetDMDMOp[Float]
-  //  implicit val setMM_I: BinaryUpdateOp[CLMatrix[Int], CLMatrix[Int], OpSet]  = new SetDMDMOp[Int]
+  //  implicit val setMM_D: BinaryUpdateOp[CLMatrix[Double], CLMatrix[Double], OpSet] = new SetCLMCLMOp[Double]
+  //  implicit val setMM_F: BinaryUpdateOp[CLMatrix[Float], CLMatrix[Float], OpSet]  = new SetCLMCLMOp[Float]
+  //  implicit val setMM_I: BinaryUpdateOp[CLMatrix[Int], CLMatrix[Int], OpSet]  = new SetCLMCLMOp[Int]
 
 /*
   implicit def canGaxpy[V: Semiring]: CanAxpy[V, CLMatrix[V], CLMatrix[V]] = {
@@ -526,16 +531,24 @@ trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
     }
   }
 
-  class SetDMDMVOp[V] extends BinaryUpdateOp[CLMatrix[V], CLMatrix[V], OpSet] {
+  class SetCLMCLMVOp[V] extends BinaryUpdateOp[CLMatrix[V], CLMatrix[V], OpSet] {
     def apply(a: CLMatrix[V], b: CLMatrix[V]) {
       a.writeFrom(b, true)
     }
   }
 
-  implicit object setDMDMFloat extends SetDMDMVOp[Float]
-  implicit object setDMDMLong extends SetDMDMVOp[Long]
-  implicit object setDMDMInt extends SetDMDMVOp[Int]
-  implicit object setDMDMDouble extends SetDMDMVOp[Double]
+  implicit object SetCLMDMFloatOp extends BinaryUpdateOp[CLMatrix[Float], DenseMatrix[Float], OpSet] {
+    def apply(a: CLMatrix[Float], b: DenseMatrix[Float]) {
+      a.writeFrom(b, true)
+    }
+  }
+
+
+
+  implicit object setCLMCLMFloat extends SetCLMCLMVOp[Float]
+  implicit object setCLMCLMLong extends SetCLMCLMVOp[Long]
+  implicit object setCLMCLMInt extends SetCLMCLMVOp[Int]
+  implicit object setCLMCLMDouble extends SetCLMCLMVOp[Double]
 
   /*
   class SetDMDVOp[@specialized(Int, Double, Float) V] extends BinaryUpdateOp[CLMatrix[V], CLMatrix[V], OpSet] {

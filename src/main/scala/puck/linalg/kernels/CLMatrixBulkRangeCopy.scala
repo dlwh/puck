@@ -19,9 +19,9 @@ class CLMatrixBulkRangeCopy private(numBlocks: Int, blockSize: Int, kernel: CLKe
     val array = new Array[Int](_ranges.length * 3)
     var arrOff = 0;
     var dstOff = dst.offset
-    for(r <- ranges) {
+    for(r <- _ranges) {
       assert(r.step == 1)
-      array(arrOff)   = src.offset + r.head
+      array(arrOff)   = src.offset + r.start
       array(arrOff+1) = r.length
       array(arrOff+2) = dstOff
       dstOff += r.length
@@ -48,11 +48,11 @@ class CLMatrixBulkRangeCopy private(numBlocks: Int, blockSize: Int, kernel: CLKe
     val array = new Array[Int](_ranges.length * 3)
     var arrOff = 0;
     var srcOff = src.offset
-    for(r <- ranges) {
+    for(r <- _ranges) {
       assert(r.step == 1)
       array(arrOff)   = srcOff 
       array(arrOff+1) = r.length
-      array(arrOff+2) = dst.offset + r.head
+      array(arrOff+2) = dst.offset + r.start
       srcOff += r.length
       arrOff += 3
     }
@@ -130,6 +130,53 @@ __kernel void bulk_copy(__global float* dst, int dstMajorStride, __global int* p
 }
 """
   }
+
+/** Transposes src into dst, permuting the columns as it goes. Matrices are column major.*/
+   def permuteTransposeCopy(blockSize: Int) = {
+"""
+#define BLOCK_SIZE """ + blockSize + """
+__kernel void bulk_copy(__global float* dst, int dstMajorStride, 
+                        __global float* src, int srcMajorStride, __global int* srcPtrs,
+                        int srcRows, int srcCols) {
+  // copy each col into block[i]
+  __local block[BLOCK_SIZE][BLOCK_SIZE+1]; // + 1 to avoid bank conflicts
+  event_t copyInEvents[BLOCK_SIZE];
+                        
+  int dstRow = get_global_id(0);
+  int threadid = get_local_id(0);
+  // dstRow - threadid is the same for all threads in a workgroup.
+  __local myPtrs[BLOCK_SIZE];
+  int ndo = min(BLOCK_SIZE, srcCols - (dstRow - threadid));
+  barrier(CLK_LOCAL_MEM_FENCE);
+  event_t copyFirstPtr = async_work_group_copy(myPtrs, ptrs + dstRow - threadid, ndo, 0);
+  wait_group_events(1, &copyFirstPtr);
+
+  // TODO I should probably openclize this forloop as well.
+  for(int firstSrcRow = 0; firstSrcRow < srcRows; firstSrcRow += BLOCK_SIZE) {
+    //if the ptrs were next to each other, we could use async_work_group_strided_copy
+    // but they're not :(
+    int nRowsToDo =  min(BLOCK_SIZE, srcRows - firstSrcRow);
+    for(int i = 0; i < ndo; ++i) 
+      copyInEvents[i] = async_work_group_copy(block[i], // block(i, ::)
+        src + srcMajorStride * myPtrs[i] + firstSrcRow, // src(firstSrcRow --> nRowsToDo, myPtrs(i))
+        nRowsToDo, 0); //
+
+    wait_group_events(ndo, copyInEvents);
+    
+    // each block[i] now contains the slice src(firstSrcRow --> nRowsToDo, myPtrs[i]) 
+    // so we want thread i to write block[i][j] to dst(dstRow, firstSrcRow + j)
+
+    for(int j = 0; j < nRowsToDo && threadid < ndo; j += 1) {
+      int dstCol = firstSrcRow + j;
+      dst[dstCol * dstMajorStride + dstRow] = block[threadid][j];
+    }
+
+  }
+
+}
+"""
+  }
+
 
 
 
