@@ -7,13 +7,13 @@ import java.nio._
 import java.util
 
 // TODO... i bet kernel has a context, so this leaks the context...
-class CLMatrixTranposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut: CLKernel) {
+class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut: CLKernel) {
 
 
   def permuteTransposeCopy(dst: CLMatrix[Float],
     src: CLMatrix[Float],
     srcColumnPointers: Array[Int], events: CLEvent*)(implicit queue: CLQueue) = synchronized {
-    require(dst.rows == srcColumnPointers.length)
+    require(dst.rows > srcColumnPointers.length, dst.rows + " " + srcColumnPointers.length)
     require(dst.isTranspose == src.isTranspose)
 
     val ptr = Pointer.pointerToArray[java.lang.Integer](srcColumnPointers)
@@ -38,7 +38,7 @@ class CLMatrixTranposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut: 
     dstColPointers: Array[Int], 
     src: CLMatrix[Float],
     events: CLEvent*)(implicit queue: CLQueue) = synchronized {
-    require(src.rows == dstColPointers.length, src.rows +" " + dstColPointers.length)
+    require(src.rows >= dstColPointers.length, src.rows +" " + dstColPointers.length)
     require(dst.rows == src.cols)
     require(dst.isTranspose == src.isTranspose)
 
@@ -64,7 +64,7 @@ class CLMatrixTranposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut: 
 }
 
 
-object CLMatrixTranposeCopy {
+object CLMatrixTransposeCopy {
   def apply(preferredBlockSize: Int = 32)(implicit context: CLContext) = map.synchronized {
     import scala.collection.JavaConverters._
     // TODO ??!?!??!
@@ -80,10 +80,10 @@ object CLMatrixTranposeCopy {
     val kernel = prog.createKernel("transpose_copy")
     val kernel2 = prog.createKernel("transpose_copy_out")
     
-    map.asScala.getOrElseUpdate(context, new CLMatrixTranposeCopy(blockSize, kernel, kernel2))
+    map.asScala.getOrElseUpdate(context, new CLMatrixTransposeCopy(blockSize, kernel, kernel2))
   }
 
-  private val map = new util.WeakHashMap[CLContext, CLMatrixTranposeCopy]
+  private val map = new util.WeakHashMap[CLContext, CLMatrixTransposeCopy]
 
 /** Transposes src into dst, permuting the columns as it goes. Matrices are column major.*/
    def permuteTransposeCopy(blockSize: Int) = {
@@ -150,7 +150,6 @@ __kernel void transpose_copy_out(
 
   int firstSrcRow = get_global_id(1) * BLOCK_SIZE;
   int nRowsToDo =  min(BLOCK_SIZE, srcRows - firstSrcRow);
-  printf("%d %d %d %d\n",srcCol,firstSrcRow, nColsToDo, nRowsToDo);
 
   __local int myPtrs[BLOCK_SIZE];
   event_t copyFirstPtr = async_work_group_copy(myPtrs, dstPtrs + firstSrcRow, nRowsToDo, 0);
@@ -172,7 +171,6 @@ __kernel void transpose_copy_out(
   // so we want thread i to write block[i][j] to dst(dstRow, firstSrcRow + j)
 
   for(int j = 0; j < nRowsToDo && threadid < nColsToDo; j += 1) {
-    printf("write %d %d %f\n",myPtrs[j],srcCol, block[threadid][j]);
     dst[myPtrs[j] * dstMajorStride + srcCol] = block[threadid][j];
   }
 

@@ -64,8 +64,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     }}.toIndexedSeq
   }
 
-  println(structure.nontermIndex.zipWithIndex)
-  println(structure.termIndex.zipWithIndex)
 
   private implicit val queue = if(profile) context.createDefaultProfilingQueue() else context.createDefaultQueue()
   private val hdTransferEvents  = new CLProfiler("Host2Dev Transfer")
@@ -131,7 +129,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   // finally, we have the array of parse charts, which is insanely large. It's also where
   // we do rescaling, etc.
   private val devParent, devLeft, devRight = new CLMatrix[Float](numGPUCells, cellSize)
-  private val devCharts = new CLMatrix[Float](numGPUChartCells, cellSize)
+  // transposed
+  private val devCharts = new CLMatrix[Float](cellSize, numGPUChartCells)
 
   // also the rules
   private val devRules = context.createFloatBuffer(CLMem.Usage.Input, FloatBuffer.wrap(ruleScores), false)
@@ -140,7 +139,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
   // other stuff
   private val zmk = ZeroMemoryKernel()
-  private val rangeCopy = CLMatrixBulkRangeCopy()
+  private val transposeCopy = CLMatrixTransposeCopy()
 
   private case class Batch(lengthTotals: Array[Int],
                            cellTotals: Array[Int],
@@ -158,7 +157,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     lazy val gpuCharts = for(i <- 0 until numSentences) yield {
       val numCells = (cellTotals(i+1)-cellTotals(i))/2
       assert(numCells == TriangularArray.arraySize(sentences(i).length+1))
-      val chart = new ParseChart(sentences(i).length, devCharts(cellTotals(i) until (cellTotals(i) + numCells),::), devCharts(cellTotals(i) + numCells until cellTotals(i+1), ::))
+      val chart = new ParseChart(sentences(i).length, devCharts(::, cellTotals(i) until (cellTotals(i) + numCells)), devCharts(::, cellTotals(i) + numCells until cellTotals(i+1)))
       chart
     }
 
@@ -171,7 +170,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
         val botEnd = botBegin + numCells
         val topBegin = botEnd
         val topEnd = topBegin + numCells
-        val chart = new ParseChart(sentences(i).length, devCharts(botBegin until botEnd,::), devCharts(topBegin until topEnd, ::))
+        val chart = new ParseChart(sentences(i).length, devCharts(::, botBegin until botEnd), devCharts(::, topBegin until topEnd))
         chart
       }
     }
@@ -184,7 +183,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
         tagScoresFor(dm, i)
       }
       val ev = devParent(0 until totalLength, ::).writeFrom(dm, false)
-      IndexedSeq(rangeCopy.bulkCopyDstRanges(devCharts, gpuCharts.map(_.bot.spanRangeSlice(1)), devParent(0 until totalLength, ::), ev:_*))
+      IndexedSeq(transposeCopy.permuteTransposeCopyOut(devCharts, gpuCharts.map(_.bot.spanRangeSlice(1)).reduceLeft[IndexedSeq[Int]](_ ++ _).toArray, devParent(0 until totalLength, ::), ev:_*))
     }
 
     private def tagScoresFor(dm: DenseMatrix[Float], i: Int) {
@@ -231,6 +230,10 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     Batch(lengthTotals.toArray, cellTotals.toArray, sentences)
   }
 
+  def debugRaces = false
+
+  def debugFinish() = if(debugRaces) queue.finish()
+
 
   private def inside(batch: Batch):Seq[CLEvent] = synchronized {
     hdTransferEvents.clear()
@@ -258,9 +261,13 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
         copyBackToCharts(batch, _.top, span, _ :_*),
         {(x: Seq[CLEvent]) => Seq(zmk.fillMemory(devParent.data, _zero, x:_*))}
       ).foldLeft(events)((a,b) => b apply a)
+      debugFinish()
     }
-    queue.finish()
+
+    debugFinish()
+
     if(profile) {
+      queue.finish()
       allProfilers.foreach(_.tock())
       hdTransferEvents.tock()
       allProfilers.foreach(p => println(s"Inside $p"))
@@ -299,7 +306,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
                       // will be a multiple of usedPerSplit
     assert(splitRange.last < span, splitRange + " " + span)
 
-    val leftChildRanges, rightChildRanges = ArrayBuffer[Range]()
+    val leftChildRanges, rightChildRanges = ArrayBuffer[Int]()
 
     for(leftChildLength <- splitRange) {
       //println(span,leftChildLength)
@@ -307,8 +314,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       if(offset + usedPerSplit >= numGPUCells)  {
         println(s"flush! used $offset of $numGPUCells. Another split needs $usedPerSplit.")
         assert(offset != 0)
-        val wl = rangeCopy.bulkCopySrcRanges(devLeft, devCharts, leftChildRanges, ev:_*)
-        val wr = rangeCopy.bulkCopySrcRanges(devRight, devCharts, rightChildRanges, ev:_*)
+        val wl = transposeCopy.permuteTransposeCopy(devLeft, devCharts, leftChildRanges.toArray, ev:_*)
+        val wr = transposeCopy.permuteTransposeCopy(devRight, devCharts, rightChildRanges.toArray, ev:_*)
         transferEvents += wl
         transferEvents += wr
         ev = kernels.map{ kernel =>
@@ -331,8 +338,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
           val offsets = batch.workArrayOffsetsForSpan(sent, span) 
           assert(lslice.length == rslice.length, lslice.length + " " + rslice.length + " " + offsets.length)
           assert(offsets.length == lslice.length)
-          leftChildRanges += lslice
-          rightChildRanges += rslice
+          leftChildRanges ++= lslice
+          rightChildRanges ++= rslice
         }
       }
 
@@ -342,8 +349,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
 
     if(offset > 0) {
-      val wl = rangeCopy.bulkCopySrcRanges(devLeft, devCharts, leftChildRanges, ev:_*)
-      val wr = rangeCopy.bulkCopySrcRanges(devRight, devCharts, rightChildRanges, ev:_*)
+      val wl = transposeCopy.permuteTransposeCopy(devLeft, devCharts, leftChildRanges.toArray, ev:_*)
+      val wr = transposeCopy.permuteTransposeCopy(devRight, devCharts, rightChildRanges.toArray, ev:_*)
       transferEvents += wl
       transferEvents += wr
 
@@ -382,11 +389,14 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
   def doUnaryUpdates(batch: Batch, span: Int, events: CLEvent*): IndexedSeq[CLEvent] = {
     import batch._
-    val ranges = for(sent <- 0 until batch.numSentences if batch.sentences(sent).length >= span) yield {
-       gpuCharts(sent).bot.spanRangeSlice(span)
+    val ranges = {
+      for(sent <- 0 until batch.numSentences if batch.sentences(sent).length >= span;
+      tind <- gpuCharts(sent).bot.spanRangeSlice(span))
+      yield tind
     }
-    val wl = rangeCopy.bulkCopySrcRanges(devLeft, devCharts, ranges, events:_*)
+    val wl = transposeCopy.permuteTransposeCopy(devLeft, devCharts, ranges.toArray, events:_*)
     transferEvents += wl
+    debugFinish()
 
 
     val kernels = if(span == 1) data.inside.insideTUKernels else data.inside.insideNUKernels
@@ -394,6 +404,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       kernel.setArgs(devParent.data, devLeft.data, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(numGPUCells), Integer.valueOf(totalLengthForSpan(span)))
       kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), wl)
     }
+    debugFinish()
     unaryEvents ++= endEvents
     endEvents
   }
@@ -435,7 +446,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   }
 
   private def copyBackToCharts(batch: Batch, level: ParseChart=>ChartHalf, span: Int, events: CLEvent*) = {
-    val ev = rangeCopy.bulkCopyDstRanges(devCharts, batch.gpuCharts.filter(_.length >= span).map(c => level(c).spanRangeSlice(span)), devParent, events:_*)
+    val treeOffsets = batch.gpuCharts.filter(_.length >= span).map(c => level(c).spanRangeSlice(span)).reduceLeft[IndexedSeq[Int]](_ ++ _).toArray
+    val ev = transposeCopy.permuteTransposeCopyOut(devCharts, treeOffsets, devParent, events:_*)
     sumToChartsEvents += ev
     IndexedSeq(ev)
   }
@@ -482,9 +494,13 @@ object CLParser extends Logging {
       println(parts2)
       println(s"CL Parsing took x2: ${(timeOut-timeIn)/1000.0}")
     }
+    println("Needs outside?!?!?" + kern.needsOutside)
     if(jvmParse) {
       timeIn = timeOut
-      val margs = train.map(w => ChartMarginal(AugmentedGrammar.fromRefined(grammar).anchor(w), w, maxMarginal=kern.needsOutside).logPartition)
+      val margs = train.map { w => 
+        val m = ChartMarginal(AugmentedGrammar.fromRefined(grammar).anchor(w), w, maxMarginal= !kern.needsOutside)
+        m.logPartition
+      }
       timeOut = System.currentTimeMillis()
       println(s"Scala Parsing took: ${(timeOut-timeIn)/1000.0}")
       println(margs)
@@ -499,6 +515,13 @@ object CLParser extends Logging {
     val data = CLParserData.make(grammar, new CLParserKernelGenerator(grammar))
     val kern = new CLParser(data, profile = profile)
     kern
+  }
+
+  private def printChart[L, W](chart: ChartMarginal[L, W], isBot: Boolean) = {
+    val cc = if (isBot) chart.inside.bot else chart.inside.top
+    val m = chart
+    for(span <- 1 to m.length; begin <- 0 to m.length-span)
+      println(cc.enteredLabelScores(begin,begin+span).map{ case (k,v) => (k,v.mkString("{",",","}"))}.mkString(s"($begin,${begin+span}) ${if(isBot) "bot" else "top"} {",", ", "}"))
   }
 }
 

@@ -28,7 +28,7 @@ import kernels._
  * @param rows number of rows
  * @param cols number of cols
  * @param data The underlying data.
- *             Column-major unless isTranpose is true.
+ *             Column-major unless isTranspose is true.
  *             Mutate at your own risk.
  *             Note that this matrix may be a view of the data.
  *             Use linearIndex(r,c) to calculate indices.
@@ -144,7 +144,7 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
       this.queue.enqueueMarker()
     } else {
       // TODO: currently assumes elements are 4 bytes long!!!!
-      val tc = CLMatrixTranposeCopy()(queue.getContext)
+      val tc = CLMatrixTransposeCopy()(queue.getContext)
       tc.permuteTransposeCopy(this.t.asInstanceOf[CLMatrix[Float]], b.asInstanceOf[CLMatrix[Float]], Array.range(0, b.cols), events:_*)
       //tc.permuteTransposeCopyOut(this.t.asInstanceOf[CLMatrix[Float]], Array.range(0, rows), b.asInstanceOf[CLMatrix[Float]], events:_*)
     }
