@@ -12,9 +12,10 @@ class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut:
 
   def permuteTransposeCopy(dst: CLMatrix[Float],
     src: CLMatrix[Float],
-    srcColumnPointers: Array[Int], events: CLEvent*)(implicit queue: CLQueue) = synchronized {
+    srcColumnPointers: Array[Int], events: CLEvent*)(implicit queue: CLQueue):CLEvent = synchronized {
     require(dst.rows > srcColumnPointers.length, dst.rows + " " + srcColumnPointers.length)
     require(dst.isTranspose == src.isTranspose)
+    println("tc" + srcColumnPointers.mkString(","))
 
     val ptr = Pointer.pointerToArray[java.lang.Integer](srcColumnPointers)
     val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, srcColumnPointers.length)
@@ -27,6 +28,7 @@ class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut:
       Integer.valueOf(srcColumnPointers.length))
     val adjustedSrcCols = ((srcColumnPointers.length + blockSize - 1)/blockSize)*blockSize
     val adjustedSrcRowBlocks = ((src.rows + blockSize - 1)/blockSize)
+    //val res = kernel.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), (ev +: events):_*)
     val res = kernel.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), (ev +: events):_*)
     res.invokeUponCompletion(new Runnable() {
       def run() = { ptr.release(); intBuffer.release() }
@@ -37,10 +39,11 @@ class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut:
   def permuteTransposeCopyOut(dst: CLMatrix[Float],
     dstColPointers: Array[Int], 
     src: CLMatrix[Float],
-    events: CLEvent*)(implicit queue: CLQueue) = synchronized {
+    events: CLEvent*)(implicit queue: CLQueue):CLEvent = synchronized {
     require(src.rows >= dstColPointers.length, src.rows +" " + dstColPointers.length)
     require(dst.rows == src.cols)
     require(dst.isTranspose == src.isTranspose)
+    println("tco" + dstColPointers.mkString(","))
 
     val ptr = Pointer.pointerToArray[java.lang.Integer](dstColPointers)
     val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, dstColPointers.length)
@@ -53,6 +56,7 @@ class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut:
       Integer.valueOf(src.cols))
     val adjustedSrcCols = ((src.cols + blockSize - 1)/blockSize)*blockSize
     val adjustedSrcRowBlocks = ((dstColPointers.length + blockSize - 1)/blockSize)
+    //val res = kernelOut.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), (ev +: events):_*)
     val res = kernelOut.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), (ev +: events):_*)
     res.invokeUponCompletion(new Runnable() {
       def run() = { ptr.release(); intBuffer.release() }
@@ -69,7 +73,7 @@ object CLMatrixTransposeCopy {
     import scala.collection.JavaConverters._
     // TODO ??!?!??!
     // not sure what's going on, but Apple's Intel reports 1024/1/1, but can't handle more than 1/1/1...
-    val blockSize = if(context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel")) {
+    val blockSize = if( context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel")) {
       1
     } else {
       val x = context.getDevices.head.getMaxWorkItemSizes

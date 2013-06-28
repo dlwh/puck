@@ -86,7 +86,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
   val nrules = grammar.index.size
   // TODO: reinstate this difference if numTerms is really big.
-  val cellSize = structure.numNonTerms max structure.numTerms
+  val cellSize = ((structure.numNonTerms max structure.numTerms)+31)/32 * 32
 
   val gen = new CLParserKernelGenerator[C, L](structure)
 
@@ -178,6 +178,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
     def initializeTagScores() = {
       val dm = DenseMatrix.zeros[Float](totalLength, cellSize)
+      println(dm.rows -> dm.cols)
       dm := _zero
       for(i <- 0 until numSentences par) {
         tagScoresFor(dm, i)
@@ -189,6 +190,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     private def tagScoresFor(dm: DenseMatrix[Float], i: Int) {
       val sent = sentences(i)
       val tags = dm(workArrayOffsetsForSpan(i, 1), ::)
+      println(tags.rows -> tags.cols)
       val anch = grammar.tagScorer.anchor(sent)
       val lexAnch = grammar.lexicon.anchor(sent)
       for(pos <- 0 until sent.length; t <- lexAnch.allowedTags(pos); ref <- grammar.refinements.labels.refinementsOf(t)) {
@@ -250,6 +252,9 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     var events:Seq[CLEvent] = doUnaryUpdates(batch, 1, eZp +: init :_*)
     events = copyBackToCharts(batch, _.top, 1, events :_*)
     events = IndexedSeq(zmk.fillMemory(devParent.data, _zero, events:_*))
+    queue.finish()
+    println(batch.gpuCharts(0).bot.toString(structure, _zero))
+    println(batch.gpuCharts(0).top.toString(structure, _zero))
 
     for(span <- 2 to batch.maxLength) {
       println(span)
@@ -436,7 +441,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     ev
   }
 
-  def sumGrammarCells(dest: CLMatrix[Float], src: CLMatrix[Float], events: CLEvent*) = data.util.sumGrammarKernel.synchronized {
+  private def sumGrammarCells(dest: CLMatrix[Float], src: CLMatrix[Float], events: CLEvent*) = data.util.sumGrammarKernel.synchronized {
     assert(dest.rows == src.rows)
     assert(dest.size == src.size)
     data.util.sumGrammarKernel.setArgs(dest.data, Integer.valueOf(dest.offset), Integer.valueOf(dest.majorStride),
@@ -445,7 +450,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     data.util.sumGrammarKernel.enqueueNDRange(queue, Array(dest.rows, dest.cols), /*Array(32, 1),*/ events:_*)
   }
 
-  private def copyBackToCharts(batch: Batch, level: ParseChart=>ChartHalf, span: Int, events: CLEvent*) = {
+  private def copyBackToCharts(batch: Batch, level: ParseChart=>ChartHalf, span: Int, events: CLEvent*):Seq[CLEvent] = {
     val treeOffsets = batch.gpuCharts.filter(_.length >= span).map(c => level(c).spanRangeSlice(span)).reduceLeft[IndexedSeq[Int]](_ ++ _).toArray
     val ev = transposeCopy.permuteTransposeCopyOut(devCharts, treeOffsets, devParent, events:_*)
     sumToChartsEvents += ev
