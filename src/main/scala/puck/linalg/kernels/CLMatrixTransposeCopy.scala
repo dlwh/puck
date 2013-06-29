@@ -36,25 +36,25 @@ class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut:
   }
 
   def permuteTransposeCopyOut(dst: CLMatrix[Float],
-    dstColPointers: Array[Int], 
+    dstColPointers: Array[Int], numCols: Int,
     src: CLMatrix[Float],
     events: CLEvent*)(implicit queue: CLQueue):CLEvent = synchronized {
-    require(src.rows == dstColPointers.length, src.rows +" " + dstColPointers.length)
-    assert(dstColPointers.forall(_ < dst.cols))
+    require(src.rows == numCols, src.rows +" " + dstColPointers.length)
+    assert(dstColPointers.slice(0,numCols).forall(_ < dst.cols))
     require(dst.rows == src.cols)
     require(dst.isTranspose == src.isTranspose)
 
     val ptr = Pointer.pointerToArray[java.lang.Integer](dstColPointers)
-    val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, dstColPointers.length)
-    val ev = intBuffer.write(queue, 0, dstColPointers.length, ptr, false, events:_*)
+    val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, numCols)
+    val ev = intBuffer.write(queue, 0, numCols, ptr, false, events:_*)
     kernelOut.setArgs(
       dst.data.safeBuffer, Integer.valueOf(dst.offset), Integer.valueOf(dst.majorStride), 
       intBuffer,
       src.data.safeBuffer, Integer.valueOf(src.offset), Integer.valueOf(src.majorStride), 
-      Integer.valueOf(dstColPointers.length),
+      Integer.valueOf(numCols),
       Integer.valueOf(src.cols))
     val adjustedSrcCols = ((src.cols + blockSize - 1)/blockSize)*blockSize
-    val adjustedSrcRowBlocks = ((dstColPointers.length + blockSize - 1)/blockSize)
+    val adjustedSrcRowBlocks = ((numCols + blockSize - 1)/blockSize)
     //val res = kernelOut.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), (ev +: events):_*)
     val res = kernelOut.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), (ev +: events):_*)
     res.invokeUponCompletion(new Runnable() {
