@@ -20,3 +20,5 @@ libraryDependencies ++= Seq(
   "org.scalanlp" %% "epic" % "0.1-SNAPSHOT",
   "org.scalatest" %% "scalatest" % "2.0.M5b" % "test"
 )
+
+fork := true

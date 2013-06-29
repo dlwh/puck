@@ -75,12 +75,12 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, sumToChartsEvents, sumEvents)
 
   def release() {
-    queue.release()
     devParent.release()
     devCharts.release()
     devLeft.release()
     devRight.release()
     devRules.release()
+    queue.release()
   }
 
 
@@ -248,9 +248,11 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     allProfilers.foreach(_.clear())
     allProfilers.foreach(_.tick())
 
+    println(batch.sentences(0))
 
-    var events:Seq[CLEvent] = doUnaryUpdates(batch, 1, eZp +: init :_*)
-    events = copyBackToCharts(batch, _.top, 1, events :_*)
+
+    var events:Seq[CLEvent] = IndexedSeq.empty //doUnaryUpdates(batch, 1, eZp +: init :_*)
+    //events = copyBackToCharts(batch, _.top, 1, events :_*)
     events = IndexedSeq(zmk.fillMemory(devParent.data, _zero, events:_*))
     queue.finish()
     println(batch.gpuCharts(0).bot.toString(structure, _zero))
@@ -324,7 +326,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
         transferEvents += wl
         transferEvents += wr
         ev = kernels.map{ kernel =>
-          kernel.setArgs(devParent.data, devLeft.data, devRight.data, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
+          kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
           kernel.enqueueNDRange(queue, Array(offset), wl, wr)
         } 
         binaryEvents ++= ev
@@ -361,7 +363,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
       maxOffset = maxOffset max offset
       ev = kernels.map{ kernel =>
-        kernel.setArgs(devParent.data, devLeft.data, devRight.data, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
+        kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
         kernel.enqueueNDRange(queue, Array(offset), wl, wr)
       }
       binaryEvents ++= ev
@@ -406,7 +408,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
     val kernels = if(span == 1) data.inside.insideTUKernels else data.inside.insideNUKernels
     val endEvents = kernels.map{(kernel) =>
-      kernel.setArgs(devParent.data, devLeft.data, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(numGPUCells), Integer.valueOf(totalLengthForSpan(span)))
+      kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(numGPUCells), Integer.valueOf(totalLengthForSpan(span)))
       kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), wl)
     }
     debugFinish()
@@ -444,8 +446,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   private def sumGrammarCells(dest: CLMatrix[Float], src: CLMatrix[Float], events: CLEvent*) = data.util.sumGrammarKernel.synchronized {
     assert(dest.rows == src.rows)
     assert(dest.size == src.size)
-    data.util.sumGrammarKernel.setArgs(dest.data, Integer.valueOf(dest.offset), Integer.valueOf(dest.majorStride),
-                                             src.data, Integer.valueOf(src.offset),  Integer.valueOf(src.majorStride),
+    data.util.sumGrammarKernel.setArgs(dest.data.safeBuffer, Integer.valueOf(dest.offset), Integer.valueOf(dest.majorStride),
+                                             src.data.safeBuffer, Integer.valueOf(src.offset),  Integer.valueOf(src.majorStride),
                                              Integer.valueOf(dest.cols), Integer.valueOf(dest.size))
     data.util.sumGrammarKernel.enqueueNDRange(queue, Array(dest.rows, dest.cols), /*Array(32, 1),*/ events:_*)
   }

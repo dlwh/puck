@@ -13,7 +13,7 @@ class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut:
   def permuteTransposeCopy(dst: CLMatrix[Float],
     src: CLMatrix[Float],
     srcColumnPointers: Array[Int], events: CLEvent*)(implicit queue: CLQueue):CLEvent = synchronized {
-    require(dst.rows > srcColumnPointers.length, dst.rows + " " + srcColumnPointers.length)
+    require(dst.rows >= srcColumnPointers.length, dst.rows + " " + srcColumnPointers.length)
     require(dst.isTranspose == src.isTranspose)
     println("tc" + srcColumnPointers.mkString(","))
 
@@ -21,8 +21,8 @@ class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut:
     val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, srcColumnPointers.length)
     val ev = intBuffer.write(queue, 0, srcColumnPointers.length, ptr, false, events:_*)
     kernel.setArgs(
-      dst.data, Integer.valueOf(dst.offset), Integer.valueOf(dst.majorStride), 
-      src.data, Integer.valueOf(src.offset), Integer.valueOf(src.majorStride), 
+      dst.data.safeBuffer, Integer.valueOf(dst.offset), Integer.valueOf(dst.majorStride), 
+      src.data.safeBuffer, Integer.valueOf(src.offset), Integer.valueOf(src.majorStride), 
       intBuffer,
       Integer.valueOf(src.rows),
       Integer.valueOf(srcColumnPointers.length))
@@ -49,9 +49,9 @@ class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut:
     val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, dstColPointers.length)
     val ev = intBuffer.write(queue, 0, dstColPointers.length, ptr, false, events:_*)
     kernelOut.setArgs(
-      dst.data, Integer.valueOf(dst.offset), Integer.valueOf(dst.majorStride), 
+      dst.data.safeBuffer, Integer.valueOf(dst.offset), Integer.valueOf(dst.majorStride), 
       intBuffer,
-      src.data, Integer.valueOf(src.offset), Integer.valueOf(src.majorStride), 
+      src.data.safeBuffer, Integer.valueOf(src.offset), Integer.valueOf(src.majorStride), 
       Integer.valueOf(src.rows),
       Integer.valueOf(src.cols))
     val adjustedSrcCols = ((src.cols + blockSize - 1)/blockSize)*blockSize

@@ -11,7 +11,7 @@ import breeze.storage.DefaultArrayValue
 import breeze.math.Ring
 import breeze.linalg.operators._
 import breeze.linalg.support._
-import puck.util.{ZeroMemoryKernel, NativeArray}
+import puck.util._
 import com.nativelibs4java.opencl._
 import org.bridj.Pointer
 import com.nativelibs4java.opencl.util.Primitive
@@ -38,7 +38,7 @@ import kernels._
  */
 final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
                                                          val cols: Int,
-                                                         val data: CLBuffer[V],
+                                                         val data: CLBufferMappedPointerPair[V],
                                                          val offset: Int,
                                                          val majorStride: Int,
                                                          val isTranspose: Boolean = false)(implicit val queue: CLQueue)
@@ -48,12 +48,12 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
   /** Creates a matrix with the specified data array, rows, and columns. Data must be column major */
   def this(rows: Int, cols: Int, data: CLBuffer[V], offset: Int = 0)(implicit queue: CLQueue) = this(rows, cols, data, offset, rows)
 
-  lazy val mappedPointer = data.map(queue, CLMem.MapFlags.ReadWrite)
+
 
   def apply(row: Int, col: Int) = {
     if(row < 0 || row >= rows) throw new IndexOutOfBoundsException((row,col) + " not in [0,"+rows+") x [0," + cols+")")
     if(col < 0 || col >= cols) throw new IndexOutOfBoundsException((row,col) + " not in [0,"+rows+") x [0," + cols+")")
-    mappedPointer.get(linearIndex(row, col))
+    data.mappedPointer.get(linearIndex(row, col))
   }
 
   /** Calculates the index into the data array for row and column */
@@ -67,7 +67,7 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
   def update(row: Int, col: Int, v: V) {
     if(row < 0 || row > rows) throw new IndexOutOfBoundsException((row,col) + " not in [0,"+rows+") x [0," + cols+")")
     if(col < 0 || col > cols) throw new IndexOutOfBoundsException((row,col) + " not in [0,"+rows+") x [0," + cols+")")
-    mappedPointer.set(linearIndex(row, col), v)
+    data.mappedPointer.set(linearIndex(row, col), v)
   }
 
   def repr = this
@@ -90,7 +90,7 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
 
   def activeSize = size
 
-  def valueAt(i: Int) = mappedPointer.get(offset + i)
+  def valueAt(i: Int) = data.mappedPointer.get(offset + i)
 
   def indexAt(i: Int) = i
 
@@ -100,16 +100,17 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
   def writeFrom(b: DenseMatrix[V], blocking: Boolean, events: CLEvent*):Seq[CLEvent] = {
     require(b.rows == this.rows, "Matrices must have same number of rows")
     require(b.cols == this.cols, "Matrices must have same number of columns")
+    val evv = data.unmap(events:_*)
     val floats =  Pointer.pointerToArray[V](b.data)
     val ev = if(isGapless(b) && this.isGapless && b.isTranspose == this.isTranspose) {
-       IndexedSeq(data.write(queue, offset, size, floats.next(b.offset), blocking, events:_*))
+       IndexedSeq(data.buffer.write(queue, offset, size, floats.next(b.offset), blocking, evv))
     } else if(b.isTranspose == this.isTranspose) {
       // copy one "column" at b time
       val rr = if(b.isTranspose) b.cols else b.rows
       val cc = if(b.isTranspose) b.rows else b.cols
       val ev = for(column <- 0 until cc) yield {
-       data.write(queue, offset + majorStride * column, 
-         rr, floats.next(b.offset + b.majorStride * column), blocking, events:_*)
+       data.buffer.write(queue, offset + majorStride * column, 
+         rr, floats.next(b.offset + b.majorStride * column), blocking, evv)
       }
       ev
     } else {
@@ -131,21 +132,24 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
     require(b.queue eq this.queue)
     require(b.rows == this.rows, "Matrices must have same number of rows")
     require(b.cols == this.cols, "Matrices must have same number of columns")
+    val evv = data.unmap(events:_*)
+    val evv2 = b.data.unmap(events:_*)
+    (Option(evv).iterator ++ Option(evv2).iterator).foreach(_.waitFor())
     val ev = if(b.isGapless && this.isGapless && b.isTranspose == this.isTranspose) {
-       b.data.copyTo(queue, b.offset, rows * cols, this.data, this.offset)
+       b.data.buffer.copyTo(queue, b.offset, rows * cols, this.data, this.offset, evv, evv2)
     } else if(b.isTranspose == this.isTranspose) {
       // copy one "column" at b time
       val rr = if(b.isTranspose) b.cols else b.rows
       val cc = if(b.isTranspose) b.rows else b.cols
       val ev = for(column <- 0 until cc) yield {
-        b.data.copyTo(queue, b.offset + b.majorStride * column, rr,
-                    this.data, this.offset + this.majorStride * column)
+        b.data.buffer.copyTo(queue, b.offset + b.majorStride * column, rr,
+                    this.data.buffer, this.offset + this.majorStride * column, evv, evv2)
       }
       this.queue.enqueueMarker()
     } else {
       // TODO: currently assumes elements are 4 bytes long!!!!
       val tc = CLMatrixTransposeCopy()(queue.getContext)
-      tc.permuteTransposeCopy(this.t.asInstanceOf[CLMatrix[Float]], b.asInstanceOf[CLMatrix[Float]], Array.range(0, b.cols), events:_*)
+      tc.permuteTransposeCopy(this.t.asInstanceOf[CLMatrix[Float]], b.asInstanceOf[CLMatrix[Float]], Array.range(0, b.cols), evv, evv2)
       //tc.permuteTransposeCopyOut(this.t.asInstanceOf[CLMatrix[Float]], Array.range(0, rows), b.asInstanceOf[CLMatrix[Float]], events:_*)
     }
     if(blocking)
@@ -158,7 +162,7 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
   }
 
   /** Forcibly releases the buffer. Note that other slices will be invalidated! */
-  def release() {
+  def release() = {
     data.release()
   }
 
@@ -579,16 +583,16 @@ trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
       import a.queue
       // nicely shaped matrix
       if( (!a.isTranspose && a.majorStride == a.rows)  ||(a.isTranspose && a.majorStride == a.cols)) {
-        val ev = zmk.fillMemory(a.data.asInstanceOf[CLBuffer[jl.Float]], b, a.offset, a.rows * a.cols)
-        a.queue.enqueueWaitForEvents(ev)
+        val ev = zmk.fillMemory(a.data, b, a.offset, a.rows * a.cols)
+        ev.waitFor()
       } else {
         val rr = if(a.isTranspose) a.cols else a.rows
         val cc = if(a.isTranspose) a.rows else a.cols
         val events = for(i <- 0 until cc) yield {
-          zmk.fillMemory(a.data.asInstanceOf[CLBuffer[jl.Float]], b, a.offset + i * a.majorStride, rr)
+          zmk.fillMemory(a.data, b, a.offset + i * a.majorStride, rr)
         }
 
-        a.queue.enqueueWaitForEvents(events:_*)
+        events.foreach(_.waitFor())
       }
     }
   }
