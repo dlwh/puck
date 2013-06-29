@@ -251,7 +251,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     var events:Seq[CLEvent] = doUnaryUpdates(batch, 1, eZp +: init :_*)
     events = copyBackToCharts(batch, _.top, 1, events :_*)
     events = IndexedSeq(zmk.fillMemory(devParent.data, _zero, events:_*))
-    queue.finish()
+    debugFinish()
 
     for(span <- 2 to batch.maxLength) {
       println(span)
