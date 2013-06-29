@@ -15,7 +15,6 @@ class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut:
     srcColumnPointers: Array[Int], events: CLEvent*)(implicit queue: CLQueue):CLEvent = synchronized {
     require(dst.rows >= srcColumnPointers.length, dst.rows + " " + srcColumnPointers.length)
     require(dst.isTranspose == src.isTranspose)
-    println("tc" + srcColumnPointers.mkString(","))
 
     val ptr = Pointer.pointerToArray[java.lang.Integer](srcColumnPointers)
     val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, srcColumnPointers.length)
@@ -43,7 +42,6 @@ class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut:
     require(src.rows >= dstColPointers.length, src.rows +" " + dstColPointers.length)
     require(dst.rows == src.cols)
     require(dst.isTranspose == src.isTranspose)
-    println("tco" + dstColPointers.mkString(","))
 
     val ptr = Pointer.pointerToArray[java.lang.Integer](dstColPointers)
     val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, dstColPointers.length)
@@ -106,24 +104,26 @@ __kernel void transpose_copy(__global T* _dst, int dstOff, int dstMajorStride,
                         
   int dstRow = get_global_id(0);
   int threadid = get_local_id(0);
-  // dstRow - threadid is the same for all threads in a workgroup.
+  int firstSrcCol = get_group_id(0) * BLOCK_SIZE;
   __local int myPtrs[BLOCK_SIZE];
-  int nColsToDo = max(min(BLOCK_SIZE, srcCols - (dstRow - threadid)),0);
+  int nColsToDo = max(min(BLOCK_SIZE, srcCols - firstSrcCol),0);
   event_t copyFirstPtr = async_work_group_copy(myPtrs, srcPtrs + dstRow - threadid, nColsToDo, 0);
   wait_group_events(1, &copyFirstPtr);
 
   int firstSrcRow = get_global_id(1) * BLOCK_SIZE;
   int nRowsToDo =  min(BLOCK_SIZE, srcRows - firstSrcRow);
 
-  // if the srcPtrs were next to each other, we could use async_work_group_strided_copy
-  // but they're not :(
-  for(int i = 0; i < nColsToDo; ++i) 
+  for(int i = 0; i < nColsToDo; ++i) {
     copyInEvents[i] = async_work_group_copy(block[i], // block(i, ::)
       src + srcMajorStride * myPtrs[i] + firstSrcRow, // src(firstSrcRow --> nRowsToDo, myPtrs(i))
-      nRowsToDo, 0); //
+      nRowsToDo, 0); 
+    
+    // TODO: why is this necessary? the wait_group_events below doesn't work.
+    wait_group_events(1, copyInEvents +i);
+  }
 
   wait_group_events(nColsToDo, copyInEvents);
-  
+
   // each block[i] now contains the slice src(firstSrcRow --> nRowsToDo, myPtrs[i]) 
   // so we want thread i to write block[i][j] to dst(dstRow, firstSrcRow + j)
 
@@ -149,7 +149,7 @@ __kernel void transpose_copy_out(
   int srcCol = get_global_id(0);
   int threadid = get_local_id(0);
   // srcCol - threadid is the same for all threads in a workgroup.
-  int firstSrcCol = srcCol - threadid;
+  int firstSrcCol = get_group_id(0) * BLOCK_SIZE;
   int nColsToDo = max(min(BLOCK_SIZE, srcCols - firstSrcCol),0);
 
   int firstSrcRow = get_global_id(1) * BLOCK_SIZE;
@@ -157,18 +157,19 @@ __kernel void transpose_copy_out(
 
   __local int myPtrs[BLOCK_SIZE];
   event_t copyFirstPtr = async_work_group_copy(myPtrs, dstPtrs + firstSrcRow, nRowsToDo, 0);
-  wait_group_events(1, &copyFirstPtr);
 
-  // if the srcPtrs were next to each other, we could use async_work_group_strided_copy
-  // but they're not :(
+
   for(int i = 0; i < nColsToDo; ++i) {
     copyInEvents[i] = async_work_group_copy(block[i], // block(i, ::)
       src + srcMajorStride * (firstSrcCol + i) + firstSrcRow, // src(firstSrcRow --> nRowsToDo, myPtrs(i))
       nRowsToDo, 0); //
+    // TODO: why is this necessary on intel? the wait_group_events below doesn't work.
+    wait_group_events(1, copyInEvents + i);
   }
 
 
   wait_group_events(nColsToDo, copyInEvents);
+  wait_group_events(1, &copyFirstPtr);
   
   // each block[i] now contains the slice src(firstSrcRow --> nRowsToDo, firstSrcCol + i)
   // we want to move src(firstSrcRow, ::) to dst(::, dstPtrs(firstSrcRow))

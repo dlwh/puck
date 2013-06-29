@@ -149,8 +149,8 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
     } else {
       // TODO: currently assumes elements are 4 bytes long!!!!
       val tc = CLMatrixTransposeCopy()(queue.getContext)
-      tc.permuteTransposeCopy(this.t.asInstanceOf[CLMatrix[Float]], b.asInstanceOf[CLMatrix[Float]], Array.range(0, b.cols), evv, evv2)
-      //tc.permuteTransposeCopyOut(this.t.asInstanceOf[CLMatrix[Float]], Array.range(0, rows), b.asInstanceOf[CLMatrix[Float]], events:_*)
+      //tc.permuteTransposeCopy(this.t.asInstanceOf[CLMatrix[Float]], b.asInstanceOf[CLMatrix[Float]], Array.range(0, b.cols), evv, evv2)
+      tc.permuteTransposeCopyOut(this.t.asInstanceOf[CLMatrix[Float]], Array.range(0, rows), b.asInstanceOf[CLMatrix[Float]], events:_*)
     }
     if(blocking)
       ev.waitFor()

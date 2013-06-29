@@ -50,8 +50,8 @@ class CLMatrixTest extends FunSuite {
   test("Matrix Transpose") {
     implicit val context = JavaCL.createBestContext(CLPlatform.DeviceFeature.CPU)
     implicit val queue = context.createDefaultOutOfOrderQueueIfPossible()
-    val mat2Rows = 40
-    val mat2Cols = 40
+    val mat2Rows = 10
+    val mat2Cols = 10
     val mat1Rows = mat2Cols * 2
     val mat1Cols = mat2Rows
     val mat = CLMatrix.zeros[Float](mat1Rows, mat1Cols)
