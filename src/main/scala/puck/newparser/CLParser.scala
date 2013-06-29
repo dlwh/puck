@@ -66,13 +66,14 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
 
   private implicit val queue = if(profile) context.createDefaultProfilingQueue() else context.createDefaultQueue()
+  private val memFillEvents  = new CLProfiler("memfill")
   private val hdTransferEvents  = new CLProfiler("Host2Dev Transfer")
   private val transferEvents  = new CLProfiler("Transfer")
   private val binaryEvents  = new CLProfiler("Binary")
   private val unaryEvents  = new CLProfiler("Unary")
   private val sumToChartsEvents  = new CLProfiler("SumToCharts")
   private val sumEvents  = new CLProfiler("Sum")
-  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, sumToChartsEvents, sumEvents)
+  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, sumToChartsEvents, sumEvents, memFillEvents)
 
   def release() {
     devParent.release()
@@ -176,13 +177,13 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     }
 
 
-    def initializeTagScores() = {
+    def initializeTagScores(events: CLEvent*) = {
       val dm = DenseMatrix.zeros[Float](totalLength, cellSize)
       dm := _zero
       for(i <- 0 until numSentences par) {
         tagScoresFor(dm, i)
       }
-      val ev = devParent(0 until totalLength, ::).writeFrom(dm, false)
+      val ev = devParent(0 until totalLength, ::).writeFrom(dm, false, events:_*)
       IndexedSeq(transposeCopy.permuteTransposeCopyOut(devCharts, gpuCharts.map(_.bot.spanRangeSlice(1)).reduceLeft[IndexedSeq[Int]](_ ++ _).toArray, devParent(0 until totalLength, ::), ev:_*))
     }
 
@@ -236,13 +237,18 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
 
   private def inside(batch: Batch):Seq[CLEvent] = synchronized {
+    val prof = new CLProfiler("...")
+    prof.clear()
+    prof.tick()
     hdTransferEvents.clear()
     hdTransferEvents.tick()
 
-    devCharts := _zero
-    val init = batch.initializeTagScores()
+    var eZC = zmk.fillMemory(devCharts.data, _zero)
+    val init = batch.initializeTagScores(eZC)
     hdTransferEvents ++= init
     var eZp = zmk.fillMemory(devParent.data, _zero)
+    memFillEvents += eZC
+    memFillEvents += eZp
     allProfilers.foreach(_.clear())
     allProfilers.foreach(_.tick())
 
@@ -251,6 +257,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     var events:Seq[CLEvent] = doUnaryUpdates(batch, 1, eZp +: init :_*)
     events = copyBackToCharts(batch, _.top, 1, events :_*)
     events = IndexedSeq(zmk.fillMemory(devParent.data, _zero, events:_*))
+    memFillEvents ++= events
     debugFinish()
 
     for(span <- 2 to batch.maxLength) {
@@ -258,10 +265,10 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       // TODO: there's got to be a better way. implicits?
       events = Seq[Seq[CLEvent]=>Seq[CLEvent]](
         binaryPass(batch, span, _:_*),
-        {(x: Seq[CLEvent]) => Seq(zmk.fillMemory(devParent.data, _zero, x:_*))},
+        {(x: Seq[CLEvent]) => val ee = Seq(zmk.fillMemory(devParent.data, _zero, x:_*)); memFillEvents ++= ee; ee},
         doUnaryUpdates(batch, span, _ : _*),
         copyBackToCharts(batch, _.top, span, _ :_*),
-        {(x: Seq[CLEvent]) => Seq(zmk.fillMemory(devParent.data, _zero, x:_*))}
+        {(x: Seq[CLEvent]) => val ee = Seq(zmk.fillMemory(devParent.data, _zero, x:_*)); memFillEvents ++= ee; ee}
       ).foldLeft(events)((a,b) => b apply a)
       debugFinish()
     }
@@ -269,6 +276,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     debugFinish()
 
     if(profile) {
+      prof.tock()
+      println(prof)
       queue.finish()
       allProfilers.foreach(_.tock())
       hdTransferEvents.tock()
