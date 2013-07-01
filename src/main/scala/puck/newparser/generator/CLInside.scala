@@ -211,7 +211,7 @@ __kernel void splitPointSum(__global float* parent, __global float* chart,
         for(int sym = tid + firstSym;  sym < lastSym; sym += numThreads) {
           int localSym = sym - firstSym; 
           float result = sumUp(scores[localSym], chart[myChartIndices[currentChartIndex] * numSyms + sym], row, lastRowForThisChartCell);
-          //if(myChartIndices[0] == 9 && result != -INFINITY) printf("%d %d %d %d %d %f %f\n", currentChartIndex, firstRow, row, lastRowForThisChartCell, sym, result, chart[myChartIndices[currentChartIndex] * numSyms + sym]);
+         // if(myChartIndices[0] == 9 && result != -INFINITY) printf("%d %d %d %d %d %f %f\n", currentChartIndex, firstRow, row, lastRowForThisChartCell, sym, result, chart[myChartIndices[currentChartIndex] * numSyms + sym]);
           chart[myChartIndices[currentChartIndex] * numSyms + sym] = result;
         }
 

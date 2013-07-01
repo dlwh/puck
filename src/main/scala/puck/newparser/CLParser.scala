@@ -166,8 +166,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       chart
     }
 
-    println(sentences.scanLeft(0)(_ + _.length))
-
     lazy val outsideCharts = if(!needsOutside) None else Some{
       for(i <- 0 until numSentences) yield {
 
