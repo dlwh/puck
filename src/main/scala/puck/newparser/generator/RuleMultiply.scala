@@ -35,8 +35,7 @@ trait RuleMultiply[L] extends Base with KernelOps with ExtraBase with Accumulato
         }
       }
       out.foreachUsed{ (id:Int, value: Rep[Real]) =>
-        val p = parent(parentRows * id + row)
-        parent(parentRows * id + row) = p + value
+        parent(parentRows * id + row) = value
       }
     }
 
@@ -60,8 +59,7 @@ trait RuleMultiply[L] extends Base with KernelOps with ExtraBase with Accumulato
         }
       }
       out.foreachUsed{ (id:Int, value: Rep[Real]) =>
-        val p = parent(rows * id + row)
-        parent(rows * id + row) = p + value
+        parent(rows * id + row) = value
       }
     }
 
@@ -86,7 +84,5 @@ trait RuleMultiply[L] extends Base with KernelOps with ExtraBase with Accumulato
       dest(label * destRowSize + row + destOff) =  dest(label * destRowSize + row + destOff) + source(label * srcRowSize + row + srcOff)
     }
   })
-
-  
 
 }

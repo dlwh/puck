@@ -8,6 +8,7 @@ import trochee.basic._
 import trochee.kernels._
 import scala.reflect.runtime.universe._
 import puck.linalg._
+import org.bridj._
 
 case class CLInsideKernels(insideNNKernels: IndexedSeq[CLKernel],
                            insideNTKernels: IndexedSeq[CLKernel],
@@ -73,7 +74,7 @@ object CLInsideKernels {
   }
 }
 
-case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKernel, splitPointsBlockSize: Int) {
+case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKernel, splitPointsBlockSize: Int, groupSize: Int) {
   def write(out: ZipOutputStream) {
     ZipUtil.addKernel(out, "sumGrammarKernel", sumGrammarKernel)
     ZipUtil.addKernel(out, "sumSplitPointsKernel", sumSplitPointsKernel)
@@ -84,13 +85,30 @@ case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel:
     require(chartIndices.length == parentIndices.length - 1)
     val parentStride = parent.rows
     val numSyms = parent.cols
-    sumSplitPointsKernel.setArgs(parent.data, chart.data, chartIndices,  parentIndices,
-      Integer.valueOf(parentStride), Integer.valueOf(chartIndices.length), Integer.valueOf(chartIndicesPerGroup min splitPointsBlockSize), 
+
+    val ptrCI = Pointer.pointerToArray[java.lang.Integer](chartIndices)
+    val intBufferCI = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, chartIndices.length)
+    val evCI = intBufferCI.write(queue, 0, chartIndices.length, ptrCI, false, events:_*)
+
+    val ptrPI = Pointer.pointerToArray[java.lang.Integer](parentIndices)
+    val intBufferPI = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, parentIndices.length)
+    val evPI = intBufferPI.write(queue, 0, parentIndices.length, ptrPI, false, events:_*)
+
+    sumSplitPointsKernel.setArgs(parent.data.safeBuffer, chart.data.safeBuffer, intBufferCI, intBufferPI,
+      Integer.valueOf(parentStride), Integer.valueOf(chartIndices.length), Integer.valueOf(chartIndicesPerGroup), 
       Integer.valueOf(numSyms))
-      val workSize = (chartIndices.length + splitPointsBlockSize - 1)/splitPointsBlockSize * splitPointsBlockSize
-      val rowBlocks = (numSyms + splitPointsBlockSize - 1)/splitPointsBlockSize
-    sumSplitPointsKernel.enqueueNDRange(queue, Array(workSize, rowBlocks), Array(splitPointsBlockSize, 1), events:_*)
+
+    val numGroups = (chartIndices.length + chartIndicesPerGroup - 1)/chartIndicesPerGroup * chartIndicesPerGroup
+    val rowBlocks = (numSyms + splitPointsBlockSize - 1)/splitPointsBlockSize
+
+    val ev = sumSplitPointsKernel.enqueueNDRange(queue, Array(numGroups * groupSize, rowBlocks), Array(groupSize, 1), evCI, evPI)
+
+    ev.invokeUponCompletion(new Runnable() {
+      def run() = { ptrCI.release(); intBufferCI.release(); ptrPI.release(); intBufferPI.release(); }
+    })
+    ev
   }
+
 
 }
 
@@ -101,20 +119,20 @@ object CLParserUtilKernels {
   }
 
   def make[C, L](generator: CLParserKernelGenerator[C, L])(implicit context: CLContext) = {
-  val preferredBlockSize = 32
-    val blockSize = if( context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel")) {
+    val blockSize = 1
+    val groupSize = if( context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel")) {
       1
     } else {
       val x = context.getDevices.head.getMaxWorkItemSizes
       val size0 = x(0)
-      math.min(size0, preferredBlockSize).toInt
+      math.min(size0, blockSize).toInt
     }
 
-    CLParserUtilKernels(generator.gen.mkKernel(generator.gen.IR.sumGrammarCellsKernel), context.createProgram(splitPointSumKernel(blockSize)).createKernel("splitPointSum"), blockSize)
+    CLParserUtilKernels(generator.gen.mkKernel(generator.gen.IR.sumGrammarCellsKernel), context.createProgram(splitPointSumKernel(blockSize)).createKernel("splitPointSum"),  blockSize, groupSize)
   }
 
   def splitPointSumKernel(blockSize: Int) = {
-    """#define BLOCK_SIZE """ + blockSize + """
+   """#define BLOCK_SIZE """ + blockSize + """
 
    static float sumUp(__local float* scores, float _acc, int first, int last) {
      float m = _acc;
@@ -143,66 +161,72 @@ __kernel void splitPointSum(__global float* parent, __global float* chart,
   int tid = get_local_id(0);
   int numThreads = get_local_size(0);
 
-  int firstChartIndex = groupid * chartIndicesPerGroup;
-  int chartIndicesToDo = clamp(numChartIndices - firstChartIndex, 0, chartIndicesPerGroup);
+  int totalChartIndicesToDo = clamp(numChartIndices - groupid * chartIndicesPerGroup, 0, chartIndicesPerGroup);
 
   __local int myParentIndices[BLOCK_SIZE+1];
   __local int myChartIndices[BLOCK_SIZE];
 
-  event_t e_parents = async_work_group_copy(myParentIndices, parentIndex + firstChartIndex, chartIndicesToDo + 1, 0);
-  // TODO: intel needs this here and not after the next line, for some reason
-  wait_group_events(1, &e_parents);
-  event_t e_charts = async_work_group_copy(myChartIndices, chartIndex + firstChartIndex, chartIndicesToDo, 0);
+  int lastChartIndex = groupid * chartIndicesPerGroup + totalChartIndicesToDo;
+  for(int firstChartIndex = groupid * chartIndicesPerGroup; firstChartIndex < lastChartIndex; firstChartIndex += BLOCK_SIZE) {
+    int chartIndicesToDo = clamp(lastChartIndex - firstChartIndex, 0, BLOCK_SIZE);
 
-  int numRowsToDo = myParentIndices[chartIndicesToDo] - myParentIndices[0];
-  int rowOffset = myParentIndices[0];
+    event_t e_parents = async_work_group_copy(myParentIndices, parentIndex + firstChartIndex, chartIndicesToDo + 1, 0);
+    // TODO: intel needs this here and not after the next line, for some reason
+    wait_group_events(1, &e_parents);
+    event_t e_charts = async_work_group_copy(myChartIndices, chartIndex + firstChartIndex, chartIndicesToDo, 0);
 
+    int numRowsToDo = myParentIndices[chartIndicesToDo] - myParentIndices[0];
+    int rowOffset = myParentIndices[0];
 
-  int firstSym = get_global_id(1) * BLOCK_SIZE;
-  int lastSym = min(firstSym + BLOCK_SIZE, numSyms);
+    int firstSym = get_global_id(1) * BLOCK_SIZE;
+    int lastSym = min(firstSym + BLOCK_SIZE, numSyms);
 
-  __local float scores[BLOCK_SIZE][BLOCK_SIZE+1];
-  
-  wait_group_events(1, &e_charts);
+    __local float scores[BLOCK_SIZE][BLOCK_SIZE+1];
 
-  int currentChartIndex = 0;
-  // rows = single split point.
-  for(int firstRow = 0; firstRow < numRowsToDo; firstRow += BLOCK_SIZE) {
-    int todo = firstRow + min(numRowsToDo - firstRow, BLOCK_SIZE);
-    // copy scores in
-    for(int sym = firstSym;  sym < lastSym; sym += 1) {
-      int localSym = sym - firstSym;
-      event_t event = async_work_group_copy(scores[localSym], parent + parentStride * sym + rowOffset, todo, 0);
-      wait_group_events(1, &event);
-    }
+    wait_group_events(1, &e_charts);
 
-    // at this point, todo columns of scores are read in.
-    // min(myParentIndices[currentChartIndex+1] - myParentIndices[0] - firstRow, todo) belong to the currentChartIndex.
-    // what's left belongs to the next chartIndex (or the ones thereafter)
-    // TODO: if the number of rows for one chart index is bigger than BLOCK_SIZE, then we'll need to 
-    // write to global memory multiple times. we might consider caching in local memory instead.
-    // this will only happen on nvidia cards for numSplits > 32, and since we're mostly doing length 40,
-    // whatever.
-    int row = 0;
-    while(currentChartIndex < chartIndicesToDo && row < todo) {
-
-      int todoForThisChartCell = min(myParentIndices[currentChartIndex+1]- myParentIndices[0] - firstRow, todo);
-      // for each symbol, sum over all rows (split points) for this chart index
-      // then flush the score back to the right place for this chart symbol.
-      for(int sym = tid + firstSym;  sym < lastSym; sym += numThreads) {
-        int localSym = sym - firstSym; 
-        float result = sumUp(scores[localSym], chart[myChartIndices[currentChartIndex] * numSyms + sym], row, row + todoForThisChartCell);
-        chart[myChartIndices[currentChartIndex] * numSyms + sym] = result;
+    int currentChartIndex = 0;
+    // each row is a single split point.
+    for(int firstRow = 0; firstRow < numRowsToDo; firstRow += BLOCK_SIZE) {
+      int todo = min(numRowsToDo - firstRow, BLOCK_SIZE);
+      // copy scores in
+      for(int sym = firstSym;  sym < lastSym; sym += 1) {
+        int localSym = sym - firstSym;
+        event_t event = async_work_group_copy(scores[localSym], parent + parentStride * sym + rowOffset + firstRow, todo, 0);
+        wait_group_events(1, &event);
       }
 
-      row += todoForThisChartCell;
+      // at this point, todo columns of scores are read in.
+      // min(myParentIndices[currentChartIndex+1] - myParentIndices[0] - firstRow, todo) belong to the currentChartIndex.
+      // what's left belongs to the next chartIndex (or the ones thereafter)
+      // TODO: if the number of rows for one chart index is bigger than BLOCK_SIZE, then we'll need to 
+      // write to global memory multiple times. we might consider caching in local memory instead.
+      // this will only happen on nvidia cards for numSplits > 32, and since we're mostly doing length 40,
+      // whatever.
+      int row = 0;
+      while(currentChartIndex < chartIndicesToDo && row < todo) {
+        int lastRowForThisChartCell = min(myParentIndices[currentChartIndex+1] - myParentIndices[0] - firstRow, todo);
+        // for each symbol, sum over all rows (split points) for this chart index
+        // then flush the score back to the right place for this chart symbol.
+        for(int sym = tid + firstSym;  sym < lastSym; sym += numThreads) {
+          int localSym = sym - firstSym; 
+          float result = sumUp(scores[localSym], chart[myChartIndices[currentChartIndex] * numSyms + sym], row, lastRowForThisChartCell);
+          //if(myChartIndices[0] == 9 && result != -INFINITY) printf("%d %d %d %d %d %f %f\n", currentChartIndex, firstRow, row, lastRowForThisChartCell, sym, result, chart[myChartIndices[currentChartIndex] * numSyms + sym]);
+          chart[myChartIndices[currentChartIndex] * numSyms + sym] = result;
+        }
 
-      if (row >= myParentIndices[currentChartIndex+1] - myParentIndices[0] - firstRow) {
-        ++currentChartIndex;
+        //if(trace) printf("%d %d %d %d %d\n", row, lastRowForThisChartCell, myParentIndices[currentChartIndex+1],myParentIndices[0],firstRow);
+        row = lastRowForThisChartCell;
+
+        if (row >= myParentIndices[currentChartIndex+1] - myParentIndices[0] - firstRow) {
+          ++currentChartIndex;
+        }
       }
+
+      barrier(CLK_LOCAL_MEM_FENCE);
     }
+
   }
-
 }"""
   }
 }

@@ -135,6 +135,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
   // (dest, leftSource, rightSource) (right Source if applicable)
   val pArray, lArray, rArray = new Array[Int](numGPUCells)
+  val splitPointOffsets = new Array[Int](numGPUCells+1)
 
   // also the rules
   private val devRules = context.createFloatBuffer(CLMem.Usage.Input, FloatBuffer.wrap(ruleScores), false)
@@ -236,8 +237,21 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   }
 
   def debugRaces = false
+  def debugCharts = false
 
-  def debugFinish() = if(debugRaces) queue.finish()
+  def debugFinish() {
+    if(debugRaces || debugCharts) queue.finish()
+  }
+
+  def debugCharts(batch: Batch) {
+    if(debugCharts) {
+      println(batch.gpuCharts(0).bot.toString(structure, _zero))
+      println(batch.gpuCharts(0).top.toString(structure, _zero))
+    }
+  }
+
+  println(structure.nontermIndex.zipWithIndex)
+  println(structure.termIndex.zipWithIndex)
 
   private def inside(batch: Batch):Seq[CLEvent] = synchronized {
     val prof = new CLProfiler("...")
@@ -259,7 +273,9 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     events = copyBackToCharts(batch, _.top, 1, events :_*)
     events = IndexedSeq(zmk.fillMemory(devParent.data, _zero, events:_*))
     memFillEvents ++= events
+
     debugFinish()
+    //debugCharts(batch)
 
     for(span <- 2 to batch.maxLength) {
       println(span)
@@ -273,6 +289,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       ).foldLeft(events)((a,b) => b apply a)
       debugFinish()
     }
+      debugCharts(batch)
 
     debugFinish()
 
@@ -297,8 +314,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
     ev = doNTUpdates(batch, span, ev :_*)
     ev = doTNUpdates(batch, span, ev :_*)
-    ev = doNNUpdates(batch, span, batch.maxLength, ev :_*)
-    ev = copyBackToCharts(batch, _.bot, span, ev :_*)
+    ev = doNNUpdates(batch, span, ev :_*)
+    //ev = copyBackToCharts(batch, _.bot, span, ev :_*)
     ev
   }
 
@@ -311,6 +328,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     events: CLEvent*) = {
     var ev = events
 
+    var parentOffset = 0 // number of unique parent spans used so far
     var offset = 0 // number of cells used so far.
 
     val usedPerSplit = batch.totalLengthForSpan(span)
@@ -320,6 +338,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
     def flushQueue() {
       if(offset != 0) {
+        splitPointOffsets(parentOffset) = offset
         val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, lArray.take(offset), ev:_*)
         val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, rArray.take(offset), ev:_*)
         transferEvents += wl
@@ -329,52 +348,54 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
           kernel.enqueueNDRange(queue, Array(offset), wl, wr)
         } 
         binaryEvents ++= ev
+        queue.finish()
+        val sumEv = data.util.sumSplitPoints(devParent, devCharts, java.util.Arrays.copyOf(pArray, parentOffset), java.util.Arrays.copyOf(splitPointOffsets, parentOffset + 1), 32 / span max 1, ev:_*)
+        queue.finish()
+        sumEvents += sumEv
+        ev = IndexedSeq(sumEv)
         maxOffset = maxOffset max offset
         offset = 0
+        parentOffset = 0
       }
     }
 
     def enqueue(parent: Int, left: Int, right: Int) {
-      pArray(offset) = parent
+      if(parentOffset == 0 || pArray(parentOffset-1) != parent) {
+        splitPointOffsets(parentOffset) = offset
+        pArray(parentOffset) = parent
+        parentOffset += 1
+      }
       lArray(offset) = left
       rArray(offset) = right
       offset += 1
-    }
-
-    for(leftChildLength <- splitRange) {
-      //println(span,leftChildLength)
-      // if we fill up the buffer, run a pass.
       if(offset + usedPerSplit >= numGPUCells)  {
         println(s"flush! used $offset of $numGPUCells. Another split needs $usedPerSplit.")
         flushQueue()
       }
-
-      // add next split point
-      for(sent <- 0 until batch.numSentences) {
-        if(span <= batch.sentences(sent).length) {
-          val lslice:Range = leftChart(batch.gpuCharts(sent)).spanRangeSlice(leftChildLength, 0, batch.gpuCharts(sent).length-span+1)
-          val rslice:Range = rightChart(batch.gpuCharts(sent)).spanRangeSlice(span-leftChildLength, leftChildLength)
-          val offsets = batch.gpuCharts(sent).bot.spanRangeSlice(span) 
-          assert(lslice.length == rslice.length, lslice.length + " " + rslice.length + " " + offsets.length)
-          assert(offsets.length == lslice.length)
-          var i = 0
-          while(i < offsets.length) {
-            enqueue(offsets(i), lslice(i), rslice(i))
-            i += 1
-          }
-        }
-      }
-
     }
 
+    for{
+      sent <- 0 until batch.numSentences
+      start <- 0 to batch.sentences(sent).length - span
+      end = start + span
+      splitDelta <- splitRange
+    } {
+      val split = start + splitDelta
+      val parentTi = batch.gpuCharts(sent).bot.treeIndex(start,end)
+      val leftChild = leftChart(batch.gpuCharts(sent)).treeIndex(start,split)
+      val rightChild = rightChart(batch.gpuCharts(sent)).treeIndex(split, end)
+      enqueue(parentTi, leftChild, rightChild)
+    }
 
     if(offset > 0) {
       flushQueue()
     } 
 
+/*
     if(maxOffset > usedPerSplit) {
       ev = sumEvents.adding(sumSplitBlocks(usedPerSplit, maxOffset, ev:_*))
     }
+    */
 
     ev
   }
@@ -424,7 +445,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     endEvents
   }
 
-  def doNNUpdates(batch: Batch, span: Int, maxLength: Int, events: CLEvent*) = {
+  def doNNUpdates(batch: Batch, span: Int, events: CLEvent*) = {
     doBinaryUpdates(batch, data.inside.insideNNKernels, span, (1 to span-1), _.top, _.top, events:_*)
   }
 
@@ -519,6 +540,8 @@ object CLParser extends Logging {
       timeIn = timeOut
       val margs = train.map { w => 
         val m = ChartMarginal(AugmentedGrammar.fromRefined(grammar).anchor(w), w, maxMarginal= !kern.needsOutside)
+       // printChart(m, true)
+       // printChart(m, false)
         m.logPartition
       }
       timeOut = System.currentTimeMillis()
