@@ -119,7 +119,7 @@ object CLParserUtilKernels {
   }
 
   def make[C, L](generator: CLParserKernelGenerator[C, L])(implicit context: CLContext) = {
-    val blockSize = 1
+    val blockSize = 32
     val groupSize = if( context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel")) {
       1
     } else {
@@ -134,7 +134,7 @@ object CLParserUtilKernels {
   def splitPointSumKernel(blockSize: Int) = {
    """#define BLOCK_SIZE """ + blockSize + """
 
-   static float sumUp(__local float* scores, float _acc, int first, int last) {
+   float sumUp(__local float* scores, float _acc, int first, int last) {
      float m = _acc;
      for(int i = first; i < last; i += 1) {
         m = max(m, scores[i]);

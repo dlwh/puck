@@ -259,20 +259,16 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     prof.tick()
     hdTransferEvents.clear()
     hdTransferEvents.tick()
+    allProfilers.foreach(_.clear())
+    allProfilers.foreach(_.tick())
 
     var eZC = zmk.fillMemory(devCharts.data, _zero)
     val init = batch.initializeTagScores(eZC)
     hdTransferEvents ++= init
-    var eZp = zmk.fillMemory(devParent.data, _zero)
     memFillEvents += eZC
-    memFillEvents += eZp
-    allProfilers.foreach(_.clear())
-    allProfilers.foreach(_.tick())
 
-    var events:Seq[CLEvent] = doUnaryUpdates(batch, 1, eZp +: init :_*)
+    var events:Seq[CLEvent] = doUnaryUpdates(batch, 1, init :_*)
     events = copyBackToCharts(batch, _.top, 1, events :_*)
-    events = IndexedSeq(zmk.fillMemory(devParent.data, _zero, events:_*))
-    memFillEvents ++= events
 
     debugFinish()
     //debugCharts(batch)
@@ -281,11 +277,9 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       println(span)
       // TODO: there's got to be a better way. implicits?
       events = Seq[Seq[CLEvent]=>Seq[CLEvent]](
-        binaryPass(batch, span, _:_*),
-        {(x: Seq[CLEvent]) => val ee = Seq(zmk.fillMemory(devParent.data, _zero, x:_*)); memFillEvents ++= ee; ee},
-        doUnaryUpdates(batch, span, _ : _*),
-        copyBackToCharts(batch, _.top, span, _ :_*),
-        {(x: Seq[CLEvent]) => val ee = Seq(zmk.fillMemory(devParent.data, _zero, x:_*)); memFillEvents ++= ee; ee}
+        binaryPass(batch, span, _:_*)
+        ,doUnaryUpdates(batch, span, _ : _*)
+        ,copyBackToCharts(batch, _.top, span, _ :_*)
       ).foldLeft(events)((a,b) => b apply a)
       debugFinish()
     }
@@ -312,10 +306,10 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       ev = doTTUpdates(batch, ev:_*)
     }
 
+
     ev = doNTUpdates(batch, span, ev :_*)
     ev = doTNUpdates(batch, span, ev :_*)
     ev = doNNUpdates(batch, span, ev :_*)
-    //ev = copyBackToCharts(batch, _.bot, span, ev :_*)
     ev
   }
 
@@ -343,14 +337,18 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
         val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, rArray.take(offset), ev:_*)
         transferEvents += wl
         transferEvents += wr
+        val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, ev:_*)
+        memFillEvents += zz
         ev = kernels.map{ kernel =>
           kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
-          kernel.enqueueNDRange(queue, Array(offset), wl, wr)
+          kernel.enqueueNDRange(queue, Array(offset), wl, wr, zz)
         } 
         binaryEvents ++= ev
-        queue.finish()
-        val sumEv = data.util.sumSplitPoints(devParent, devCharts, java.util.Arrays.copyOf(pArray, parentOffset), java.util.Arrays.copyOf(splitPointOffsets, parentOffset + 1), 32 / span max 1, ev:_*)
-        queue.finish()
+        val sumEv = data.util.sumSplitPoints(devParent,
+          devCharts,
+          java.util.Arrays.copyOf(pArray, parentOffset),
+          java.util.Arrays.copyOf(splitPointOffsets, parentOffset + 1),
+          32 / span max 1, ev:_*)
         sumEvents += sumEv
         ev = IndexedSeq(sumEv)
         maxOffset = maxOffset max offset
@@ -431,6 +429,9 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
               batch.gpuCharts(sent).bot.spanRangeSlice(span))
     }
 
+    val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, events:_*)
+    memFillEvents += zz
+
     val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, lArray.take(offset), events:_*)
     transferEvents += wl
     debugFinish()
@@ -438,7 +439,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     val kernels = if(span == 1) data.inside.insideTUKernels else data.inside.insideNUKernels
     val endEvents = kernels.map{(kernel) =>
       kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(numGPUCells), Integer.valueOf(totalLengthForSpan(span)))
-      kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), wl)
+      kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), wl, zz)
     }
     debugFinish()
     unaryEvents ++= endEvents
@@ -521,6 +522,8 @@ object CLParser extends Logging {
 
     val kern = fromSimpleGrammar[AnnotatedLabel, AnnotatedLabel, String](grammar, profile)
     val train = transformed.slice(0,numToParse).map(_.words)
+
+    println(train.map(_.length))
     
 
     var timeIn = System.currentTimeMillis()
@@ -542,7 +545,7 @@ object CLParser extends Logging {
         val m = ChartMarginal(AugmentedGrammar.fromRefined(grammar).anchor(w), w, maxMarginal= !kern.needsOutside)
        // printChart(m, true)
        // printChart(m, false)
-        m.logPartition
+        m.logPartition.toFloat
       }
       timeOut = System.currentTimeMillis()
       println(s"Scala Parsing took: ${(timeOut-timeIn)/1000.0}")
