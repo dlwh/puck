@@ -133,6 +133,9 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   // transposed
   private val devCharts = new CLMatrix[Float](cellSize, numGPUChartCells)
 
+  // (dest, leftSource, rightSource) (right Source if applicable)
+  val pArray, lArray, rArray = new Array[Int](numGPUCells)
+
   // also the rules
   private val devRules = context.createFloatBuffer(CLMem.Usage.Input, FloatBuffer.wrap(ruleScores), false)
 
@@ -236,7 +239,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
   def debugFinish() = if(debugRaces) queue.finish()
 
-
   private def inside(batch: Batch):Seq[CLEvent] = synchronized {
     val prof = new CLProfiler("...")
     prof.clear()
@@ -252,8 +254,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     memFillEvents += eZp
     allProfilers.foreach(_.clear())
     allProfilers.foreach(_.tick())
-
-
 
     var events:Seq[CLEvent] = doUnaryUpdates(batch, 1, eZp +: init :_*)
     events = copyBackToCharts(batch, _.top, 1, events :_*)
@@ -302,9 +302,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     ev
   }
 
-  // (dest, leftSource, rightSource) (right Source if applicable)
-  val pArray, lArray, rArray = new Array[Int](numGPUCells)
-
   private def doBinaryUpdates(batch: Batch,
     kernels: IndexedSeq[CLKernel],
     span: Int,
@@ -337,11 +334,11 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       }
     }
 
-    def enqueue(parent: IndexedSeq[Int], left: IndexedSeq[Int], right: IndexedSeq[Int]) {
-      parent.copyToArray(pArray, offset)
-      left.copyToArray(lArray, offset)
-      right.copyToArray(rArray, offset)
-      offset += parent.length
+    def enqueue(parent: Int, left: Int, right: Int) {
+      pArray(offset) = parent
+      lArray(offset) = left
+      rArray(offset) = right
+      offset += 1
     }
 
     for(leftChildLength <- splitRange) {
@@ -360,20 +357,24 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
           val offsets = batch.gpuCharts(sent).bot.spanRangeSlice(span) 
           assert(lslice.length == rslice.length, lslice.length + " " + rslice.length + " " + offsets.length)
           assert(offsets.length == lslice.length)
-          enqueue(offsets, lslice, rslice)
+          var i = 0
+          while(i < offsets.length) {
+            enqueue(offsets(i), lslice(i), rslice(i))
+            i += 1
+          }
         }
       }
 
     }
 
 
-
     if(offset > 0) {
       flushQueue()
     } 
 
-    if(maxOffset > usedPerSplit)
+    if(maxOffset > usedPerSplit) {
       ev = sumEvents.adding(sumSplitBlocks(usedPerSplit, maxOffset, ev:_*))
+    }
 
     ev
   }
@@ -412,7 +413,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, lArray.take(offset), events:_*)
     transferEvents += wl
     debugFinish()
-
 
     val kernels = if(span == 1) data.inside.insideTUKernels else data.inside.insideNUKernels
     val endEvents = kernels.map{(kernel) =>

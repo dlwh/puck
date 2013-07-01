@@ -87,4 +87,6 @@ trait RuleMultiply[L] extends Base with KernelOps with ExtraBase with Accumulato
     }
   })
 
+  
+
 }
