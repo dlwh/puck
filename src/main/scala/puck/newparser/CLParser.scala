@@ -298,52 +298,55 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   private def binaryPass(batch: Batch, span: Int, events: CLEvent*) = {
     var ev = events
     if(span == 2) {
-      ev = doTTUpdates(batch, ev:_*)
+      ev = insideTT.doUpdates(batch, span, ev :_*)
     }
 
-    ev = doNTUpdates(batch, span, ev :_*)
-    ev = doTNUpdates(batch, span, ev :_*)
-    ev = doNNUpdates(batch, span, ev :_*)
+    ev = insideNT.doUpdates(batch, span, ev :_*)
+    ev = insideTN.doUpdates(batch, span, ev :_*)
+    ev = insideNN.doUpdates(batch, span, ev :_*)
     assert(ev.length == 1)
     ev.head
   }
 
-  private def doBinaryUpdates(batch: Batch,
-    kernels: IndexedSeq[CLKernel],
-    span: Int,
-    splitRange: Range,
+  private val insideTT = new BinaryUpdateManager(data.inside.insideTTKernels, _.bot, _.bot, _.bot, (b, e, l) => (b+1 to b+1))
+  private val insideNT = new BinaryUpdateManager(data.inside.insideNTKernels, _.bot, _.top, _.bot, (b, e, l) => (e-1 to e-1))
+  private val insideTN = new BinaryUpdateManager(data.inside.insideTNKernels, _.bot, _.bot, _.top, (b, e, l) => (b+1 to b+1))
+  private val insideNN = new BinaryUpdateManager(data.inside.insideNNKernels, _.bot, _.top, _.top, (b, e, l) => (b+1 to e-1))
+
+  private class BinaryUpdateManager(kernels: IndexedSeq[CLKernel],
+    parentChart: ParseChart=>ChartHalf,
     leftChart: ParseChart=>ChartHalf,
     rightChart: ParseChart=>ChartHalf,
-    events: CLEvent*) = {
-    var ev = events
+    ranger: (Int, Int, Int)=>Range) {
 
-    var parentOffset = 0 // number of unique parent spans used so far
-    var offset = 0 // number of cells used so far.
+    private var parentOffset = 0 // number of unique parent spans used so far
+    private var offset = 0 // number of cells used so far.
 
-    def flushQueue() {
-      if(offset != 0) {
-        splitPointOffsets(parentOffset) = offset
-        val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, java.util.Arrays.copyOf(lArray, offset), ev:_*)
-        val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, java.util.Arrays.copyOf(rArray, offset), ev:_*)
-        transferEvents += wl
-        transferEvents += wr
-        val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, ev:_*)
-        memFillEvents += zz
-        ev = kernels.map{ kernel =>
-          kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
-          kernel.enqueueNDRange(queue, Array(offset), wl, wr, zz)
-        } 
-        binaryEvents ++= ev
-        val sumEv = data.util.sumSplitPoints(devParent,
-          devCharts,
-          java.util.Arrays.copyOf(pArray, parentOffset),
-          java.util.Arrays.copyOf(splitPointOffsets, parentOffset + 1),
-          32 / span max 1, ev:_*)
-        sumEvents += sumEv
-        ev = IndexedSeq(sumEv)
-        offset = 0
-        parentOffset = 0
+    // TODO: ugh, state
+    private var ev:Seq[CLEvent] = IndexedSeq.empty[CLEvent]
+    private var span = 1
+
+    def doUpdates(batch: Batch, span: Int, events: CLEvent*) = {
+      ev = events
+      this.span = span
+
+      for{
+        sent <- 0 until batch.numSentences
+        start <- 0 to batch.sentences(sent).length - span
+        split <- ranger(start, start + span, batch.sentences(sent).length)
+      } {
+        val end = start + span
+        val parentTi = parentChart(batch.gpuCharts(sent)).treeIndex(start,end)
+        val leftChild = if(split < start) leftChart(batch.gpuCharts(sent)).treeIndex(split,start) else leftChart(batch.gpuCharts(sent)).treeIndex(start, split)
+        val rightChild = if(split < end) rightChart(batch.gpuCharts(sent)).treeIndex(split,end) else rightChart(batch.gpuCharts(sent)).treeIndex(end, split)
+        enqueue(parentTi, leftChild, rightChild)
       }
+
+      if(offset > 0) {
+        flushQueue()
+      } 
+
+      ev
     }
 
     def enqueue(parent: Int, left: Int, right: Int) {
@@ -361,42 +364,32 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       }
     }
 
-    for{
-      sent <- 0 until batch.numSentences
-      start <- 0 to batch.sentences(sent).length - span
-      end = start + span
-      splitDelta <- splitRange
-    } {
-      val split = start + splitDelta
-      val parentTi = batch.gpuCharts(sent).bot.treeIndex(start,end)
-      val leftChild = leftChart(batch.gpuCharts(sent)).treeIndex(start,split)
-      val rightChild = rightChart(batch.gpuCharts(sent)).treeIndex(split, end)
-      enqueue(parentTi, leftChild, rightChild)
+    def flushQueue() {
+      if(offset != 0) {
+        splitPointOffsets(parentOffset) = offset
+        val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, java.util.Arrays.copyOf(lArray, offset), ev:_*)
+        val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, java.util.Arrays.copyOf(rArray, offset), ev:_*)
+        transferEvents += wl
+        transferEvents += wr
+        val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, ev:_*)
+        memFillEvents += zz
+        ev = kernels.map{ kernel =>
+          kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
+          kernel.enqueueNDRange(queue, Array(offset), wl, wr, zz)
+        } 
+
+        binaryEvents ++= ev
+        val sumEv = data.util.sumSplitPoints(devParent,
+          devCharts,
+          java.util.Arrays.copyOf(pArray, parentOffset),
+          java.util.Arrays.copyOf(splitPointOffsets, parentOffset + 1),
+          32 / span max 1, ev:_*)
+        sumEvents += sumEv
+        ev = IndexedSeq(sumEv)
+        offset = 0
+        parentOffset = 0
+      }
     }
-
-    if(offset > 0) {
-      flushQueue()
-    } 
-
-    ev
-  }
-
-  def doTTUpdates(batch: Batch, events: CLEvent*) = {
-    // layout:
-    // Parents for each span of length 2 == n -1
-    // [Sent0Span2Pos0, Sent0Span2Pos1, ..., Sent0Span2PosN-2, Sent1Span2Pos0, ...]
-    // [Sent0Term0    , Sent0Term1    , ..., Sent0TermN-1    , Sent1Term0    , ...]
-    // [Sent0Term1    , Sent0Term2    , ..., Sent0TermN      , Sent1Term1    , ...]
-    doBinaryUpdates(batch, data.inside.insideTTKernels, 2, 1 to 1, _.bot, _.bot, events:_*)
-  }
-
-
-  def doTNUpdates(batch: Batch, span: Int, events: CLEvent*) = {
-    doBinaryUpdates(batch, data.inside.insideTNKernels, span, 1 to 1, _.bot, _.top, events:_*)
-  }
-
-  def doNTUpdates(batch: Batch, span: Int, events: CLEvent*) = {
-    doBinaryUpdates(batch, data.inside.insideNTKernels, span, (span-1) to (span-1), _.top, _.bot, events:_*)
   }
 
   def doUnaryUpdates(batch: Batch, span: Int, events: CLEvent*) = {
@@ -429,43 +422,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     
     copyBackToCharts(batch, _.top, span, endEvents: _*)
   }
-
-  def doNNUpdates(batch: Batch, span: Int, events: CLEvent*) = {
-    doBinaryUpdates(batch, data.inside.insideNNKernels, span, (1 to span-1), _.top, _.top, events:_*)
-  }
-
-  private def sumSplitBlocks(targetSize: Int, currentSize: Int, events: CLEvent*):IndexedSeq[CLEvent] = {
-    assert(currentSize % targetSize == 0)
-    val multiple: Int = currentSize / targetSize
-    val log2 = BitHacks.log2(multiple)
-    if(log2 == 0) return events.toIndexedSeq
-
-    var currentMultiple = 1 << log2
-
-    var ev:IndexedSeq[CLEvent] = events.toIndexedSeq
-    if(currentMultiple != multiple) {
-      val difference = multiple - currentMultiple
-      ev = IndexedSeq(sumGrammarCells(devParent(0 until difference * targetSize, ::), devParent(currentSize - difference*targetSize until currentSize, ::), ev:_*))
-    }
-
-    while (currentMultiple > 1) {
-      currentMultiple /= 2
-      ev = IndexedSeq(sumGrammarCells(devParent(0 until currentMultiple * targetSize, ::), devParent(currentMultiple * targetSize until 2 * currentMultiple * targetSize, ::), ev:_*))
-    }
-    assert(currentMultiple == 1, currentMultiple + " " + targetSize + " " + currentSize)
-    
-    ev
-  }
-
-  private def sumGrammarCells(dest: CLMatrix[Float], src: CLMatrix[Float], events: CLEvent*) = data.util.sumGrammarKernel.synchronized {
-    assert(dest.rows == src.rows)
-    assert(dest.size == src.size)
-    data.util.sumGrammarKernel.setArgs(dest.data.safeBuffer, Integer.valueOf(dest.offset), Integer.valueOf(dest.majorStride),
-                                             src.data.safeBuffer, Integer.valueOf(src.offset),  Integer.valueOf(src.majorStride),
-                                             Integer.valueOf(dest.cols), Integer.valueOf(dest.size))
-    data.util.sumGrammarKernel.enqueueNDRange(queue, Array(dest.rows, dest.cols), /*Array(32, 1),*/ events:_*)
-  }
-
   private def copyBackToCharts(batch: Batch, level: ParseChart=>ChartHalf, span: Int, events: CLEvent*):CLEvent = {
     val totalLength = batch.totalLengthForSpan(span)
     val ev = transposeCopy.permuteTransposeCopyOut(devCharts, pArray, totalLength, devParent(0 until totalLength, ::), events:_*)
