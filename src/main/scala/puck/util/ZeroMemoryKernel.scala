@@ -6,6 +6,7 @@ import library._
 import OpenCLLibrary._
 import java.util
 import JavaCL.CL
+import puck.linalg._
 
 
 
@@ -17,11 +18,36 @@ __kernel void mem_zero(__global float* data, int beginOffset, float x, int len) 
   if(trg >= beginOffset && trg < len + beginOffset)
     data[trg] = x;
 }
-"""
+
+__kernel void shaped_fill(__global float* data, int beginOffset, int rows, int cols, int stride, float x) {
+  int col = get_global_id(1);
+  int row = get_global_id(0);
+  if(col < cols && row < rows) {
+    data[beginOffset + stride * col + row] = x;
+  }
+}
+  """
   }
 
-  val kernel = program.createKernel("mem_zero")
+  val groupSize = if( context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel")) {
+    1
+  } else {
+    val x = context.getDevices.head.getMaxWorkItemSizes
+    val size0 = x(0)
+    math.min(size0, 32).toInt
+  }
 
+
+  val kernel = program.createKernel("mem_zero")
+  val shapedKernel = program.createKernel("shaped_fill")
+
+  def shapedFill(data: CLMatrix[Float], f: Float, eventsToWaitFor: CLEvent*)(implicit queue: CLQueue): CLEvent = synchronized {
+    val r = if(data.isTranspose) data.cols else data.rows
+    val c = if(data.isTranspose) data.rows else data.cols
+    shapedKernel.setArgs(data.data.safeBuffer, Integer.valueOf(data.offset), Integer.valueOf(r), Integer.valueOf(c), Integer.valueOf(data.majorStride), java.lang.Float.valueOf(f))
+
+    shapedKernel.enqueueNDRange(queue, Array((r+groupSize-1)/groupSize * groupSize, c), Array(groupSize, 1), eventsToWaitFor:_*)
+  }
 
   def fillMemory(data: CLBuffer[java.lang.Float], f: Float, events: CLEvent*)(implicit queue: CLQueue): CLEvent = synchronized {
     fillMemory(data, f, 0, -1, events:_*)

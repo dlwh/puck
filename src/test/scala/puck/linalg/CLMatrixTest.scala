@@ -12,7 +12,7 @@ import com.nativelibs4java.opencl._
 class CLMatrixTest extends FunSuite {
 
   test("Matrix Assignment and such") {
-    implicit val context = JavaCL.createBestContext(CLPlatform.DeviceFeature.GPU)
+    implicit val context = JavaCL.createBestContext(CLPlatform.DeviceFeature.CPU)
     implicit val queue = context.createDefaultOutOfOrderQueueIfPossible()
     val mat = CLMatrix.zeros[Float](10,10)
     val mat2 = CLMatrix.zeros[Float](10,3)
@@ -38,6 +38,13 @@ class CLMatrixTest extends FunSuite {
       assert(mat(0,1) === 1.0f)
       assert(mat(1,1) === 3.0f)
       assert(mat(3,4) === 4.0f)
+
+      mat(2 until 7, 3 to 4) := 9.0f
+      assert(mat(0,1) === 1.0f)
+      assert(mat(1,1) === 3.0f)
+      assert(mat(3,4) === 9.0f)
+      assert(mat(3,6) === 0.0f)
+      assert(mat(6,3) === 9.0f)
     } finally {
 
       mat.release()

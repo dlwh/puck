@@ -586,13 +586,7 @@ trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
         val ev = zmk.fillMemory(a.data, b, a.offset, a.rows * a.cols)
         ev.waitFor()
       } else {
-        val rr = if(a.isTranspose) a.cols else a.rows
-        val cc = if(a.isTranspose) a.rows else a.cols
-        val events = for(i <- 0 until cc) yield {
-          zmk.fillMemory(a.data, b, a.offset + i * a.majorStride, rr)
-        }
-
-        events.foreach(_.waitFor())
+        zmk.shapedFill(a, b).waitFor()
       }
     }
   }
