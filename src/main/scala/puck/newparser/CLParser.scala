@@ -57,7 +57,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   def partitions(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[Float] = synchronized {
     {for {
       batch <- getBatches(sentences).iterator
-      _ = inside(batch).foreach(_.waitFor())
+      _ = inside(batch).waitFor()
       i <- 0 until batch.numSentences
     } yield {
       batch.gpuCharts(i).top(0,batch.gpuCharts(i).length, structure.root)
@@ -73,7 +73,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   private val unaryEvents  = new CLProfiler("Unary")
   private val sumToChartsEvents  = new CLProfiler("SumToCharts")
   private val sumEvents  = new CLProfiler("Sum")
-  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, sumToChartsEvents, sumEvents, memFillEvents)
+  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, sumToChartsEvents, sumEvents, memFillEvents, hdTransferEvents)
 
   def release() {
     devParent.release()
@@ -193,7 +193,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
         parent.copyToArray(pArray, _workArrayOffsetsForSpan(1)(i))
       }
       val ev = devParent(0 until totalLength, ::).writeFrom(dm, false, events:_*)
-      IndexedSeq(transposeCopy.permuteTransposeCopyOut(devCharts, pArray, totalLengthForSpan(1), devParent(0 until totalLength, ::), ev:_*))
+      transposeCopy.permuteTransposeCopyOut(devCharts, pArray, totalLengthForSpan(1), devParent(0 until totalLength, ::), ev:_*)
     }
 
     private def tagScoresFor(dm: DenseMatrix[Float], i: Int) {
@@ -257,37 +257,30 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   println(structure.nontermIndex.zipWithIndex)
   println(structure.termIndex.zipWithIndex)
 
-  private def inside(batch: Batch):Seq[CLEvent] = synchronized {
+  private def inside(batch: Batch):CLEvent = synchronized {
     val prof = new CLProfiler("...")
     prof.clear()
     prof.tick()
-    hdTransferEvents.clear()
-    hdTransferEvents.tick()
     allProfilers.foreach(_.clear())
     allProfilers.foreach(_.tick())
 
     var eZC = zmk.fillMemory(devCharts.data, _zero)
     val init = batch.initializeTagScores(eZC)
-    hdTransferEvents ++= init
+    hdTransferEvents += init
     memFillEvents += eZC
 
-    var events:Seq[CLEvent] = doUnaryUpdates(batch, 1, init :_*)
-    events = copyBackToCharts(batch, _.top, 1, events :_*)
+    var ev = doUnaryUpdates(batch, 1, init)
 
     debugFinish()
     //debugCharts(batch)
 
     for(span <- 2 to batch.maxLength) {
       println(span)
-      // TODO: there's got to be a better way. implicits?
-      events = Seq[Seq[CLEvent]=>Seq[CLEvent]](
-        binaryPass(batch, span, _:_*)
-        ,doUnaryUpdates(batch, span, _ : _*)
-        ,copyBackToCharts(batch, _.top, span, _ :_*)
-      ).foldLeft(events)((a,b) => b apply a)
+      ev = binaryPass(batch, span, ev)
+      ev = doUnaryUpdates(batch, span, ev)
       debugFinish()
     }
-      debugCharts(batch)
+    debugCharts(batch)
 
     debugFinish()
 
@@ -296,12 +289,10 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       println(prof)
       queue.finish()
       allProfilers.foreach(_.tock())
-      hdTransferEvents.tock()
       allProfilers.foreach(p => println(s"Inside $p"))
-      println("Inside " + hdTransferEvents)
     }
 
-    events
+    ev
   }
 
   private def binaryPass(batch: Batch, span: Int, events: CLEvent*) = {
@@ -310,11 +301,11 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       ev = doTTUpdates(batch, ev:_*)
     }
 
-
     ev = doNTUpdates(batch, span, ev :_*)
     ev = doTNUpdates(batch, span, ev :_*)
     ev = doNNUpdates(batch, span, ev :_*)
-    ev
+    assert(ev.length == 1)
+    ev.head
   }
 
   private def doBinaryUpdates(batch: Batch,
@@ -328,11 +319,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
     var parentOffset = 0 // number of unique parent spans used so far
     var offset = 0 // number of cells used so far.
-
-    val usedPerSplit = batch.totalLengthForSpan(span)
-    var maxOffset = 0 // maximum number of cells used in one kernel execution.
-                      // will be a multiple of usedPerSplit
-    assert(splitRange.last < span, splitRange + " " + span)
 
     def flushQueue() {
       if(offset != 0) {
@@ -355,7 +341,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
           32 / span max 1, ev:_*)
         sumEvents += sumEv
         ev = IndexedSeq(sumEv)
-        maxOffset = maxOffset max offset
         offset = 0
         parentOffset = 0
       }
@@ -370,8 +355,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       lArray(offset) = left
       rArray(offset) = right
       offset += 1
-      if(offset + usedPerSplit >= numGPUCells)  {
-        println(s"flush! used $offset of $numGPUCells. Another split needs $usedPerSplit.")
+      if(offset >= numGPUCells)  {
+        println(s"flush!")
         flushQueue()
       }
     }
@@ -392,12 +377,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     if(offset > 0) {
       flushQueue()
     } 
-
-/*
-    if(maxOffset > usedPerSplit) {
-      ev = sumEvents.adding(sumSplitBlocks(usedPerSplit, maxOffset, ev:_*))
-    }
-    */
 
     ev
   }
@@ -420,7 +399,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     doBinaryUpdates(batch, data.inside.insideNTKernels, span, (span-1) to (span-1), _.top, _.bot, events:_*)
   }
 
-  def doUnaryUpdates(batch: Batch, span: Int, events: CLEvent*): IndexedSeq[CLEvent] = {
+  def doUnaryUpdates(batch: Batch, span: Int, events: CLEvent*) = {
     import batch._
     var offset = 0
     def enqueue(parent: IndexedSeq[Int], left: IndexedSeq[Int]) {
@@ -447,7 +426,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     }
     debugFinish()
     unaryEvents ++= endEvents
-    endEvents
+    
+    copyBackToCharts(batch, _.top, span, endEvents: _*)
   }
 
   def doNNUpdates(batch: Batch, span: Int, events: CLEvent*) = {
@@ -486,11 +466,11 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     data.util.sumGrammarKernel.enqueueNDRange(queue, Array(dest.rows, dest.cols), /*Array(32, 1),*/ events:_*)
   }
 
-  private def copyBackToCharts(batch: Batch, level: ParseChart=>ChartHalf, span: Int, events: CLEvent*):Seq[CLEvent] = {
+  private def copyBackToCharts(batch: Batch, level: ParseChart=>ChartHalf, span: Int, events: CLEvent*):CLEvent = {
     val totalLength = batch.totalLengthForSpan(span)
     val ev = transposeCopy.permuteTransposeCopyOut(devCharts, pArray, totalLength, devParent(0 until totalLength, ::), events:_*)
     sumToChartsEvents += ev
-    IndexedSeq(ev)
+    ev
   }
 }
 
