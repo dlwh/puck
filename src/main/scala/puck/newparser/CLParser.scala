@@ -166,6 +166,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       chart
     }
 
+    println(sentences.scanLeft(0)(_ + _.length))
+
     lazy val outsideCharts = if(!needsOutside) None else Some{
       for(i <- 0 until numSentences) yield {
 
@@ -521,10 +523,7 @@ object CLParser extends Logging {
     println(context)
 
     val kern = fromSimpleGrammar[AnnotatedLabel, AnnotatedLabel, String](grammar, profile)
-    val train = transformed.slice(0,numToParse).map(_.words)
-
-    println(train.map(_.length))
-    
+    val train = transformed.slice(0, numToParse).map(_.words)
 
     var timeIn = System.currentTimeMillis()
     val parts = kern.partitions(train)
@@ -538,7 +537,6 @@ object CLParser extends Logging {
       println(parts2)
       println(s"CL Parsing took x2: ${(timeOut-timeIn)/1000.0}")
     }
-    println("Needs outside?!?!?" + kern.needsOutside)
     if(jvmParse) {
       timeIn = timeOut
       val margs = train.map { w => 

@@ -83,7 +83,7 @@ __kernel void shaped_fill(__global float* data, int beginOffset, int rows, int c
     // TODO: we possibly waste a lot of time if the offset is >> 0
     // but, we want to ensure that we do coalesced reads and rights, which
     // means aligned reads and writes.
-    kernel.enqueueNDRange(queue, Array((data.getElementCount.toInt + groupSize - 1)/groupSize), Array(groupSize), eventsToWaitFor:_*)
+    kernel.enqueueNDRange(queue, Array((data.getElementCount.toInt + groupSize - 1)/groupSize * groupSize), Array(groupSize), eventsToWaitFor:_*)
   }
 
 }
