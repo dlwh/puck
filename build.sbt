@@ -21,4 +21,4 @@ libraryDependencies ++= Seq(
   "org.scalatest" %% "scalatest" % "2.0.M5b" % "test"
 )
 
-fork := true
+//fork := true

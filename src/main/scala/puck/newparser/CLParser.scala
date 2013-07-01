@@ -154,7 +154,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     val maxLength = sentences.map(_.length).max
 
 
-    val _workArrayOffsetsForSpan = Array.tabulate(maxLength+1)(span => sentences.scanLeft(0)((off, sent) => off + math.max(0,sent.length-span+1)))
+    val _workArrayOffsetsForSpan = Array.tabulate(maxLength+1)(span => sentences.scanLeft(0)((off, sent) => off + math.max(0,sent.length-span+1)).toArray)
     def workArrayOffsetsForSpan(sent: Int, span: Int) = Range(_workArrayOffsetsForSpan(span)(sent), _workArrayOffsetsForSpan(span)(sent+1)) 
 
     def totalLengthForSpan(span: Int) = _workArrayOffsetsForSpan(span).last
@@ -180,16 +180,20 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       }
     }
 
+    
+
 
     def initializeTagScores(events: CLEvent*) = {
       val dm = DenseMatrix.zeros[Float](totalLength, cellSize)
       dm := _zero
+      var offset = 0
       for(i <- 0 until numSentences par) {
         tagScoresFor(dm, i)
+        val parent = gpuCharts(i).bot.spanRangeSlice(1)
+        parent.copyToArray(pArray, _workArrayOffsetsForSpan(1)(i))
       }
       val ev = devParent(0 until totalLength, ::).writeFrom(dm, false, events:_*)
-      val offsets = gpuCharts.map(_.bot.spanRangeSlice(1)).reduceLeft[IndexedSeq[Int]](_ ++ _).toArray
-      IndexedSeq(transposeCopy.permuteTransposeCopyOut(devCharts, offsets, offsets.length, devParent(0 until totalLength, ::), ev:_*))
+      IndexedSeq(transposeCopy.permuteTransposeCopyOut(devCharts, pArray, totalLengthForSpan(1), devParent(0 until totalLength, ::), ev:_*))
     }
 
     private def tagScoresFor(dm: DenseMatrix[Float], i: Int) {
@@ -333,8 +337,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     def flushQueue() {
       if(offset != 0) {
         splitPointOffsets(parentOffset) = offset
-        val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, lArray.take(offset), ev:_*)
-        val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, rArray.take(offset), ev:_*)
+        val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, java.util.Arrays.copyOf(lArray, offset), ev:_*)
+        val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, java.util.Arrays.copyOf(rArray, offset), ev:_*)
         transferEvents += wl
         transferEvents += wr
         val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, ev:_*)
@@ -432,7 +436,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, events:_*)
     memFillEvents += zz
 
-    val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, lArray.take(offset), events:_*)
+    val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, java.util.Arrays.copyOf(lArray, offset), events:_*)
     transferEvents += wl
     debugFinish()
 
@@ -484,12 +488,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
   private def copyBackToCharts(batch: Batch, level: ParseChart=>ChartHalf, span: Int, events: CLEvent*):Seq[CLEvent] = {
     val totalLength = batch.totalLengthForSpan(span)
-    val ev = if(span == 1) {
-      val treeOffsets = batch.gpuCharts.filter(_.length >= span).map(c => level(c).spanRangeSlice(span)).reduceLeft[IndexedSeq[Int]](_ ++ _).toArray
-      transposeCopy.permuteTransposeCopyOut(devCharts, treeOffsets, totalLength, devParent(0 until treeOffsets.length, ::), events:_*)
-    } else {
-      transposeCopy.permuteTransposeCopyOut(devCharts, pArray, totalLength, devParent(0 until totalLength, ::), events:_*)
-    }
+    val ev = transposeCopy.permuteTransposeCopyOut(devCharts, pArray, totalLength, devParent(0 until totalLength, ::), events:_*)
     sumToChartsEvents += ev
     IndexedSeq(ev)
   }
