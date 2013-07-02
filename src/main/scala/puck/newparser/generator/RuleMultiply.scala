@@ -35,6 +35,7 @@ trait RuleMultiply[L] extends Base with KernelOps with ExtraBase with Accumulato
         }
       }
       out.foreachUsed{ (id:Int, value: Rep[Real]) =>
+      //if(value !== zero) printf(unit("%s %d %d %f\n"), unit(name), row, id, value)
         parent(parentRows * id + row) = value
       }
     }

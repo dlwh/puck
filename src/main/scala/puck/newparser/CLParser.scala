@@ -315,6 +315,12 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       ev = doOutsideUnaryUpdates(batch, span, ev)
       debugFinish()
     }
+
+    ev = outsideTT_L.doUpdates(batch, 1, ev)
+    ev = outsideTT_R.doUpdates(batch, 1, ev)
+    ev = outsideNT_R.doUpdates(batch, 1, ev)
+    ev = outsideTN_L.doUpdates(batch, 1, ev)
+
     debugCharts(batch)
 
     debugFinish()
@@ -333,12 +339,12 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   private def insideBinaryPass(batch: Batch, span: Int, events: CLEvent*) = {
     var ev = events
     if(span == 2) {
-      ev = insideTT.doUpdates(batch, span, ev :_*)
+      ev = Seq(insideTT.doUpdates(batch, span, ev :_*))
     }
 
-    ev = insideNT.doUpdates(batch, span, ev :_*)
-    ev = insideTN.doUpdates(batch, span, ev :_*)
-    ev = insideNN.doUpdates(batch, span, ev :_*)
+    ev = Seq(insideNT.doUpdates(batch, span, ev :_*))
+    ev = Seq(insideTN.doUpdates(batch, span, ev :_*))
+    ev = Seq(insideNN.doUpdates(batch, span, ev :_*))
     assert(ev.length == 1)
     ev.head
   }
@@ -355,21 +361,16 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   private val insideTN = new BinaryUpdateManager(data.inside.insideTNKernels, insideBot, insideBot, insideTop, (b, e, l) => (b+1 to b+1))
   private val insideNN = new BinaryUpdateManager(data.inside.insideNNKernels, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1))
 
-  private def outsideBinaryPass(batch: Batch, span: Int, events: CLEvent*) = {
+  private def outsideBinaryPass(batch: Batch, span: Int, events: CLEvent) = {
     var ev = events
-    if(span == 1) {
-      //ev = outsideTT_L.doUpdates(batch, span, ev :_*)
-      //ev = outsideTT_R.doUpdates(batch, span, ev :_*)
-      //ev = outsideNT_R.doUpdates(batch, span, ev :_*)
-      //ev = outsideTN_L.doUpdates(batch, span, ev :_*)
-    }
 
-    ev = outsideTN_R.doUpdates(batch, span, ev :_*)
-    ev = outsideNT_L.doUpdates(batch, span, ev :_*)
-    ev = outsideNN_L.doUpdates(batch, span, ev :_*)
-    ev = outsideNN_R.doUpdates(batch, span, ev :_*)
-    assert(ev.length == 1)
-    ev.head
+    ev = outsideTN_R.doUpdates(batch, span, ev)
+    ev = outsideNT_L.doUpdates(batch, span, ev)
+    ev = outsideNN_L.doUpdates(batch, span, ev)
+    ev = outsideNN_R.doUpdates(batch, span, ev)
+    ev.waitFor()
+    println(batch.outsideCharts.head.head.bot.toString(structure, _zero))
+    ev
   }
 
 
@@ -421,7 +422,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
         flushQueue()
       } 
 
-      ev
+      ev.head
     }
 
     def enqueue(parent: Int, left: Int, right: Int) {
@@ -562,7 +563,7 @@ object CLParser extends Logging {
     println(context)
 
     val kern = fromSimpleGrammar[AnnotatedLabel, AnnotatedLabel, String](grammar, profile)
-    val train = transformed.slice(0, numToParse).map(_.words)
+    val train = transformed.slice(1, 1+numToParse).map(_.words)
 
     var timeIn = System.currentTimeMillis()
     val parts = kern.partitions(train)
@@ -576,11 +577,12 @@ object CLParser extends Logging {
       println(parts2)
       println(s"CL Parsing took x2: ${(timeOut-timeIn)/1000.0}")
     }
-    println("isViterbi?!?!?")
     if(jvmParse) {
       timeIn = timeOut
       val margs = train.map { w => 
         val m = ChartMarginal(AugmentedGrammar.fromRefined(grammar).anchor(w), w, maxMarginal= kern.isViterbi)
+        printChart(m, true, false)
+        printChart(m, false, false)
         printChart(m, true, true)
         printChart(m, false, true)
         m.logPartition.toFloat

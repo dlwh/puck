@@ -27,18 +27,22 @@ class ChartHalf(val length: Int, val matrix: CLMatrix[Float], isBot: Boolean) {
 
   def rootIndex = treeIndex(0, length)
 
+  def cellString(begin: Int, end: Int, structure: RuleStructure[_, _], zero: Float) = {
+    val span = end-begin
+    val r = ChartHalf.chartIndex(begin,end,length)
+    matrix(::, r).iterator.collect { case ((k, _),v)  if(v != zero) => 
+      if(isBot && k == structure.root && span > 1)
+        println("What is the root doing in the bot chart?" + k + " " + v + " " + (begin, end))
+      if(span == 1 && isBot) 
+        structure.termIndex.get(k) -> v
+      else 
+        structure.nontermIndex.get(k) -> v
+    }.mkString(s"$r ${treeIndex(begin, end)} ($begin,$end) ${if(isBot) "bot" else "top"} {",", ", "}")
+
+  }
+
   def toString(structure: RuleStructure[_, _], zero: Float) = {
-    (for(span <- 1 to length; begin <- 0 to length-span) yield {
-      val r = ChartHalf.chartIndex(begin,begin+span,length)
-      matrix(::, r).iterator.collect { case ((k, _),v)  if(v != zero) => 
-        if(isBot && k == structure.root)
-          println("What is the root doing in the bot chart?" + k + " " + v + " " + (begin, begin + span))
-        if(span == 1 && isBot) 
-          structure.termIndex.get(k) -> v
-        else 
-          structure.nontermIndex.get(k) -> v
-      }.mkString(s"($begin,${begin+span}) ${if(isBot) "bot" else "top"} {",", ", "}")
-    }).mkString("\n")
+    (for(span <- 1 to length; begin <- 0 to length-span) yield cellString(begin,begin+span,structure,zero)).mkString("\n")
   }
 }
 
