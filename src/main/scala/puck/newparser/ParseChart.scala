@@ -32,7 +32,7 @@ class ChartHalf(val length: Int, val matrix: CLMatrix[Float], isBot: Boolean) {
       val r = ChartHalf.chartIndex(begin,begin+span,length)
       matrix(::, r).iterator.collect { case ((k, _),v)  if(v != zero) => 
         if(isBot && k == structure.root)
-          throw new RuntimeException("What is the root doing in the bot chart?" + k + " " + v)
+          println("What is the root doing in the bot chart?" + k + " " + v + " " + (begin, begin + span))
         if(span == 1 && isBot) 
           structure.termIndex.get(k) -> v
         else 

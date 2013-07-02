@@ -52,14 +52,14 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   */
 
   def needsOutside = data.outside.nonEmpty
+  def isViterbi = data.isViterbi
 
 
   def partitions(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[Float] = synchronized {
     {for {
       batch <- getBatches(sentences).iterator
       evi = inside(batch)
-      _ = evi.waitFor()
-    //  _ = if(needsOutside) outside(batch, evi).waitFor() else evi.waitFor
+      _ = if(needsOutside) outside(batch, evi).waitFor() else evi.waitFor
       i <- 0 until batch.numSentences
     } yield {
       batch.insideCharts(i).top(0,batch.insideCharts(i).length, structure.root)
@@ -307,11 +307,12 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     var ev = event
 
     ev = data.util.setRootScores(devCharts, batch.outsideCharts.get.map(_.top.rootIndex).toArray, structure.root, _one, ev)
+    ev = doOutsideUnaryUpdates(batch, batch.maxLength, ev)
 
-    for(span <- batch.maxLength to 1 by -1) {
+    for(span <- (batch.maxLength-1) to 1 by -1) {
       println(span)
-      ev = doOutsideUnaryUpdates(batch, span, ev)
       ev = outsideBinaryPass(batch, span, ev)
+      ev = doOutsideUnaryUpdates(batch, span, ev)
       debugFinish()
     }
     debugCharts(batch)
@@ -357,14 +358,14 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   private def outsideBinaryPass(batch: Batch, span: Int, events: CLEvent*) = {
     var ev = events
     if(span == 1) {
-      ev = outsideTT_L.doUpdates(batch, span, ev :_*)
-      ev = outsideTT_R.doUpdates(batch, span, ev :_*)
-      ev = outsideTN_R.doUpdates(batch, span, ev :_*)
-      ev = outsideNT_L.doUpdates(batch, span, ev :_*)
+      //ev = outsideTT_L.doUpdates(batch, span, ev :_*)
+      //ev = outsideTT_R.doUpdates(batch, span, ev :_*)
+      //ev = outsideNT_R.doUpdates(batch, span, ev :_*)
+      //ev = outsideTN_L.doUpdates(batch, span, ev :_*)
     }
 
-    ev = outsideNT_R.doUpdates(batch, span, ev :_*)
-    ev = outsideTN_L.doUpdates(batch, span, ev :_*)
+    ev = outsideTN_R.doUpdates(batch, span, ev :_*)
+    ev = outsideNT_L.doUpdates(batch, span, ev :_*)
     ev = outsideNN_L.doUpdates(batch, span, ev :_*)
     ev = outsideNN_R.doUpdates(batch, span, ev :_*)
     assert(ev.length == 1)
@@ -575,12 +576,13 @@ object CLParser extends Logging {
       println(parts2)
       println(s"CL Parsing took x2: ${(timeOut-timeIn)/1000.0}")
     }
+    println("isViterbi?!?!?")
     if(jvmParse) {
       timeIn = timeOut
       val margs = train.map { w => 
-        val m = ChartMarginal(AugmentedGrammar.fromRefined(grammar).anchor(w), w, maxMarginal= !kern.needsOutside)
-       // printChart(m, true)
+        val m = ChartMarginal(AugmentedGrammar.fromRefined(grammar).anchor(w), w, maxMarginal= kern.isViterbi)
         printChart(m, true, true)
+        printChart(m, false, true)
         m.logPartition.toFloat
       }
       timeOut = System.currentTimeMillis()
@@ -605,7 +607,7 @@ object CLParser extends Logging {
     val m = chart
     if(isOutside) println("outside")
     for(span <- 1 to m.length; begin <- 0 to m.length-span)
-      println(cc.enteredLabelScores(begin,begin+span).map{ case (k,v) => (k,v.mkString("{",",","}"))}.mkString(s"!!($begin,${begin+span}) ${if(isBot) "bot" else "top"} {",", ", "}"))
+      println(cc.enteredLabelScores(begin,begin+span).map{ case (k,v) => (k,v.map(_.toFloat).mkString("{",",","}"))}.mkString(s"!!($begin,${begin+span}) ${if(isBot) "bot" else "top"} {",", ", "}"))
   }
 }
 
@@ -614,7 +616,8 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
                                  structure: RuleStructure[C, L],
                                  inside: CLInsideKernels,
                                  outside: Option[CLOutsideKernels],
-                                 util: CLParserUtilKernels) {
+                                 util: CLParserUtilKernels,
+                                 isViterbi: Boolean) {
 
 
   def write(out: OutputStream) {
@@ -633,7 +636,7 @@ object CLParserData {
     val inside = CLInsideKernels.make(gen)
     val outside =  Some(CLOutsideKernels.make(gen)) //if(!gen.isViterbi) Some(CLOutsideKernels.make(gen)) else None
     val util = CLParserUtilKernels.make(gen)
-    new CLParserData(grammar, gen.structure, inside, outside, util)
+    new CLParserData(grammar, gen.structure, inside, outside, util, gen.isViterbi)
   }
 
   def read[C, L, W](file: ZipFile)(implicit context: CLContext) = {
@@ -643,7 +646,7 @@ object CLParserData {
     val outside = CLOutsideKernels.tryRead(file)
     val util = CLParserUtilKernels.read(file)
 
-    CLParserData(gr, structure, inside, outside, util)
+    CLParserData(gr, structure, inside, outside, util, ???)
   }
 }
 
