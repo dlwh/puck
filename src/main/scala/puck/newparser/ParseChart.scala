@@ -25,6 +25,8 @@ class ChartHalf(val length: Int, val matrix: CLMatrix[Float], isBot: Boolean) {
 
   def treeIndex(begin: Int, end: Int) = globalRowOffset + ChartHalf.chartIndex(begin, end, length)
 
+  def rootIndex = treeIndex(0, length)
+
   def toString(structure: RuleStructure[_, _], zero: Float) = {
     (for(span <- 1 to length; begin <- 0 to length-span) yield {
       val r = ChartHalf.chartIndex(begin,begin+span,length)

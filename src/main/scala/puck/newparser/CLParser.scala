@@ -57,10 +57,12 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   def partitions(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[Float] = synchronized {
     {for {
       batch <- getBatches(sentences).iterator
-      _ = inside(batch).waitFor()
+      evi = inside(batch)
+      _ = evi.waitFor()
+    //  _ = if(needsOutside) outside(batch, evi).waitFor() else evi.waitFor
       i <- 0 until batch.numSentences
     } yield {
-      batch.gpuCharts(i).top(0,batch.gpuCharts(i).length, structure.root)
+      batch.insideCharts(i).top(0,batch.insideCharts(i).length, structure.root)
     }}.toIndexedSeq
   }
 
@@ -141,6 +143,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   private val devRules = context.createFloatBuffer(CLMem.Usage.Input, FloatBuffer.wrap(ruleScores), false)
 
   def _zero: Float = gen.IR._zero
+  def _one: Float = gen.IR._one
 
   // other stuff
   private val zmk = ZeroMemoryKernel()
@@ -159,7 +162,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
     def totalLengthForSpan(span: Int) = _workArrayOffsetsForSpan(span).last
 
-    lazy val gpuCharts = for(i <- 0 until numSentences) yield {
+    lazy val insideCharts = for(i <- 0 until numSentences) yield {
       val numCells = (cellTotals(i+1)-cellTotals(i))/2
       assert(numCells == TriangularArray.arraySize(sentences(i).length+1))
       val chart = new ParseChart(sentences(i).length, devCharts(::, cellTotals(i) until (cellTotals(i) + numCells)), devCharts(::, cellTotals(i) + numCells until cellTotals(i+1)))
@@ -189,7 +192,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       var offset = 0
       for(i <- 0 until numSentences par) {
         tagScoresFor(dm, i)
-        val parent = gpuCharts(i).bot.spanRangeSlice(1)
+        val parent = insideCharts(i).bot.spanRangeSlice(1)
         parent.copyToArray(pArray, _workArrayOffsetsForSpan(1)(i))
       }
       val ev = devParent(0 until totalLength, ::).writeFrom(dm, false, events:_*)
@@ -241,7 +244,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   }
 
   def debugRaces = false
-  def debugCharts = false
+  def debugCharts = true
 
   def debugFinish() {
     if(debugRaces || debugCharts) queue.finish()
@@ -249,8 +252,15 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
   def debugCharts(batch: Batch) {
     if(debugCharts) {
-      println(batch.gpuCharts(0).bot.toString(structure, _zero))
-      println(batch.gpuCharts(0).top.toString(structure, _zero))
+      println("inside")
+      println(batch.insideCharts(0).bot.toString(structure, _zero))
+      println(batch.insideCharts(0).top.toString(structure, _zero))
+      if(needsOutside) {
+
+        println("outside")
+        println(batch.outsideCharts.get(0).bot.toString(structure, _zero))
+        println(batch.outsideCharts.get(0).top.toString(structure, _zero))
+      }
     }
   }
 
@@ -273,7 +283,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
     for(span <- 2 to batch.maxLength) {
       println(span)
-      ev = binaryPass(batch, span, ev)
+      ev = insideBinaryPass(batch, span, ev)
       ev = doUnaryUpdates(batch, span, ev)
       debugFinish()
     }
@@ -290,7 +300,36 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     ev
   }
 
-  private def binaryPass(batch: Batch, span: Int, events: CLEvent*) = {
+  private def outside(batch: Batch, event: CLEvent):CLEvent = synchronized {
+    allProfilers.foreach(_.clear())
+    allProfilers.foreach(_.tick())
+
+    var ev = event
+
+    ev = data.util.setRootScores(devCharts, batch.outsideCharts.get.map(_.top.rootIndex).toArray, structure.root, _one, ev)
+
+    for(span <- batch.maxLength to 1 by -1) {
+      println(span)
+      ev = doOutsideUnaryUpdates(batch, span, ev)
+      ev = outsideBinaryPass(batch, span, ev)
+      debugFinish()
+    }
+    debugCharts(batch)
+
+    debugFinish()
+
+    if(profile) {
+      queue.finish()
+      allProfilers.foreach(_.tock())
+      allProfilers.foreach(p => println(s"Outside $p"))
+    }
+
+    ev
+  }
+
+
+
+  private def insideBinaryPass(batch: Batch, span: Int, events: CLEvent*) = {
     var ev = events
     if(span == 2) {
       ev = insideTT.doUpdates(batch, span, ev :_*)
@@ -303,14 +342,21 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     ev.head
   }
 
-  private val insideTT = new BinaryUpdateManager(data.inside.insideTTKernels, _.bot, _.bot, _.bot, (b, e, l) => (b+1 to b+1))
-  private val insideNT = new BinaryUpdateManager(data.inside.insideNTKernels, _.bot, _.top, _.bot, (b, e, l) => (e-1 to e-1))
-  private val insideTN = new BinaryUpdateManager(data.inside.insideTNKernels, _.bot, _.bot, _.top, (b, e, l) => (b+1 to b+1))
-  private val insideNN = new BinaryUpdateManager(data.inside.insideNNKernels, _.bot, _.top, _.top, (b, e, l) => (b+1 to e-1))
+  private val insideBot = {(b: Batch, s: Int) =>  b.insideCharts(s).bot}
+  private val insideTop = {(b: Batch, s: Int) =>  b.insideCharts(s).top}
+  //private val outsideBot = {(b: Batch, s: Int) =>  b.insideCharts(s).bot}
+  //private val outsideTop = {(b: Batch, s: Int) =>  b.insideCharts(s).top}
+  private val outsideBot = {(b: Batch, s: Int) =>  b.outsideCharts.get(s).bot}
+  private val outsideTop = {(b: Batch, s: Int) =>  b.outsideCharts.get(s).top}
+
+  private val insideTT = new BinaryUpdateManager(data.inside.insideTTKernels, insideBot, insideBot, insideBot, (b, e, l) => (b+1 to b+1))
+  private val insideNT = new BinaryUpdateManager(data.inside.insideNTKernels, insideBot, insideTop, insideBot, (b, e, l) => (e-1 to e-1))
+  private val insideTN = new BinaryUpdateManager(data.inside.insideTNKernels, insideBot, insideBot, insideTop, (b, e, l) => (b+1 to b+1))
+  private val insideNN = new BinaryUpdateManager(data.inside.insideNNKernels, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1))
 
   private def outsideBinaryPass(batch: Batch, span: Int, events: CLEvent*) = {
     var ev = events
-    if(span == 2) {
+    if(span == 1) {
       ev = outsideTT_L.doUpdates(batch, span, ev :_*)
       ev = outsideTT_R.doUpdates(batch, span, ev :_*)
       ev = outsideTN_R.doUpdates(batch, span, ev :_*)
@@ -328,22 +374,23 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
 
   // here, "parentChart" is actually the left child, left is the parent, right is the right completion
-  private lazy val outsideTT_L = new BinaryUpdateManager(data.outside.get.outside_L_TTKernels, _.bot, _.bot, _.bot, (b, e, l) => (e+1 to e+1))
-  private lazy val outsideNT_L = new BinaryUpdateManager(data.outside.get.outside_L_NTKernels, _.top, _.bot, _.bot, (b, e, l) => (e+1 to e+1))
-  private lazy val outsideTN_L = new BinaryUpdateManager(data.outside.get.outside_L_TNKernels, _.bot, _.bot, _.top, (b, e, l) => (e+1 to l))
-  private lazy val outsideNN_L = new BinaryUpdateManager(data.outside.get.outside_L_NNKernels, _.top, _.bot, _.top, (b, e, l) => (e+1 to l))
+  private lazy val outsideTT_L = new BinaryUpdateManager(data.outside.get.outside_L_TTKernels, outsideBot, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
+  private lazy val outsideNT_L = new BinaryUpdateManager(data.outside.get.outside_L_NTKernels, outsideTop, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
+  private lazy val outsideTN_L = new BinaryUpdateManager(data.outside.get.outside_L_TNKernels, outsideBot, outsideBot, insideTop, (b, e, l) => (e+1 to l))
+  private lazy val outsideNN_L = new BinaryUpdateManager(data.outside.get.outside_L_NNKernels, outsideTop, outsideBot, insideTop, (b, e, l) => (e+1 to l))
 
   // here, "parentChart" is actually the right child, right is the parent, left is the left completion
-  private lazy val outsideTT_R = new BinaryUpdateManager(data.outside.get.outside_R_TTKernels, _.bot, _.bot, _.bot, (b, e, l) => (b-1 to b-1))
-  private lazy val outsideNT_R = new BinaryUpdateManager(data.outside.get.outside_R_NTKernels, _.bot, _.top, _.bot, (b, e, l) => (0 to b-1))
-  private lazy val outsideTN_R = new BinaryUpdateManager(data.outside.get.outside_R_TNKernels, _.top, _.bot, _.bot, (b, e, l) => (b-1 to b-1))
-  private lazy val outsideNN_R = new BinaryUpdateManager(data.outside.get.outside_R_NNKernels, _.top, _.top, _.bot, (b, e, l) => (0 to b-1))
+  private lazy val outsideTT_R = new BinaryUpdateManager(data.outside.get.outside_R_TTKernels, outsideBot, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
+  private lazy val outsideNT_R = new BinaryUpdateManager(data.outside.get.outside_R_NTKernels, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
+  private lazy val outsideTN_R = new BinaryUpdateManager(data.outside.get.outside_R_TNKernels, outsideTop, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
+  private lazy val outsideNN_R = new BinaryUpdateManager(data.outside.get.outside_R_NNKernels, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1))
+
 
 
   private class BinaryUpdateManager(kernels: IndexedSeq[CLKernel],
-    parentChart: ParseChart=>ChartHalf,
-    leftChart: ParseChart=>ChartHalf,
-    rightChart: ParseChart=>ChartHalf,
+    parentChart: (Batch,Int)=>ChartHalf,
+    leftChart: (Batch,Int)=>ChartHalf,
+    rightChart: (Batch,Int)=>ChartHalf,
     ranger: (Int, Int, Int)=>Range) {
 
     private var parentOffset = 0 // number of unique parent spans used so far
@@ -360,12 +407,12 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       for{
         sent <- 0 until batch.numSentences
         start <- 0 to batch.sentences(sent).length - span
-        split <- ranger(start, start + span, batch.sentences(sent).length)
+        split <- ranger(start, start + span, batch.sentences(sent).length) if split >= 0 && split <= batch.sentences(sent).length
       } {
         val end = start + span
-        val parentTi = parentChart(batch.gpuCharts(sent)).treeIndex(start,end)
-        val leftChild = if(split < start) leftChart(batch.gpuCharts(sent)).treeIndex(split,start) else leftChart(batch.gpuCharts(sent)).treeIndex(start, split)
-        val rightChild = if(split < end) rightChart(batch.gpuCharts(sent)).treeIndex(split,end) else rightChart(batch.gpuCharts(sent)).treeIndex(end, split)
+        val parentTi = parentChart(batch, sent).treeIndex(start,end)
+        val leftChild = if(split < start) leftChart(batch, sent).treeIndex(split,start) else leftChart(batch, sent).treeIndex(start, split)
+        val rightChild = if(split < end) rightChart(batch, sent).treeIndex(split,end) else rightChart(batch, sent).treeIndex(end, split)
         enqueue(parentTi, leftChild, rightChild)
       }
 
@@ -428,8 +475,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       offset += parent.length
     }
     for(sent <- 0 until batch.numSentences if batch.sentences(sent).length >= span) {
-      enqueue(batch.gpuCharts(sent).top.spanRangeSlice(span),
-              batch.gpuCharts(sent).bot.spanRangeSlice(span))
+      enqueue(batch.insideCharts(sent).top.spanRangeSlice(span),
+              batch.insideCharts(sent).bot.spanRangeSlice(span))
     }
 
     val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, events:_*)
@@ -461,8 +508,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       offset += parent.length
     }
     for(sent <- 0 until batch.numSentences if batch.sentences(sent).length >= span) {
-      enqueue(batch.gpuCharts(sent).bot.spanRangeSlice(span),
-              batch.gpuCharts(sent).top.spanRangeSlice(span))
+      enqueue(batch.outsideCharts.get(sent).bot.spanRangeSlice(span),
+              batch.outsideCharts.get(sent).top.spanRangeSlice(span))
     }
 
     val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, events:_*)
@@ -533,7 +580,7 @@ object CLParser extends Logging {
       val margs = train.map { w => 
         val m = ChartMarginal(AugmentedGrammar.fromRefined(grammar).anchor(w), w, maxMarginal= !kern.needsOutside)
        // printChart(m, true)
-       // printChart(m, false)
+        printChart(m, true, true)
         m.logPartition.toFloat
       }
       timeOut = System.currentTimeMillis()
@@ -552,11 +599,13 @@ object CLParser extends Logging {
     kern
   }
 
-  private def printChart[L, W](chart: ChartMarginal[L, W], isBot: Boolean) = {
-    val cc = if (isBot) chart.inside.bot else chart.inside.top
+  private def printChart[L, W](chart: ChartMarginal[L, W], isBot: Boolean, isOutside: Boolean) = {
+    val cc1 = if(isOutside) chart.outside else chart.inside
+    val cc = if (isBot) cc1.bot else cc1.top
     val m = chart
+    if(isOutside) println("outside")
     for(span <- 1 to m.length; begin <- 0 to m.length-span)
-      println(cc.enteredLabelScores(begin,begin+span).map{ case (k,v) => (k,v.mkString("{",",","}"))}.mkString(s"($begin,${begin+span}) ${if(isBot) "bot" else "top"} {",", ", "}"))
+      println(cc.enteredLabelScores(begin,begin+span).map{ case (k,v) => (k,v.mkString("{",",","}"))}.mkString(s"!!($begin,${begin+span}) ${if(isBot) "bot" else "top"} {",", ", "}"))
   }
 }
 
@@ -582,7 +631,7 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 object CLParserData {
   def make[C, L, W](grammar: SimpleRefinedGrammar[C, L, W], gen: CLParserKernelGenerator[C, L])(implicit context: CLContext) = {
     val inside = CLInsideKernels.make(gen)
-    val outside = if(!gen.isViterbi) Some(CLOutsideKernels.make(gen)) else None
+    val outside =  Some(CLOutsideKernels.make(gen)) //if(!gen.isViterbi) Some(CLOutsideKernels.make(gen)) else None
     val util = CLParserUtilKernels.make(gen)
     new CLParserData(grammar, gen.structure, inside, outside, util)
   }

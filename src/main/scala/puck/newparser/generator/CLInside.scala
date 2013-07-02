@@ -74,7 +74,8 @@ object CLInsideKernels {
   }
 }
 
-case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKernel, splitPointsBlockSize: Int, groupSize: Int) {
+case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKernel, setRootScoresKernel: CLKernel,
+  splitPointsBlockSize: Int, groupSize: Int) {
   def write(out: ZipOutputStream) {
     ZipUtil.addKernel(out, "sumGrammarKernel", sumGrammarKernel)
     ZipUtil.addKernel(out, "sumSplitPointsKernel", sumSplitPointsKernel)
@@ -109,6 +110,29 @@ case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel:
     ev
   }
 
+  def setRootScores(charts: CLMatrix[Float],
+                    chartIndices: Array[Int],
+                    root: Int,
+                    one: Float,
+                    events: CLEvent*)(implicit queue: CLQueue):CLEvent = {
+
+    val ptrCI = Pointer.pointerToArray[java.lang.Integer](chartIndices)
+    val intBufferCI = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, chartIndices.length)
+    val evCI = intBufferCI.write(queue, 0, chartIndices.length, ptrCI, false, events:_*)
+
+    setRootScoresKernel.setArgs(charts.data.safeBuffer, intBufferCI, 
+      Integer.valueOf(chartIndices.length), Integer.valueOf(charts.rows), 
+      Integer.valueOf(root), java.lang.Float.valueOf(one))
+
+    val ev = setRootScoresKernel.enqueueNDRange(queue, Array(chartIndices.length), evCI)
+    ev.waitFor()
+    
+    ev.invokeUponCompletion(new Runnable() {
+      def run() = { ptrCI.release(); intBufferCI.release();}
+    })
+    ev
+  }
+
 
 }
 
@@ -128,7 +152,9 @@ object CLParserUtilKernels {
       math.min(size0, blockSize).toInt
     }
 
-    CLParserUtilKernels(generator.gen.mkKernel(generator.gen.IR.sumGrammarCellsKernel), context.createProgram(splitPointSumKernel(blockSize)).createKernel("splitPointSum"),  blockSize, groupSize)
+    val prog = context.createProgram(splitPointSumKernel(blockSize))
+
+    CLParserUtilKernels(generator.gen.mkKernel(generator.gen.IR.sumGrammarCellsKernel), prog.createKernel("splitPointSum"), prog.createKernel("setRootScores"), blockSize, groupSize)
   }
 
   def splitPointSumKernel(blockSize: Int) = {
@@ -227,7 +253,19 @@ __kernel void splitPointSum(__global float* parent, __global float* chart,
     }
 
   }
-}"""
+}
+
+
+__kernel void setRootScores(__global float* charts, __global int* indices, int numIndices, int numSyms, int root, float value) {
+  int id = get_global_id(0);
+  printf("%d %d %d\n", numSyms, id, root);
+  if(id < numIndices)
+      charts[numSyms * indices[id] + root] = value;
+}
+"""
+
+
+
   }
 }
 
