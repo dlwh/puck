@@ -308,6 +308,25 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   private val insideTN = new BinaryUpdateManager(data.inside.insideTNKernels, _.bot, _.bot, _.top, (b, e, l) => (b+1 to b+1))
   private val insideNN = new BinaryUpdateManager(data.inside.insideNNKernels, _.bot, _.top, _.top, (b, e, l) => (b+1 to e-1))
 
+  private def outsideBinaryPass(batch: Batch, span: Int, events: CLEvent*) = {
+    var ev = events
+    if(span == 2) {
+      ev = outsideTT_L.doUpdates(batch, span, ev :_*)
+      ev = outsideTT_R.doUpdates(batch, span, ev :_*)
+      ev = outsideTN_R.doUpdates(batch, span, ev :_*)
+      ev = outsideNT_L.doUpdates(batch, span, ev :_*)
+    }
+
+    ev = outsideNT_R.doUpdates(batch, span, ev :_*)
+    ev = outsideTN_L.doUpdates(batch, span, ev :_*)
+    ev = outsideNN_L.doUpdates(batch, span, ev :_*)
+    ev = outsideNN_R.doUpdates(batch, span, ev :_*)
+    assert(ev.length == 1)
+    ev.head
+  }
+
+
+
   // here, "parentChart" is actually the left child, left is the parent, right is the right completion
   private lazy val outsideTT_L = new BinaryUpdateManager(data.outside.get.outside_L_TTKernels, _.bot, _.bot, _.bot, (b, e, l) => (e+1 to e+1))
   private lazy val outsideNT_L = new BinaryUpdateManager(data.outside.get.outside_L_NTKernels, _.top, _.bot, _.bot, (b, e, l) => (e+1 to e+1))
@@ -428,14 +447,45 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     debugFinish()
     unaryEvents ++= endEvents
     
-    copyBackToCharts(batch, _.top, span, endEvents: _*)
-  }
-  private def copyBackToCharts(batch: Batch, level: ParseChart=>ChartHalf, span: Int, events: CLEvent*):CLEvent = {
-    val totalLength = batch.totalLengthForSpan(span)
-    val ev = transposeCopy.permuteTransposeCopyOut(devCharts, pArray, totalLength, devParent(0 until totalLength, ::), events:_*)
+    val ev = transposeCopy.permuteTransposeCopyOut(devCharts, pArray, offset, devParent(0 until offset, ::), endEvents:_*)
     sumToChartsEvents += ev
     ev
   }
+
+  def doOutsideUnaryUpdates(batch: Batch, span: Int, events: CLEvent*) = {
+    import batch._
+    var offset = 0
+    def enqueue(parent: IndexedSeq[Int], left: IndexedSeq[Int]) {
+      parent.copyToArray(pArray, offset)
+      left.copyToArray(lArray, offset)
+      offset += parent.length
+    }
+    for(sent <- 0 until batch.numSentences if batch.sentences(sent).length >= span) {
+      enqueue(batch.gpuCharts(sent).bot.spanRangeSlice(span),
+              batch.gpuCharts(sent).top.spanRangeSlice(span))
+    }
+
+    val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, events:_*)
+    memFillEvents += zz
+
+    val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, java.util.Arrays.copyOf(lArray, offset), events:_*)
+    transferEvents += wl
+    debugFinish()
+
+    val kernels = if(span == 1) data.outside.get.outsideTUKernels else data.outside.get.outsideNUKernels
+    val endEvents = kernels.map{(kernel) =>
+      kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(numGPUCells), Integer.valueOf(totalLengthForSpan(span)))
+      kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), wl, zz)
+    }
+    debugFinish()
+    unaryEvents ++= endEvents
+    
+    val ev = transposeCopy.permuteTransposeCopyOut(devCharts, pArray, offset, devParent(0 until offset, ::), endEvents:_*)
+    sumToChartsEvents += ev
+    ev
+  }
+
+
 }
 
 object CLParser extends Logging {
