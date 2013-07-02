@@ -258,9 +258,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   println(structure.termIndex.zipWithIndex)
 
   private def inside(batch: Batch):CLEvent = synchronized {
-    val prof = new CLProfiler("...")
-    prof.clear()
-    prof.tick()
     allProfilers.foreach(_.clear())
     allProfilers.foreach(_.tick())
 
@@ -285,8 +282,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     debugFinish()
 
     if(profile) {
-      prof.tock()
-      println(prof)
       queue.finish()
       allProfilers.foreach(_.tock())
       allProfilers.foreach(p => println(s"Inside $p"))
@@ -312,6 +307,19 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   private val insideNT = new BinaryUpdateManager(data.inside.insideNTKernels, _.bot, _.top, _.bot, (b, e, l) => (e-1 to e-1))
   private val insideTN = new BinaryUpdateManager(data.inside.insideTNKernels, _.bot, _.bot, _.top, (b, e, l) => (b+1 to b+1))
   private val insideNN = new BinaryUpdateManager(data.inside.insideNNKernels, _.bot, _.top, _.top, (b, e, l) => (b+1 to e-1))
+
+  // here, "parentChart" is actually the left child, left is the parent, right is the right completion
+  private lazy val outsideTT_L = new BinaryUpdateManager(data.outside.get.outside_L_TTKernels, _.bot, _.bot, _.bot, (b, e, l) => (e+1 to e+1))
+  private lazy val outsideNT_L = new BinaryUpdateManager(data.outside.get.outside_L_NTKernels, _.top, _.bot, _.bot, (b, e, l) => (e+1 to e+1))
+  private lazy val outsideTN_L = new BinaryUpdateManager(data.outside.get.outside_L_TNKernels, _.bot, _.bot, _.top, (b, e, l) => (e+1 to l))
+  private lazy val outsideNN_L = new BinaryUpdateManager(data.outside.get.outside_L_NNKernels, _.top, _.bot, _.top, (b, e, l) => (e+1 to l))
+
+  // here, "parentChart" is actually the right child, right is the parent, left is the left completion
+  private lazy val outsideTT_R = new BinaryUpdateManager(data.outside.get.outside_R_TTKernels, _.bot, _.bot, _.bot, (b, e, l) => (b-1 to b-1))
+  private lazy val outsideNT_R = new BinaryUpdateManager(data.outside.get.outside_R_NTKernels, _.bot, _.top, _.bot, (b, e, l) => (0 to b-1))
+  private lazy val outsideTN_R = new BinaryUpdateManager(data.outside.get.outside_R_TNKernels, _.top, _.bot, _.bot, (b, e, l) => (b-1 to b-1))
+  private lazy val outsideNN_R = new BinaryUpdateManager(data.outside.get.outside_R_NNKernels, _.top, _.top, _.bot, (b, e, l) => (0 to b-1))
+
 
   private class BinaryUpdateManager(kernels: IndexedSeq[CLKernel],
     parentChart: ParseChart=>ChartHalf,
