@@ -258,7 +258,6 @@ __kernel void splitPointSum(__global float* parent, __global float* chart,
 
 __kernel void setRootScores(__global float* charts, __global int* indices, int numIndices, int numSyms, int root, float value) {
   int id = get_global_id(0);
-  printf("%d %d %d\n", numSyms, id, root);
   if(id < numIndices)
       charts[numSyms * indices[id] + root] = value;
 }

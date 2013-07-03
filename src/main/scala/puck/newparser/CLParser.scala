@@ -244,7 +244,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   }
 
   def debugRaces = false
-  def debugCharts = true
+  def debugCharts = false
 
   def debugFinish() {
     if(debugRaces || debugCharts) queue.finish()
@@ -368,8 +368,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     ev = outsideNT_L.doUpdates(batch, span, ev)
     ev = outsideNN_L.doUpdates(batch, span, ev)
     ev = outsideNN_R.doUpdates(batch, span, ev)
-    ev.waitFor()
-    println(batch.outsideCharts.head.head.bot.toString(structure, _zero))
     ev
   }
 
@@ -581,10 +579,12 @@ object CLParser extends Logging {
       timeIn = timeOut
       val margs = train.map { w => 
         val m = ChartMarginal(AugmentedGrammar.fromRefined(grammar).anchor(w), w, maxMarginal= kern.isViterbi)
+        /*
         printChart(m, true, false)
         printChart(m, false, false)
         printChart(m, true, true)
         printChart(m, false, true)
+        */
         m.logPartition.toFloat
       }
       timeOut = System.currentTimeMillis()
