@@ -12,7 +12,7 @@ import epic.parser.projections.GrammarRefinements
 import epic.trees._
 import epic.trees.annotations._
 import java.io._
-import java.nio.FloatBuffer
+import java.nio._
 import java.{lang=>jl}
 import puck.linalg.CLMatrix
 import puck.linalg.kernels._
@@ -337,7 +337,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   private def computeViterbiMasks(batch: Batch, events: CLEvent*):(CLMatrix[Int], CLEvent) = synchronized {
     val masks = new CLMatrix[Int](cellSize/32, devParent.size / (cellSize/32), devParent.data.asCLIntBuffer)
     println(batch.insideCharts(0).top.rootIndex + " " + batch.sentences(0).length + " " + TriangularArray.arraySize(batch.sentences(0).length))
-    val ev = data.util.getMasks(masks(::, 0 until batch.cellTotals.last), devCharts(::, 0 until batch.cellTotals.last), devCharts(::, batch.cellTotals.last until batch.cellTotals.last * 2), batch.outsideCharts.get.head.bot.globalRowOffset, batch.cellTotals, structure.root, 0.999f, events:_*)
+    val ev = data.util.getMasks(masks(::, 0 until batch.cellTotals.last), devCharts(::, 0 until batch.cellTotals.last), devCharts(::, batch.cellTotals.last until batch.cellTotals.last * 2), batch.outsideCharts.get.head.bot.globalRowOffset, batch.cellTotals, structure.root, 0.0f, events:_*)
     masks -> ev
   }
 
@@ -359,11 +359,13 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
       def recTop(begin: Int, end: Int):BinarizedTree[L] = {
         val column:DenseVector[Int] = top(::, ChartHalf.chartIndex(begin, end, length))
+        println(s"tt $begin $end ${asBitSet(column)} $column")
         val x = firstSetBit(column:DenseVector[Int])
         if(x == -1) {
           assert(begin == end - 1, column.toString + " " + x + " " + (begin,end))
           recBot(begin, end)
         } else {
+          println(s"t $begin $end ${structure.nontermIndex.get(x)}")
           val label = structure.nontermIndex.get(x)
           val t = recBot(begin, end)
           new UnaryTree(label, t, IndexedSeq.empty, Span(begin, end))
@@ -371,11 +373,16 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       }
       def recBot(begin: Int, end: Int):BinarizedTree[L] = {
         val column:DenseVector[Int] = bot(::, ChartHalf.chartIndex(begin, end, length))
+        println(s"bb $begin $end ${asBitSet(column)} $column")
         val x = firstSetBit(column:DenseVector[Int])
-        val label = structure.nontermIndex.get(x)
+          println(s"b $begin $end")
         if(begin == end-1) {
+          val label = structure.termIndex.get(x)
+          println(s"b $begin $end ${structure.termIndex.get(x)}")
           NullaryTree(label, Span(begin, end))
         } else {
+          val label = structure.nontermIndex.get(x)
+          println(s"b $begin $end ${structure.nontermIndex.get(x)}")
           for(split <- (begin+1) until end) {
             val left = (if(begin == split - 1) bot else top)(::, ChartHalf.chartIndex(begin, split, length))
             val right = (if(end == split + 1) bot else top)(::, ChartHalf.chartIndex(split, end, length))
@@ -392,13 +399,20 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     }
   }
 
+  def asBitSet(col: DenseVector[Int]):java.util.BitSet = {
+    val byteBuffer = ByteBuffer.allocate(col.copy.data.length * 4);        
+    val intBuffer = byteBuffer.asIntBuffer();
+    intBuffer.put(col.copy.data);
+    java.util.BitSet.valueOf(byteBuffer)
+  }
 
   def firstSetBit(col: DenseVector[Int]):Int = {
     var i = 0;
     var fsb = -1;
     while(i < col.length && fsb < 0) {
-      assert(col(i) >= 0, col.toString + " " + i)
-      fsb = BitHacks.log2(col(i))
+      if(col(i) < 0)
+        fsb = 31
+      else fsb = BitHacks.log2(col(i))
       i += 1
     }
 
