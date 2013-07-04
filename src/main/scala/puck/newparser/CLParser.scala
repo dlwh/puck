@@ -39,17 +39,17 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
                         profile: Boolean = true)(implicit val context: CLContext) extends Logging {
   import data._
 
-  /*
-  def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
+  def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[L]] = synchronized {
     {for {
-      batch <- getBatches(sentences, masks).iterator
-      //    _ = getMarginals(batch)
-      t <- doParse(batch)
+      batch <- getBatches(sentences).iterator
+      evi = inside(batch)
+      ev2 = if(needsOutside) outside(batch, evi) else evi
+      (masks, ev3) = computeViterbiMasks(batch, ev2)
+      t <- extractParses(batch, masks, ev3)
     } yield {
       t
     }}.toIndexedSeq
   }
-  */
 
   def needsOutside = data.outside.nonEmpty
   def isViterbi = data.isViterbi
@@ -164,7 +164,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
     lazy val insideCharts = for(i <- 0 until numSentences) yield {
       val numCells = (cellTotals(i+1)-cellTotals(i))/2
-      assert(numCells == TriangularArray.arraySize(sentences(i).length+1))
+      assert(numCells == TriangularArray.arraySize(sentences(i).length))
       val chart = new ParseChart(sentences(i).length, devCharts(::, cellTotals(i) until (cellTotals(i) + numCells)), devCharts(::, cellTotals(i) + numCells until cellTotals(i+1)))
       chart
     }
@@ -173,7 +173,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       for(i <- 0 until numSentences) yield {
 
         val numCells = (cellTotals(i+1)-cellTotals(i))/2
-        assert(numCells == TriangularArray.arraySize(sentences(i).length+1))
+        assert(numCells == TriangularArray.arraySize(sentences(i).length))
         val botBegin = cellTotals.last + cellTotals(i)
         val botEnd = botBegin + numCells
         val topBegin = botEnd
@@ -220,14 +220,14 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     var currentCellTotal = 0
     for( (s, i) <- sentences.zipWithIndex) {
       currentLengthTotal += s.length
-      currentCellTotal += TriangularArray.arraySize(s.length+1) * 2
+      currentCellTotal += TriangularArray.arraySize(s.length) * 2
       if(needsOutside)
-        currentCellTotal += TriangularArray.arraySize(s.length+1) * 2
+        currentCellTotal += TriangularArray.arraySize(s.length) * 2
       if(currentLengthTotal > numGPUCells || currentCellTotal > numGPUChartCells) {
         assert(current.nonEmpty)
         result += createBatch(current)
         currentLengthTotal = s.length
-        currentCellTotal = TriangularArray.arraySize(s.length+1) * 2
+        currentCellTotal = TriangularArray.arraySize(s.length) * 2
         current = ArrayBuffer()
       }
       current += s
@@ -239,7 +239,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
   private def createBatch(sentences: IndexedSeq[IndexedSeq[W]]): Batch = {
     val lengthTotals = sentences.scanLeft(0)((acc, sent) => acc + sent.length)
-    val cellTotals = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length+1) * 2)
+    val cellTotals = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2)
     Batch(lengthTotals.toArray, cellTotals.toArray, sentences)
   }
 
@@ -334,6 +334,76 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     ev
   }
 
+  private def computeViterbiMasks(batch: Batch, events: CLEvent*):(CLMatrix[Int], CLEvent) = synchronized {
+    val masks = new CLMatrix[Int](cellSize/32, devParent.size / (cellSize/32), devParent.data.asCLIntBuffer)
+    println(batch.insideCharts(0).top.rootIndex + " " + batch.sentences(0).length + " " + TriangularArray.arraySize(batch.sentences(0).length))
+    val ev = data.util.getMasks(masks(::, 0 until batch.cellTotals.last), devCharts(::, 0 until batch.cellTotals.last), devCharts(::, batch.cellTotals.last until batch.cellTotals.last * 2), batch.outsideCharts.get.head.bot.globalRowOffset, batch.cellTotals, structure.root, 0.999f, events:_*)
+    masks -> ev
+  }
+
+  private def extractParses(batch: Batch, masks: CLMatrix[Int], events: CLEvent*) = {
+    events.foreach(_.waitFor())
+    val dmMasks:DenseMatrix[Int] = masks.toDense.asInstanceOf[DenseMatrix[Int]]
+    for(s <- 0 until batch.numSentences par) yield {
+      import batch.cellTotals
+      val length = batch.sentences(s).length
+      val numCells = (cellTotals(s+1)-cellTotals(s))/2
+      assert(numCells == TriangularArray.arraySize(length))
+      val botBegin = cellTotals(s)
+      val botEnd = botBegin + numCells
+      val topBegin = botEnd
+      val topEnd = topBegin + numCells
+      val bot = dmMasks(::, botBegin until botEnd)
+      val top = dmMasks(::, topBegin until topEnd)
+
+
+      def recTop(begin: Int, end: Int):BinarizedTree[L] = {
+        val column:DenseVector[Int] = top(::, ChartHalf.chartIndex(begin, end, length))
+        val x = firstSetBit(column:DenseVector[Int])
+        if(x == -1) {
+          assert(begin == end - 1, column.toString + " " + x + " " + (begin,end))
+          recBot(begin, end)
+        } else {
+          val label = structure.nontermIndex.get(x)
+          val t = recBot(begin, end)
+          new UnaryTree(label, t, IndexedSeq.empty, Span(begin, end))
+        }
+      }
+      def recBot(begin: Int, end: Int):BinarizedTree[L] = {
+        val column:DenseVector[Int] = bot(::, ChartHalf.chartIndex(begin, end, length))
+        val x = firstSetBit(column:DenseVector[Int])
+        val label = structure.nontermIndex.get(x)
+        if(begin == end-1) {
+          NullaryTree(label, Span(begin, end))
+        } else {
+          for(split <- (begin+1) until end) {
+            val left = (if(begin == split - 1) bot else top)(::, ChartHalf.chartIndex(begin, split, length))
+            val right = (if(end == split + 1) bot else top)(::, ChartHalf.chartIndex(split, end, length))
+            if(left.any && right.any) {
+              return BinaryTree(label, recTop(begin, split), recTop(split, end), Span(begin, end))
+            }
+          }
+          error("nothing here!")
+        }
+      }
+
+      recTop(0, length)
+      
+    }
+  }
+
+
+  def firstSetBit(col: DenseVector[Int]):Int = {
+    var i = 0;
+    var fsb = -1;
+    while(i < col.length && fsb < 0) {
+      assert(col(i) >= 0, col.toString + " " + i)
+      fsb = BitHacks.log2(col(i))
+      i += 1
+    }
+
+    (i * 32) + fsb;
+  }
 
 
   private def insideBinaryPass(batch: Batch, span: Int, events: CLEvent*) = {
@@ -563,8 +633,10 @@ object CLParser extends Logging {
     val kern = fromSimpleGrammar[AnnotatedLabel, AnnotatedLabel, String](grammar, profile)
     val train = transformed.slice(1, 1+numToParse).map(_.words)
 
+    val partsX = kern.partitions(train)
+    println(partsX)
     var timeIn = System.currentTimeMillis()
-    val parts = kern.partitions(train)
+    val parts = kern.parse(train)
     var timeOut = System.currentTimeMillis()
     println(parts)
     println(s"CL Parsing took: ${(timeOut-timeIn)/1000.0}")

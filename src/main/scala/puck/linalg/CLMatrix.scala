@@ -1,4 +1,5 @@
-package puck.linalg
+package puck
+package linalg
 
 import breeze.linalg._
 import java.{lang=>jl}
@@ -90,6 +91,8 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
 
   def activeSize = size
 
+  def footprint = majorSize * majorStride
+
   def valueAt(i: Int) = data.mappedPointer.get(offset + i)
 
   def indexAt(i: Int) = i
@@ -164,6 +167,10 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
   /** Forcibly releases the buffer. Note that other slices will be invalidated! */
   def release() = {
     data.release()
+  }
+
+  def toDense(implicit ct: ClassTag[V]) = {
+    new DenseMatrix(rows, cols, new NativeArray(data.mappedPointer + offset, footprint).toArray, 0, majorStride, isTranspose)
   }
 
 }

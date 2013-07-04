@@ -1,6 +1,7 @@
 import org.bridj.Pointer
 import com.nativelibs4java.opencl._
 import java.{lang=>jl}
+import scala.reflect._
 
 /**
  * TODO
@@ -8,11 +9,11 @@ import java.{lang=>jl}
  * @author dlwh
  **/
 package object puck {
-  implicit class RichPointer[T](val pointer: Pointer[T]) extends AnyVal {
+  implicit class RichPointer[T](val pointer: Pointer[T])(implicit tag: scala.reflect.ClassTag[T]) {
     def update(v: T) {pointer.set(v)}
     def update(off: Long, v: T) {pointer.set(off, v)}
     def apply(off: Long = 0) {pointer.get(off)}
-    def toArray = {pointer.toArray}
+
 
     def +(off: Long) = pointer.next(off)
   }
@@ -21,7 +22,6 @@ package object puck {
     def update(v: Float) {pointer.setFloat(v)}
     def update(off: Long, v: Float) {pointer.setFloatAtIndex(off, v)}
     def apply(off: Long = 0) {pointer.getFloatAtIndex(off)}
-    def toArray = {pointer.getFloats}
     def copyToArray(array: Array[Float]) {
       pointer.getFloats(array)
     }
@@ -33,7 +33,6 @@ package object puck {
     def update(v: Int) {pointer.setInt(v)}
     def update(off: Long, v: Int) {pointer.setIntAtIndex(off, v)}
     def apply(off: Long = 0) {pointer.getIntAtIndex(off)}
-    def toArray = {pointer.getInts}
     def copyToArray(array: Array[Int]) {
       pointer.getInts(array)
     }
@@ -45,7 +44,6 @@ package object puck {
     def update(v: Double) {pointer.setDouble(v)}
     def update(off: Long, v: Double) {pointer.setDoubleAtIndex(off, v)}
     def apply(off: Long = 0) {pointer.getDoubleAtIndex(off)}
-    def toArray = {pointer.getDoubles}
     def copyToArray(array: Array[Double]) {
       pointer.getDoubles(array)
     }
@@ -58,7 +56,6 @@ package object puck {
     def update(v: Char) {pointer.setChar(v)}
     def update(off: Long, v: Char) {pointer.setCharAtIndex(off, v)}
     def apply(off: Long = 0) {pointer.getCharAtIndex(off)}
-    def toArray = {pointer.getChars}
     def copyToArray(array: Array[Char]) {
       pointer.getChars(array.length).copyToArray(array)
     }
@@ -70,7 +67,6 @@ package object puck {
     def update(v: Long) {pointer.setLong(v)}
     def update(off: Long, v: Long) {pointer.setLongAtIndex(off, v)}
     def apply(off: Long = 0) {pointer.getLongAtIndex(off)}
-    def toArray = {pointer.getLongs}
     def copyToArray(array: Array[Long]) {
       pointer.getLongs(array.length).copyToArray(array)
     }

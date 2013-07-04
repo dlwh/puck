@@ -125,7 +125,6 @@ case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel:
       Integer.valueOf(root), java.lang.Float.valueOf(one))
 
     val ev = setRootScoresKernel.enqueueNDRange(queue, Array(chartIndices.length), evCI)
-    ev.waitFor()
     
     ev.invokeUponCompletion(new Runnable() {
       def run() = { ptrCI.release(); intBufferCI.release();}
@@ -149,19 +148,18 @@ case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel:
     val intBufferCI = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, chartIndices.length)
     val evCI = intBufferCI.write(queue, 0, chartIndices.length, ptrCI, false, events:_*)
 
-    getMasksKernel.setArgs(masks.data.safeBuffer, inside.data.safeBuffer, outside.data.safeBuffer, Integer.valueOf(firstOutside), intBufferCI, 
-      Integer.valueOf(chartIndices.length), Integer.valueOf(inside.rows), 
+    println(chartIndices.toIndexedSeq)
+
+    getMasksKernel.setArgs(masks.data.safeBuffer, inside.data.safeBuffer, outside.data.safeBuffer, Integer.valueOf(outside.offset), intBufferCI, 
+      Integer.valueOf(chartIndices.length-1), Integer.valueOf(inside.rows), 
       Integer.valueOf(root), java.lang.Float.valueOf(threshold), LocalSize.ofIntArray(fieldSize * inside.cols))
 
     val ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices.length-1, groupSize), Array(1, groupSize), evCI)
-    ev.waitFor()
     
     ev.invokeUponCompletion(new Runnable() {
       def run() = { ptrCI.release(); intBufferCI.release();}
     })
     ev
-    ???
-
   }
 
 
@@ -311,7 +309,7 @@ __kernel void computeMasks(__global mask_t* masksOut,
   int id = get_global_id(0);
   if(id >= numIndices) return;
 
-  __global float* outside = _outside + _outsideOff * numSyms;
+  __global float* outside = _outside + _outsideOff;
 
   int threadid = get_local_id(1);
   int numThreads = get_local_size(1);
@@ -326,6 +324,10 @@ __kernel void computeMasks(__global mask_t* masksOut,
     rootScore = inside[(lastChartIndex-1) * numSyms + root];
   }
   barrier(CLK_LOCAL_MEM_FENCE);
+  printf("XXX %f %d %d\n", rootScore, firstChartIndex, lastChartIndex-1);
+  for(int sym = threadid; sym < numSyms; sym += numThreads) {
+    printf("QQQ %d %f %d %d\n", sym, inside[(lastChartIndex-1) * numSyms + sym], firstChartIndex, lastChartIndex-1);
+  }
 
   float cutoff = thresh * rootScore;
 

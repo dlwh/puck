@@ -10,7 +10,7 @@ import scala.reflect.ClassTag
  **/
 class NativeArray[@specialized(Int, Float, Double) T](val pointer: Pointer[T], val length: Long, var autorelease: Boolean = true) {
   def apply(i: Long) = {require(i < length); pointer.get(i)}
-  def toArray = {require(length <= Int.MaxValue); pointer.toArray.take(length.toInt)}
+  def toArray = {require(length <= Int.MaxValue); pointer.getArray(length.toInt).asInstanceOf[Array[T]]}
   def update(i: Long, v: T) {
     pointer(i) = v
   }
