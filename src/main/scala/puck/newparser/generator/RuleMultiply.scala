@@ -67,7 +67,7 @@ trait RuleMultiply[L] extends Base with KernelOps with ExtraBase with Accumulato
   })
 
 
-         val sumGrammarCellsKernel =  kernel[Array[Real] with Global, Int, Int, Array[Real] with Global, Int, Int, Int, Int]("sumGrammars", { (dest: Rep[Array[Real] with Global],
+val sumGrammarCellsKernel =  kernel[Array[Real] with Global, Int, Int, Array[Real] with Global, Int, Int, Int, Int]("sumGrammars", { (dest: Rep[Array[Real] with Global],
                                                                                                                                                        destOff: Rep[Int],
                                                                                                                                                        destRowSize: Rep[Int],
                                                                                                                                                        source: Rep[Array[Real] with Global],
@@ -85,5 +85,8 @@ trait RuleMultiply[L] extends Base with KernelOps with ExtraBase with Accumulato
       dest(label * destRowSize + row + destOff) =  dest(label * destRowSize + row + destOff) + source(label * srcRowSize + row + srcOff)
     }
   })
+
+
+
 
 }

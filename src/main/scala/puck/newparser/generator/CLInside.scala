@@ -74,8 +74,8 @@ object CLInsideKernels {
   }
 }
 
-case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKernel, setRootScoresKernel: CLKernel,
-  splitPointsBlockSize: Int, groupSize: Int) {
+case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKernel, setRootScoresKernel: CLKernel, getMasksKernel: CLKernel,
+  splitPointsBlockSize: Int, groupSize: Int, fieldSize: Int) {
   def write(out: ZipOutputStream) {
     ZipUtil.addKernel(out, "sumGrammarKernel", sumGrammarKernel)
     ZipUtil.addKernel(out, "sumSplitPointsKernel", sumSplitPointsKernel)
@@ -133,6 +133,37 @@ case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel:
     ev
   }
 
+  def getMasks(
+    masks: CLMatrix[Int],
+    inside: CLMatrix[Float],
+    outside: CLMatrix[Float],
+    firstOutside: Int,
+    chartIndices: Array[Int],
+    root: Int, threshold: Float,
+    events: CLEvent*)(implicit queue: CLQueue):CLEvent = {
+    require(masks.rows == fieldSize)
+    require(masks.cols == inside.cols)
+    require(masks.cols == outside.cols)
+
+    val ptrCI = Pointer.pointerToArray[java.lang.Integer](chartIndices)
+    val intBufferCI = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, chartIndices.length)
+    val evCI = intBufferCI.write(queue, 0, chartIndices.length, ptrCI, false, events:_*)
+
+    getMasksKernel.setArgs(masks.data.safeBuffer, inside.data.safeBuffer, outside.data.safeBuffer, Integer.valueOf(firstOutside), intBufferCI, 
+      Integer.valueOf(chartIndices.length), Integer.valueOf(inside.rows), 
+      Integer.valueOf(root), java.lang.Float.valueOf(threshold), LocalSize.ofIntArray(fieldSize * inside.cols))
+
+    val ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices.length-1, groupSize), Array(1, groupSize), evCI)
+    ev.waitFor()
+    
+    ev.invokeUponCompletion(new Runnable() {
+      def run() = { ptrCI.release(); intBufferCI.release();}
+    })
+    ev
+    ???
+
+  }
+
 
 }
 
@@ -152,12 +183,18 @@ object CLParserUtilKernels {
       math.min(size0, blockSize).toInt
     }
 
-    val prog = context.createProgram(splitPointSumKernel(blockSize))
+    val numSymsRounded = (generator.structure.termIndex.size.max(generator.structure.nontermIndex.size) + 31)/32 * 32
 
-    CLParserUtilKernels(generator.gen.mkKernel(generator.gen.IR.sumGrammarCellsKernel), prog.createKernel("splitPointSum"), prog.createKernel("setRootScores"), blockSize, groupSize)
+    val prog = context.createProgram(splitPointSumKernel(blockSize, numSymsRounded))
+
+    CLParserUtilKernels(generator.gen.mkKernel(generator.gen.IR.sumGrammarCellsKernel),
+      prog.createKernel("splitPointSum"),
+      prog.createKernel("setRootScores"),
+      prog.createKernel("computeMasks"),
+      blockSize, groupSize, numSymsRounded/32)
   }
 
-  def splitPointSumKernel(blockSize: Int) = {
+  def splitPointSumKernel(blockSize: Int, numSyms: Int) = {
    """#define BLOCK_SIZE """ + blockSize + """
 
    float sumUp(__local float* scores, float _acc, int first, int last) {
@@ -260,6 +297,66 @@ __kernel void setRootScores(__global float* charts, __global int* indices, int n
   int id = get_global_id(0);
   if(id < numIndices)
       charts[numSyms * indices[id] + root] = value;
+}
+
+#define NUM_SYMS """ + numSyms + """
+#define NUM_FIELDS """ + (numSyms/32) + """
+typedef struct { int fields[NUM_FIELDS]; } mask_t;
+
+__kernel void computeMasks(__global mask_t* masksOut,
+  __global float* inside,
+  __global float* _outside,
+  int _outsideOff,
+  __global int* indices, int numIndices, int numSyms, int root, float thresh, __local mask_t* fieldBuf) {
+  int id = get_global_id(0);
+  if(id >= numIndices) return;
+
+  __global float* outside = _outside + _outsideOff * numSyms;
+
+  int threadid = get_local_id(1);
+  int numThreads = get_local_size(1);
+  int cellOffset = get_group_id(1);
+  int numBlocks = get_num_groups(1);
+
+  __local int firstChartIndex, lastChartIndex;
+  __local float rootScore;
+  if(threadid == 0) {
+    firstChartIndex = indices[id];
+    lastChartIndex = indices[id+1];
+    rootScore = inside[(lastChartIndex-1) * numSyms + root];
+  }
+  barrier(CLK_LOCAL_MEM_FENCE);
+
+  float cutoff = thresh * rootScore;
+
+  for(int cell = firstChartIndex + cellOffset; cell < lastChartIndex; cell += numBlocks) {
+    mask_t myMask;
+    for(int i = 0; i < NUM_FIELDS; ++i) {
+      myMask.fields[i] = 0;
+    }
+    for(int sym = threadid; sym < numSyms; sym += numThreads) {
+      float score = inside[cell * numSyms + sym] + outside[cell * numSyms + sym];
+      if(score >= cutoff) {
+        myMask.fields[sym/32] |= (1<<(sym%32));
+      }
+    }
+
+    for(int i = 0; i < NUM_FIELDS; ++i) {
+      fieldBuf[threadid].fields[i] = myMask.fields[i];
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    for(int size = numThreads; size > 1; size -= size / 2) {
+      for(int jj = threadid; jj < size/2; jj += numThreads) {
+        for(int i = 0; i < NUM_FIELDS; ++i) {
+          fieldBuf[jj].fields[i] |= fieldBuf[size - size/2 + jj].fields[i];
+        }
+      }
+    }
+
+    if(threadid == 0)
+      masksOut[cell] = fieldBuf[0];
+  }
 }
 """
 
