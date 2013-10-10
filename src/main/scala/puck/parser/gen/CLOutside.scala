@@ -1,13 +1,10 @@
-package puck.newparser.generator
+package puck.parser.gen
 
 import puck.util._
 import com.nativelibs4java.opencl._
 import java.util.zip._
-import scala.collection.JavaConverters._
-import trochee.basic._
-import trochee.kernels._
-import scala.reflect.runtime.universe._
 import epic.trees._
+import puck.parser.{RuleSemiring, RuleStructure}
 
 // These kernels assume that the parent and the child named (L or R) are swapped
 // in the workspace tables.
@@ -75,46 +72,46 @@ object CLOutsideKernels {
     UnaryRule(r._1.child, r._1.parent, r._1.chain) -> r._2
   }
 
-  def make[C, L](parserGen: CLParserKernelGenerator[C, L])(implicit context: CLContext) = {
-    import parserGen._
+  def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
+    val parserGen = new GenRuleMultiply()
     val outside_L_NNKernels = structure.partitionsLeftChild.zipWithIndex.map { case(partition, i) =>
-      gen.mkKernel(gen.IR.binaryRuleKernel(partition.map(rotateLeftToParent _), "outside_L_nn_binaries_"+i))
+      parserGen.binaryRuleApplication(partition.map(rotateLeftToParent), "outside_L_nn_binaries"+i)
     }
 
     val outside_R_NNKernels = structure.partitionsRightChild.zipWithIndex.map { case(partition, i) =>
-      gen.mkKernel(gen.IR.binaryRuleKernel(partition.map(rotateRightToParent _), "outside_R_nn_binaries_"+i))
+      parserGen.binaryRuleApplication(partition.map(rotateRightToParent), "outside_R_nn_binaries"+i)
     }
 
     val outside_L_NTKernels = structure.partitionsRightTermRules_LeftChild.zipWithIndex.map { case (partition, i) =>
-      gen.mkKernel(gen.IR.binaryRuleKernel(partition.map(rotateLeftToParent _), "outside_L_nt_binaries_"+i))
+      parserGen.binaryRuleApplication(partition.map(rotateLeftToParent), "outside_L_nt_binaries"+i)
     }
 
     val outside_R_NTKernels = structure.partitionsRightTermRules_RightChild.zipWithIndex.map { case (partition, i) =>
-      gen.mkKernel(gen.IR.binaryRuleKernel(partition.map(rotateRightToParent _), "outside_R_nt_binaries_"+i))
+      parserGen.binaryRuleApplication(partition.map(rotateRightToParent), "outside_R_nt_binaries"+i)
     }
 
     val outside_L_TNKernels = structure.partitionsLeftTermRules_LeftChild.zipWithIndex.map { case (partition, i) =>
-      gen.mkKernel(gen.IR.binaryRuleKernel(partition.map(rotateLeftToParent _), "outside_L_tn_binaries"+i))
+      parserGen.binaryRuleApplication(partition.map(rotateLeftToParent), "outside_L_tn_binaries"+i)
     }
 
     val outside_R_TNKernels = structure.partitionsLeftTermRules_RightChild.zipWithIndex.map { case (partition, i) =>
-      gen.mkKernel(gen.IR.binaryRuleKernel(partition.map(rotateRightToParent _), "outside_R_tn_binaries"+i))
+      parserGen.binaryRuleApplication(partition.map(rotateRightToParent), "outside_R_tn_binaries"+i)
     }
 
     val outside_L_TTKernels = structure.partitionsBothTermRules_LeftChild.zipWithIndex.map { case (partition, i) =>
-      gen.mkKernel(gen.IR.binaryRuleKernel(partition.map(rotateLeftToParent _), "outside_L_tt_binaries_"+i))
+      parserGen.binaryRuleApplication(partition.map(rotateLeftToParent), "outside_L_tt_binaries"+i)
     }
 
     val outside_R_TTKernels = structure.partitionsBothTermRules_RightChild.zipWithIndex.map { case (partition, i) =>
-      gen.mkKernel(gen.IR.binaryRuleKernel(partition.map(rotateRightToParent _), "outside_R_tt_binaries_"+i))
+      parserGen.binaryRuleApplication(partition.map(rotateRightToParent), "outside_R_tt_binaries"+i)
     }
 
     val outsideNUKernels = IndexedSeq(structure.unaryRules).zipWithIndex.map { case (partition, i) =>
-      gen.mkKernel(gen.IR.unaryRuleKernel(partition.map(rotateChildToParent), "outside_nn_unaries"+i))
+      parserGen.unaryRuleApplication(partition.map(rotateChildToParent), "outside_nn_unaries"+i)
     }
 
     val outsideTUKernels = IndexedSeq(structure.unaryTermRules).zipWithIndex.map { case (partition, i) =>
-      gen.mkKernel(gen.IR.unaryRuleKernel(partition.map(rotateChildToParent), "outside_nt_unaries"+i))
+      parserGen.unaryRuleApplication(partition.map(rotateChildToParent), "outside_nt_unaries"+i)
     }
 
     CLOutsideKernels(outside_L_NNKernels,

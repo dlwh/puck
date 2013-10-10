@@ -1,81 +1,14 @@
-package puck.newparser.generator
+package puck.parser.gen
 
-import puck.util._
 import com.nativelibs4java.opencl._
-import java.util.zip._
-import scala.collection.JavaConverters._
-import trochee.basic._
-import trochee.kernels._
-import scala.reflect.runtime.universe._
-import puck.linalg._
-import org.bridj._
+import java.util.zip.{ZipFile, ZipOutputStream}
+import puck.util.ZipUtil
+import puck.linalg.CLMatrix
+import org.bridj.Pointer
+import puck.parser.{RuleSemiring, RuleStructure}
 
-case class CLInsideKernels(insideNNKernels: IndexedSeq[CLKernel],
-                           insideNTKernels: IndexedSeq[CLKernel],
-                           insideTNKernels: IndexedSeq[CLKernel],
-                           insideTTKernels: IndexedSeq[CLKernel],
-                           insideNUKernels: IndexedSeq[CLKernel],
-                           insideTUKernels: IndexedSeq[CLKernel]) {
-
-  def write(out: ZipOutputStream) {
-    ZipUtil.addKernelSet(out, "insideNN", insideNNKernels)
-    ZipUtil.addKernelSet(out, "insideNT", insideNTKernels)
-    ZipUtil.addKernelSet(out, "insideTN", insideTNKernels)
-    ZipUtil.addKernelSet(out, "insideTT", insideTTKernels)
-    ZipUtil.addKernelSet(out, "insideNU", insideNUKernels)
-    ZipUtil.addKernelSet(out, "insideTU", insideTUKernels)
-  }
-}
-
-object CLInsideKernels {
-  def read(in: ZipFile)(implicit context: CLContext) = {
-    val insideNN = ZipUtil.readKernelSet(in, "insideNN")
-    val insideNT = ZipUtil.readKernelSet(in, "insideNT")
-    val insideTN = ZipUtil.readKernelSet(in, "insideTN")
-    val insideTT = ZipUtil.readKernelSet(in, "insideTT")
-    val insideNU = ZipUtil.readKernelSet(in, "insideNU")
-    val insideTU = ZipUtil.readKernelSet(in, "insideTU")
-    CLInsideKernels(insideNN, insideNT, insideTN, insideTT, insideNU, insideTU)
-  }
-
-
-  def make[C, L](parserGen: CLParserKernelGenerator[C, L])(implicit context: CLContext) = {
-    import parserGen._
-    val insideNNKernels = structure.partitionsParent.zipWithIndex.map { case(partition, i) =>
-      gen.mkKernel(gen.IR.binaryRuleKernel(partition, "inside_nn_binaries_"+i))
-    }
-
-    val insideNTKernels = structure.partitionsRightTermRules.zipWithIndex.map { case (partition, i) =>
-      gen.mkKernel(gen.IR.binaryRuleKernel(partition, "inside_nt_binaries_"+i))
-    }
-
-    val insideTNKernels = structure.partitionsLeftTermRules.zipWithIndex.map { case (partition, i) =>
-      gen.mkKernel(gen.IR.binaryRuleKernel(partition, "inside_tn_binaries"+i))
-    }
-
-    val insideTTKernels = structure.partitionsBothTermRules.zipWithIndex.map { case (partition, i) =>
-      gen.mkKernel(gen.IR.binaryRuleKernel(partition, "inside_tt_binaries_"+i))
-    }
-
-    val insideNUKernels = IndexedSeq(structure.unaryRules).zipWithIndex.map { case (partition, i) =>
-      gen.mkKernel(gen.IR.unaryRuleKernel(partition, "inside_nn_unaries"+i))
-    }
-
-    val insideTUKernels = IndexedSeq(structure.unaryTermRules).zipWithIndex.map { case (partition, i) =>
-      gen.mkKernel(gen.IR.unaryRuleKernel(partition, "inside_nt_unaries"+i))
-    }
-
-    CLInsideKernels(insideNNKernels,
-                    insideNTKernels,
-                    insideTNKernels,
-                    insideTTKernels,
-                    insideNUKernels,
-                    insideTUKernels)
-  }
-}
-
-case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKernel, setRootScoresKernel: CLKernel, getMasksKernel: CLKernel,
-  splitPointsBlockSize: Int, groupSize: Int, fieldSize: Int) {
+case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKernel, setRootScoresKernel: CLKernel, getMasksKernel: CLKernel,
+                               splitPointsBlockSize: Int, groupSize: Int, fieldSize: Int) {
   def write(out: ZipOutputStream) {
     ZipUtil.addKernel(out, "sumGrammarKernel", sumGrammarKernel)
     ZipUtil.addKernel(out, "sumSplitPointsKernel", sumSplitPointsKernel)
@@ -96,7 +29,7 @@ case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel:
     val evPI = intBufferPI.write(queue, 0, parentIndices.length, ptrPI, false, events:_*)
 
     sumSplitPointsKernel.setArgs(parent.data.safeBuffer, chart.data.safeBuffer, intBufferCI, intBufferPI,
-      Integer.valueOf(parentStride), Integer.valueOf(chartIndices.length), Integer.valueOf(chartIndicesPerGroup), 
+      Integer.valueOf(parentStride), Integer.valueOf(chartIndices.length), Integer.valueOf(chartIndicesPerGroup),
       Integer.valueOf(numSyms))
 
     val numGroups = (chartIndices.length + chartIndicesPerGroup - 1)/chartIndicesPerGroup * chartIndicesPerGroup
@@ -120,12 +53,12 @@ case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel:
     val intBufferCI = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, chartIndices.length)
     val evCI = intBufferCI.write(queue, 0, chartIndices.length, ptrCI, false, events:_*)
 
-    setRootScoresKernel.setArgs(charts.data.safeBuffer, intBufferCI, 
-      Integer.valueOf(chartIndices.length), Integer.valueOf(charts.rows), 
+    setRootScoresKernel.setArgs(charts.data.safeBuffer, intBufferCI,
+      Integer.valueOf(chartIndices.length), Integer.valueOf(charts.rows),
       Integer.valueOf(root), java.lang.Float.valueOf(one))
 
     val ev = setRootScoresKernel.enqueueNDRange(queue, Array(chartIndices.length), evCI)
-    
+
     ev.invokeUponCompletion(new Runnable() {
       def run() = { ptrCI.release(); intBufferCI.release();}
     })
@@ -133,13 +66,13 @@ case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel:
   }
 
   def getMasks(
-    masks: CLMatrix[Int],
-    inside: CLMatrix[Float],
-    outside: CLMatrix[Float],
-    firstOutside: Int,
-    chartIndices: Array[Int],
-    root: Int, threshold: Float,
-    events: CLEvent*)(implicit queue: CLQueue):CLEvent = {
+                masks: CLMatrix[Int],
+                inside: CLMatrix[Float],
+                outside: CLMatrix[Float],
+                firstOutside: Int,
+                chartIndices: Array[Int],
+                root: Int, threshold: Float,
+                events: CLEvent*)(implicit queue: CLQueue):CLEvent = {
     require(masks.rows == fieldSize)
     require(masks.cols == inside.cols)
     require(masks.cols == outside.cols)
@@ -150,12 +83,12 @@ case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel:
 
     println(chartIndices.toIndexedSeq)
 
-    getMasksKernel.setArgs(masks.data.safeBuffer, inside.data.safeBuffer, outside.data.safeBuffer, Integer.valueOf(outside.offset), intBufferCI, 
-      Integer.valueOf(chartIndices.length-1), Integer.valueOf(inside.rows), 
+    getMasksKernel.setArgs(masks.data.safeBuffer, inside.data.safeBuffer, outside.data.safeBuffer, Integer.valueOf(outside.offset), intBufferCI,
+      Integer.valueOf(chartIndices.length-1), Integer.valueOf(inside.rows),
       Integer.valueOf(root), java.lang.Float.valueOf(threshold), LocalSize.ofIntArray(fieldSize * inside.cols))
 
     val ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices.length-1, groupSize), Array(1, groupSize), evCI)
-    
+
     ev.invokeUponCompletion(new Runnable() {
       def run() = { ptrCI.release(); intBufferCI.release();}
     })
@@ -165,15 +98,30 @@ case class CLParserUtilKernels(sumGrammarKernel: CLKernel, sumSplitPointsKernel:
 
 }
 
-object CLParserUtilKernels {
+object CLParserUtils {
   def read(zf: ZipFile)(implicit ctxt: CLContext) = {
     sys.error("haven't figured out the right way to store ints!")
     //CLParserUtilKernels(ZipUtil.readKernel(zf, "sumGrammarKernel"), ZipUtil.readKernel(zf, "sumSplitPointsKernel"))
   }
 
-  def make[C, L](generator: CLParserKernelGenerator[C, L])(implicit context: CLContext) = {
+  def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
+    lazy val sumCellsKernel = context.createProgram {
+      s"""
+      |__kernel void sumCells(__global float* dest, int destOff, int destRowSize,
+      |                       __global float* src, int srcOff, int srcRowSize, int numLabels, int rowsToDo) {
+      |    int row = get_global_id(0);
+      |    int label = get_global_id(1);
+      |    if ((row < rowsToDo) & (label < numLabels)) {
+      |      float score = ${semiring.add("dest[label * destRowSize + row + destOff]", "src[label * srcRowSize + row + srcOff]")};
+      |      dest[label * destRowSize + row + destOff] = score;
+      |    }
+      |}
+    """.stripMargin
+    }.build().createKernels().head
+
+
     val blockSize = 32
-    val groupSize = if( context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel")) {
+    val groupSize = if(context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel")) {
       1
     } else {
       val x = context.getDevices.head.getMaxWorkItemSizes
@@ -181,11 +129,11 @@ object CLParserUtilKernels {
       math.min(size0, blockSize).toInt
     }
 
-    val numSymsRounded = (generator.structure.termIndex.size.max(generator.structure.nontermIndex.size) + 31)/32 * 32
+    val numSymsRounded = (structure.termIndex.size.max(structure.nontermIndex.size) + 31)/32 * 32
 
     val prog = context.createProgram(splitPointSumKernel(blockSize, numSymsRounded))
 
-    CLParserUtilKernels(generator.gen.mkKernel(generator.gen.IR.sumGrammarCellsKernel),
+    CLParserUtils(sumCellsKernel,
       prog.createKernel("splitPointSum"),
       prog.createKernel("setRootScores"),
       prog.createKernel("computeMasks"),
@@ -193,7 +141,7 @@ object CLParserUtilKernels {
   }
 
   def splitPointSumKernel(blockSize: Int, numSyms: Int) = {
-   """#define BLOCK_SIZE """ + blockSize + """
+    """#define BLOCK_SIZE """ + blockSize + """
 
    float sumUp(__local float* scores, float _acc, int first, int last) {
      float m = _acc;
@@ -203,11 +151,11 @@ object CLParserUtilKernels {
 
 #ifdef LOGSUM
      if(m != -INFINITY) {
-       float adj = exp(_acc - m); 
+       float adj = exp(_acc - m);
        for(int i = first; i < last; i += 1) {
          adj += exp(scores[i] - m);
        }
-       m += log(adj); 
+       m += log(adj);
      }
 #endif
 
@@ -215,7 +163,7 @@ object CLParserUtilKernels {
    }
 
 __kernel void splitPointSum(__global float* parent, __global float* chart,
-                        __global int* chartIndex, __global int* parentIndex, 
+                        __global int* chartIndex, __global int* parentIndex,
                         int parentStride, int numChartIndices, int chartIndicesPerGroup, int numSyms) {
 
   int groupid = get_group_id(0);
@@ -260,7 +208,7 @@ __kernel void splitPointSum(__global float* parent, __global float* chart,
       // at this point, todo columns of scores are read in.
       // min(myParentIndices[currentChartIndex+1] - myParentIndices[0] - firstRow, todo) belong to the currentChartIndex.
       // what's left belongs to the next chartIndex (or the ones thereafter)
-      // TODO: if the number of rows for one chart index is bigger than BLOCK_SIZE, then we'll need to 
+      // TODO: if the number of rows for one chart index is bigger than BLOCK_SIZE, then we'll need to
       // write to global memory multiple times. we might consider caching in local memory instead.
       // this will only happen on nvidia cards for numSplits > 32, and since we're mostly doing length 40,
       // whatever.
@@ -270,7 +218,7 @@ __kernel void splitPointSum(__global float* parent, __global float* chart,
         // for each symbol, sum over all rows (split points) for this chart index
         // then flush the score back to the right place for this chart symbol.
         for(int sym = tid + firstSym;  sym < lastSym; sym += numThreads) {
-          int localSym = sym - firstSym; 
+          int localSym = sym - firstSym;
           float result = sumUp(scores[localSym], chart[myChartIndices[currentChartIndex] * numSyms + sym], row, lastRowForThisChartCell);
           //if(result != -INFINITY) printf("%d %d %d %d %d %d %f %f\n", myChartIndices[currentChartIndex], currentChartIndex, firstRow, row, lastRowForThisChartCell, sym, result, chart[myChartIndices[currentChartIndex] * numSyms + sym]);
           chart[myChartIndices[currentChartIndex] * numSyms + sym] = result;
@@ -360,7 +308,7 @@ __kernel void computeMasks(__global mask_t* masksOut,
       masksOut[cell] = fieldBuf[0];
   }
 }
-"""
+                                        """
 
 
 

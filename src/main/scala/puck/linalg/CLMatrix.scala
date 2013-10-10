@@ -3,11 +3,8 @@ package linalg
 
 import breeze.linalg._
 import java.{lang=>jl}
-import java.nio._
 import scala.reflect.ClassTag
-import scala.Vector
 import breeze.util.ArrayUtil
-import breeze.generic.CanTransformValues
 import breeze.storage.DefaultArrayValue
 import breeze.math.Ring
 import breeze.linalg.operators._
@@ -15,9 +12,6 @@ import breeze.linalg.support._
 import puck.util._
 import com.nativelibs4java.opencl._
 import org.bridj.Pointer
-import com.nativelibs4java.opencl.util.Primitive
-import scala.concurrent._
-import ExecutionContext.Implicits.global
 import kernels._
 
 /**
@@ -42,12 +36,12 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
                                                          val data: CLBufferMappedPointerPair[V],
                                                          val offset: Int,
                                                          val majorStride: Int,
-                                                         val isTranspose: Boolean = false)(implicit val queue: CLQueue)
+                                                         val isTranspose: Boolean = false)(implicit val queue: CLQueue, ct: ClassTag[V])
   extends Matrix[V] with MatrixLike[V, CLMatrix[V]] {
   /** Creates a matrix with the specified data array, rows, and columns. */
-  def this(rows: Int, cols: Int)(implicit man: ClassTag[V], context: CLContext, queue: CLQueue) = this(rows, cols, context.createBuffer[V](CLMem.Usage.InputOutput, man.runtimeClass.asInstanceOf[Class[V]], rows * cols), 0, rows)
+  def this(rows: Int, cols: Int)(implicit ct: ClassTag[V], context: CLContext, queue: CLQueue) = this(rows, cols, context.createBuffer[V](CLMem.Usage.InputOutput, ct.runtimeClass.asInstanceOf[Class[V]], rows * cols), 0, rows)
   /** Creates a matrix with the specified data array, rows, and columns. Data must be column major */
-  def this(rows: Int, cols: Int, data: CLBuffer[V], offset: Int = 0)(implicit queue: CLQueue) = this(rows, cols, data, offset, rows)
+  def this(rows: Int, cols: Int, data: CLBuffer[V], offset: Int = 0)(implicit queue: CLQueue, ct: ClassTag[V]) = this(rows, cols, data, offset, rows)
 
 
 
@@ -164,15 +158,20 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
 
   }
 
+  private implicit def ctx = queue.getContext
+
   /** Forcibly releases the buffer. Note that other slices will be invalidated! */
   def release() = {
     data.release()
   }
 
-  def toDense(implicit ct: ClassTag[V]) = {
+  def toDense = {
     new DenseMatrix(rows, cols, new NativeArray(data.mappedPointer + offset, footprint).toArray, 0, majorStride, isTranspose)
   }
 
+  def copy: Matrix[V] = {
+    ???
+  }
 }
 
 object CLMatrix extends LowPriorityNativeMatrix {
@@ -183,12 +182,12 @@ object CLMatrix extends LowPriorityNativeMatrix {
                                                                       dav: DefaultArrayValue[V],
                                                                       context: CLContext, queue: CLQueue): CLMatrix[V] = {
     val data = new Array[V](rows * cols)
-    if(rows * cols != 0 && data(0) != implicitly[DefaultArrayValue[V]].value)
+    if(dav != null && rows * cols != 0 && data(0) != implicitly[DefaultArrayValue[V]].value)
       ArrayUtil.fill(data, 0, data.length, implicitly[DefaultArrayValue[V]].value)
     create(rows, cols, data)
   }
 
-  def create[@specialized(Int, Float, Double) V:DefaultArrayValue](rows: Int, cols: Int, data: Array[V])(implicit  ct: ClassTag[V],
+  def create[@specialized(Int, Float, Double) V](rows: Int, cols: Int, data: Array[V])(implicit ct: ClassTag[V],
                                                                                                          dav: DefaultArrayValue[V],
                                                                                                          context: CLContext, queue: CLQueue): CLMatrix[V] = {
     val ptr = Pointer.pointerToArray[V](data)
@@ -198,7 +197,7 @@ object CLMatrix extends LowPriorityNativeMatrix {
 
 
   // slices
-  implicit def canSliceRow[V]: CanSlice2[CLMatrix[V], Int, ::.type, CLMatrix[V]] = {
+  implicit def canSliceRow[V:ClassTag]: CanSlice2[CLMatrix[V], Int, ::.type, CLMatrix[V]] = {
     new CanSlice2[CLMatrix[V], Int, ::.type, CLMatrix[V]] {
       def apply(m: CLMatrix[V], row: Int, ignored: ::.type) = {
         import m.queue
@@ -211,7 +210,7 @@ object CLMatrix extends LowPriorityNativeMatrix {
     }
   }
 
-  implicit def canSliceCol[V]: CanSlice2[CLMatrix[V], ::.type, Int, CLMatrix[V]] = {
+  implicit def canSliceCol[V:ClassTag]: CanSlice2[CLMatrix[V], ::.type, Int, CLMatrix[V]] = {
     new CanSlice2[CLMatrix[V], ::.type, Int, CLMatrix[V]] {
       def apply(m: CLMatrix[V], ignored: ::.type, col: Int) = {
         import m.queue
@@ -224,7 +223,7 @@ object CLMatrix extends LowPriorityNativeMatrix {
     }
   }
 
-  implicit def canSliceRows[V]: CanSlice2[CLMatrix[V], Range, ::.type, CLMatrix[V]] = {
+  implicit def canSliceRows[V:ClassTag]: CanSlice2[CLMatrix[V], Range, ::.type, CLMatrix[V]] = {
     new CanSlice2[CLMatrix[V], Range, ::.type, CLMatrix[V]] {
       def apply(m: CLMatrix[V], rows: Range, ignored: ::.type) = {
         import m.queue
@@ -234,13 +233,13 @@ object CLMatrix extends LowPriorityNativeMatrix {
           val first = rows.head
           new CLMatrix(rows.length, m.cols, m.data, m.offset + first, m.majorStride)
         } else {
-          canSliceCols(m.t, ::, rows).t
+          canSliceCols.apply (m.t, ::, rows).t
         }
       }
     }
   }
 
-  implicit def canSliceCols[V]: CanSlice2[CLMatrix[V], ::.type, Range, CLMatrix[V]] = {
+  implicit def canSliceCols[V:ClassTag]: CanSlice2[CLMatrix[V], ::.type, Range, CLMatrix[V]] = {
     new CanSlice2[CLMatrix[V], ::.type, Range, CLMatrix[V]] {
       def apply(m: CLMatrix[V], ignored: ::.type, cols: Range) = {
         import m.queue
@@ -249,13 +248,13 @@ object CLMatrix extends LowPriorityNativeMatrix {
           val first = cols.head
           new CLMatrix(m.rows, cols.length, m.data, m.offset + first * m.majorStride, m.majorStride * cols.step)
         } else {
-          canSliceRows(m.t, cols, ::).t
+          canSliceRows.apply(m.t, cols, ::).t
         }
       }
     }
   }
 
-  implicit def canSliceColsAndRows[V]: CanSlice2[CLMatrix[V], Range, Range, CLMatrix[V]] = {
+  implicit def canSliceColsAndRows[V:ClassTag]: CanSlice2[CLMatrix[V], Range, Range, CLMatrix[V]] = {
     new CanSlice2[CLMatrix[V], Range, Range, CLMatrix[V]] {
       def apply(m: CLMatrix[V], rows: Range, cols: Range) = {
         import m.queue
@@ -263,10 +262,10 @@ object CLMatrix extends LowPriorityNativeMatrix {
         else if(!m.isTranspose) {
           require(rows.step == 1, "Sorry, we can't support row ranges with step sizes other than 1 for non transposed matrices")
           val first = cols.head
-          new CLMatrix(rows.length, cols.length, m.data, m.offset + first * m.rows + rows.head, m.majorStride * cols.step)(m.queue)
+          new CLMatrix(rows.length, cols.length, m.data, m.offset + first * m.rows + rows.head, m.majorStride * cols.step)(m.queue, implicitly)
         } else {
           require(cols.step == 1, "Sorry, we can't support col ranges with step sizes other than 1 for transposed matrices")
-          canSliceColsAndRows(m.t, cols, rows).t
+          canSliceColsAndRows.apply(m.t, cols, rows).t
         }
       }
     }
@@ -282,7 +281,7 @@ object CLMatrix extends LowPriorityNativeMatrix {
     }
   }
 
-  implicit def canSlicePartOfRow[V]: CanSlice2[CLMatrix[V], Int, Range, CLMatrix[V]] = {
+  implicit def canSlicePartOfRow[V:ClassTag]: CanSlice2[CLMatrix[V], Int, Range, CLMatrix[V]] = {
     new CanSlice2[CLMatrix[V], Int, Range, CLMatrix[V]] {
       def apply(m: CLMatrix[V], row: Int, cols: Range) = {
         import m.queue
@@ -293,13 +292,13 @@ object CLMatrix extends LowPriorityNativeMatrix {
           new CLMatrix(1, cols.length, m.data, m.offset + first * m.rows + row, m.majorStride * cols.step)
         } else {
           require(cols.step == 1, "Sorry, we can't support col ranges with step sizes other than 1 for transposed matrices")
-          canSlicePartOfCol(m.t, cols, row).t
+          canSlicePartOfCol.apply(m.t, cols, row).t
         }
       }
     }
   }
 
-  implicit def canSlicePartOfCol[V]: CanSlice2[CLMatrix[V], Range, Int, CLMatrix[V]] = {
+  implicit def canSlicePartOfCol[V:ClassTag]: CanSlice2[CLMatrix[V], Range, Int, CLMatrix[V]] = {
     new CanSlice2[CLMatrix[V], Range, Int, CLMatrix[V]] {
       def apply(m: CLMatrix[V], rows: Range, col: Int) = {
         import m.queue
@@ -307,7 +306,7 @@ object CLMatrix extends LowPriorityNativeMatrix {
         else if(!m.isTranspose) {
           new CLMatrix(col * m.rows + m.offset + rows.head, 1, m.data, rows.step, rows.length)
         } else {
-          val m2 = canSlicePartOfRow(m.t, col, rows).t
+          val m2 = canSlicePartOfRow.apply(m.t, col, rows).t
           m2(::, 0)
         }
       }
@@ -383,10 +382,10 @@ object CLMatrix extends LowPriorityNativeMatrix {
   }
   */
 
-  implicit def canTranspose[V]: CanTranspose[CLMatrix[V], CLMatrix[V]] = {
+  implicit def canTranspose[V:ClassTag]: CanTranspose[CLMatrix[V], CLMatrix[V]] = {
     new CanTranspose[CLMatrix[V], CLMatrix[V]] {
       def apply(from: CLMatrix[V]) = {
-        new CLMatrix(data = from.data, offset = from.offset, cols = from.rows, rows = from.cols, majorStride = from.majorStride, isTranspose = !from.isTranspose)(from.queue)
+        new CLMatrix(data = from.data, offset = from.offset, cols = from.rows, rows = from.cols, majorStride = from.majorStride, isTranspose = !from.isTranspose)(from.queue, implicitly)
       }
     }
   }

@@ -1,6 +1,5 @@
-package puck.newparser
+package puck.parser
 
-import generator.RuleStructure
 import puck.linalg.CLMatrix
 import breeze.collection.mutable.TriangularArray
 
