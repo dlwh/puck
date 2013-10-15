@@ -83,11 +83,13 @@ case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKer
 
     println(chartIndices.toIndexedSeq)
 
-    getMasksKernel.setArgs(masks.data.safeBuffer, inside.data.safeBuffer, outside.data.safeBuffer, Integer.valueOf(outside.offset), intBufferCI,
-      Integer.valueOf(chartIndices.length-1), Integer.valueOf(inside.rows),
-      Integer.valueOf(root), java.lang.Float.valueOf(threshold), LocalSize.ofIntArray(fieldSize * inside.cols))
+    println(fieldSize * inside.cols * 4 + " sz", inside.cols + " " + fieldSize)
 
-    val ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices.length-1, groupSize), Array(1, groupSize), evCI)
+    getMasksKernel.setArgs(masks.data.safeBuffer, inside.data.safeBuffer, outside.data.safeBuffer, Integer.valueOf(outside.offset), intBufferCI,
+      Integer.valueOf(chartIndices(chartIndices.length-1)), Integer.valueOf(inside.rows),
+      Integer.valueOf(root), java.lang.Float.valueOf(threshold), LocalSize.ofIntArray(fieldSize * groupSize))
+
+    val ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices(chartIndices.length-1), groupSize), Array(1, groupSize), evCI)
 
     ev.invokeUponCompletion(new Runnable() {
       def run() = { ptrCI.release(); intBufferCI.release();}
@@ -249,6 +251,16 @@ __kernel void setRootScores(__global float* charts, __global int* indices, int n
 #define NUM_FIELDS """ + (numSyms/32) + """
 typedef struct { int fields[NUM_FIELDS]; } mask_t;
 
+// each global_id(0) corresponds to a single sentence.
+// we have some number of workers for each sentence, global_size(1)
+// for each cell in the sentence, each worker in parallel reads a sym from a cell, thresholds it, and then sets
+// the mask if the threshold is exceeded. Each worker has its own mask for its share of the cells. At the
+// end, the masks are or'd together and written out.
+// the masks are then
+// indices(i) is the first cell in the i'th sentence
+// indices(i+1)-1 is the last cell in the i'th sentence
+// the last cell has the root score.
+//
 __kernel void computeMasks(__global mask_t* masksOut,
   __global float* inside,
   __global float* _outside,
@@ -258,6 +270,7 @@ __kernel void computeMasks(__global mask_t* masksOut,
   if(id >= numIndices) return;
 
   __global float* outside = _outside + _outsideOff;
+
 
   int threadid = get_local_id(1);
   int numThreads = get_local_size(1);
@@ -272,28 +285,25 @@ __kernel void computeMasks(__global mask_t* masksOut,
     rootScore = inside[(lastChartIndex-1) * numSyms + root];
   }
   barrier(CLK_LOCAL_MEM_FENCE);
-  printf("XXX %f %d %d\n", rootScore, firstChartIndex, lastChartIndex-1);
-  for(int sym = threadid; sym < numSyms; sym += numThreads) {
-    printf("QQQ %d %f %d %d\n", sym, inside[(lastChartIndex-1) * numSyms + sym], firstChartIndex, lastChartIndex-1);
-  }
 
-  float cutoff = thresh * rootScore;
+  float cutoff = rootScore + thresh;
 
   for(int cell = firstChartIndex + cellOffset; cell < lastChartIndex; cell += numBlocks) {
     mask_t myMask;
     for(int i = 0; i < NUM_FIELDS; ++i) {
       myMask.fields[i] = 0;
     }
+
     for(int sym = threadid; sym < numSyms; sym += numThreads) {
       float score = inside[cell * numSyms + sym] + outside[cell * numSyms + sym];
-      if(score >= cutoff) {
-        myMask.fields[sym/32] |= (1<<(sym%32));
-      }
+      int shouldSet = score >= cutoff;
+      if(shouldSet)
+        printf("XXX %d %f %f %f\n",sym, score,rootScore, thresh);
+      // sets the bit if shouldSet
+      myMask.fields[sym/32] |= (myMask.fields[sym/32] & ~(1 << (sym%32))) | (shouldSet<<(sym%32));
     }
 
-    for(int i = 0; i < NUM_FIELDS; ++i) {
-      fieldBuf[threadid].fields[i] = myMask.fields[i];
-    }
+    fieldBuf[threadid] = myMask;
     barrier(CLK_LOCAL_MEM_FENCE);
 
     for(int size = numThreads; size > 1; size -= size / 2) {
@@ -302,6 +312,7 @@ __kernel void computeMasks(__global mask_t* masksOut,
           fieldBuf[jj].fields[i] |= fieldBuf[size - size/2 + jj].fields[i];
         }
       }
+      barrier(CLK_LOCAL_MEM_FENCE);
     }
 
     if(threadid == 0)

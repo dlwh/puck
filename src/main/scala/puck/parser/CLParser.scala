@@ -34,8 +34,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       batch <- getBatches(sentences).iterator
       evi = inside(batch)
       ev2 = if(needsOutside) outside(batch, evi) else evi
- //     (masks, ev3) = computeViterbiMasks(batch, ev2)
-//      t <- extractParses(batch, masks, ev3)
+      (masks, ev3) = computeViterbiMasks(batch, ev2)
+      t <- extractParses(batch, masks, ev3)
     } yield {
       null
     }}.toIndexedSeq
@@ -319,7 +319,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   private def computeViterbiMasks(batch: Batch, events: CLEvent*):(CLMatrix[Int], CLEvent) = synchronized {
     val masks = new CLMatrix[Int](cellSize/32, devParent.size / (cellSize/32), devParent.data.asCLIntBuffer)
     println(batch.insideCharts(0).top.rootIndex + " " + batch.sentences(0).length + " " + TriangularArray.arraySize(batch.sentences(0).length))
-    val ev = data.util.getMasks(masks(::, 0 until batch.cellTotals.last), devCharts(::, 0 until batch.cellTotals.last), devCharts(::, batch.cellTotals.last until batch.cellTotals.last * 2), batch.outsideCharts.get.head.bot.globalRowOffset, batch.cellTotals, structure.root, 0.0f, events:_*)
+    val ev = data.util.getMasks(masks(::, 0 until batch.cellTotals.last), devCharts(::, 0 until batch.cellTotals.last), devCharts(::, batch.cellTotals.last until batch.cellTotals.last * 2), batch.outsideCharts.get.head.bot.globalRowOffset, batch.cellTotals, structure.root, -1E-3f, events:_*)
     masks -> ev
   }
 
@@ -341,6 +341,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
       def recTop(begin: Int, end: Int):BinarizedTree[L] = {
         val column:DenseVector[Int] = top(::, ChartHalf.chartIndex(begin, end, length))
+        assert(column.valuesIterator.exists(_ != 0))
         println(s"tt $begin $end ${asBitSet(column)} $column")
         val x = firstSetBit(column:DenseVector[Int])
         if(x == -1) {
