@@ -15,7 +15,7 @@ object GrammarPartitioner {
     def target(r: BinaryRule[Int]) = this match {
       case Parent => r.parent
       case LeftChild => r.left
-      case RightChild => r.parent
+      case RightChild => r.right
     }
   }
   case object Parent extends TargetLabel

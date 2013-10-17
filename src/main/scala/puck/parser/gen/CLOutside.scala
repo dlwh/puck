@@ -5,6 +5,7 @@ import com.nativelibs4java.opencl._
 import java.util.zip._
 import epic.trees._
 import puck.parser.{RuleSemiring, RuleStructure}
+import java.io.{PrintStream, FileOutputStream}
 
 // These kernels assume that the parent and the child named (L or R) are swapped
 // in the workspace tables.
@@ -99,11 +100,19 @@ object CLOutsideKernels {
     }
 
     val outside_L_TTKernels = structure.partitionsBothTermRules_LeftChild.zipWithIndex.map { case (partition, i) =>
-      parserGen.binaryRuleApplication(partition.map(rotateLeftToParent), "outside_L_tt_binaries"+i)
+      val x = parserGen.binaryRuleApplication(partition.map(rotateLeftToParent), "outside_L_tt_binaries"+i)
+      val out = new PrintStream(new FileOutputStream(x.getFunctionName+".cl"))
+      out.println(x.getProgram.getSource)
+      out.close()
+      x
     }
 
     val outside_R_TTKernels = structure.partitionsBothTermRules_RightChild.zipWithIndex.map { case (partition, i) =>
-      parserGen.binaryRuleApplication(partition.map(rotateRightToParent), "outside_R_tt_binaries"+i)
+      val x = parserGen.binaryRuleApplication(partition.map(rotateRightToParent), "outside_R_tt_binaries"+i)
+      val out = new PrintStream(new FileOutputStream(x.getFunctionName+".cl"))
+      out.println(x.getProgram.getSource)
+      out.close()
+      x
     }
 
     val outsideNUKernels = IndexedSeq(structure.unaryRules).zipWithIndex.map { case (partition, i) =>

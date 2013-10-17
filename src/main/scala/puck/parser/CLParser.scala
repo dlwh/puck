@@ -17,6 +17,7 @@ import epic.trees._
 import java.io.OutputStream
 import java.util.zip.{ZipFile, ZipOutputStream}
 import scala.collection.mutable.ArrayBuffer
+import java.util
 
 /**
  * TODO
@@ -37,7 +38,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       (masks, ev3) = computeViterbiMasks(batch, ev2)
       t <- extractParses(batch, masks, ev3)
     } yield {
-      null
+      t
     }}.toIndexedSeq
   }
 
@@ -299,9 +300,9 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     }
 
     ev = outsideTT_L.doUpdates(batch, 1, ev)
-    ev = outsideTT_R.doUpdates(batch, 1, ev)
     ev = outsideNT_R.doUpdates(batch, 1, ev)
     ev = outsideTN_L.doUpdates(batch, 1, ev)
+    ev = outsideTT_R.doUpdates(batch, 1, ev)
 
     debugCharts(batch)
 
@@ -318,8 +319,18 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
   private def computeViterbiMasks(batch: Batch, events: CLEvent*):(CLMatrix[Int], CLEvent) = synchronized {
     val masks = new CLMatrix[Int](cellSize/32, devParent.size / (cellSize/32), devParent.data.asCLIntBuffer)
-    println(batch.insideCharts(0).top.rootIndex + " " + batch.sentences(0).length + " " + TriangularArray.arraySize(batch.sentences(0).length))
-    val ev = data.util.getMasks(masks(::, 0 until batch.cellTotals.last), devCharts(::, 0 until batch.cellTotals.last), devCharts(::, batch.cellTotals.last until batch.cellTotals.last * 2), batch.outsideCharts.get.head.bot.globalRowOffset, batch.cellTotals, structure.root, -1E-3f, events:_*)
+    val prof = new CLProfiler("viterbi")
+    prof.tick()
+    val ev = data.util.getMasks(masks(::, 0 until batch.cellTotals.last),
+      devCharts(::, 0 until batch.cellTotals.last),
+      devCharts(::, batch.cellTotals.last until batch.cellTotals.last * 2),
+      batch.outsideCharts.get.head.bot.globalRowOffset, batch.cellTotals, structure.root, -1E-4f, events:_*)
+    prof += ev
+    if(profile) {
+      queue.finish()
+      prof.tock()
+      println(s"Masks $prof")
+    }
     masks -> ev
   }
 
@@ -338,17 +349,14 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       val bot = dmMasks(::, botBegin until botEnd)
       val top = dmMasks(::, topBegin until topEnd)
 
-
       def recTop(begin: Int, end: Int):BinarizedTree[L] = {
         val column:DenseVector[Int] = top(::, ChartHalf.chartIndex(begin, end, length))
-        assert(column.valuesIterator.exists(_ != 0))
-        println(s"tt $begin $end ${asBitSet(column)} $column")
         val x = firstSetBit(column:DenseVector[Int])
         if(x == -1) {
           assert(begin == end - 1, column.toString + " " + x + " " + (begin,end))
           recBot(begin, end)
         } else {
-          println(s"t $begin $end ${structure.nontermIndex.get(x)}")
+          assert(column.valuesIterator.exists(_ != 0), (begin, end))
           val label = structure.nontermIndex.get(x)
           val t = recBot(begin, end)
           new UnaryTree(label, t, IndexedSeq.empty, Span(begin, end))
@@ -356,16 +364,12 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       }
       def recBot(begin: Int, end: Int):BinarizedTree[L] = {
         val column:DenseVector[Int] = bot(::, ChartHalf.chartIndex(begin, end, length))
-        println(s"bb $begin $end ${asBitSet(column)} $column")
         val x = firstSetBit(column:DenseVector[Int])
-        println(s"b $begin $end")
         if(begin == end-1) {
           val label = structure.termIndex.get(x)
-          println(s"b $begin $end ${structure.termIndex.get(x)}")
           NullaryTree(label, Span(begin, end))
         } else {
           val label = structure.nontermIndex.get(x)
-          println(s"b $begin $end ${structure.nontermIndex.get(x)}")
           for(split <- (begin+1) until end) {
             val left = (if(begin == split - 1) bot else top)(::, ChartHalf.chartIndex(begin, split, length))
             val right = (if(end == split + 1) bot else top)(::, ChartHalf.chartIndex(split, end, length))
@@ -373,7 +377,13 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
               return BinaryTree(label, recTop(begin, split), recTop(split, end), Span(begin, end))
             }
           }
-          error("nothing here!")
+          error("nothing here!" + " "+ (begin, end) +
+            {for(split <- (begin+1) until end) yield {
+              val left = (if(begin == split - 1) bot else top)(::, ChartHalf.chartIndex(begin, split, length))
+              val right = (if(end == split + 1) bot else top)(::, ChartHalf.chartIndex(split, end, length))
+              (ChartHalf.chartIndex(begin, split, length), ChartHalf.chartIndex(split, end, length), split, left,right)
+
+            }})
         }
       }
 
@@ -383,23 +393,40 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   }
 
   def asBitSet(col: DenseVector[Int]):java.util.BitSet = {
-    val byteBuffer = ByteBuffer.allocate(col.copy.data.length * 4);
-    val intBuffer = byteBuffer.asIntBuffer();
-    intBuffer.put(col.copy.data);
-    java.util.BitSet.valueOf(byteBuffer)
-  }
-
-  def firstSetBit(col: DenseVector[Int]):Int = {
-    var i = 0;
-    var fsb = -1;
-    while(i < col.length && fsb < 0) {
-      if(col(i) < 0)
-        fsb = 31
-      else fsb = BitHacks.log2(col(i))
+    val bitset = new java.util.BitSet()
+    var i = 0
+    var fsb = -1
+    val cc = col.copy
+    while(i < cc.length) {
+      while(cc(i) != 0) {
+        if(cc(i) < 0)
+          fsb = 31
+        else
+          fsb = BitHacks.log2(cc(i))
+        bitset.set(i * 32 + fsb)
+        cc(i) &= ~(1<<fsb)
+      }
       i += 1
     }
 
-    (i * 32) + fsb;
+    bitset
+  }
+
+  def firstSetBit(col: DenseVector[Int]):Int = {
+    var i = 0
+    var fsb = -1
+    while(i < col.length && fsb < 0) {
+      if(col(i) < 0)
+        fsb = 31
+      else if(col(i) == 0)
+        fsb = -1
+      else
+        fsb = BitHacks.log2(col(i))
+      i += 1
+    }
+
+    if(fsb < 0) -1
+    else ((i-1) * 32) + fsb;
   }
 
 
@@ -631,16 +658,16 @@ object CLParser extends Logging {
     val kern = fromSimpleGrammar[AnnotatedLabel, AnnotatedLabel, String](grammar, profile)
     val train = transformed.slice(1, 1+numToParse).map(_.words)
 
-    val partsX = kern.partitions(train)
-    println(partsX)
+   // val partsX = kern.partitions(train)
+  //  println(partsX)
     var timeIn = System.currentTimeMillis()
     val parts = kern.parse(train)
     var timeOut = System.currentTimeMillis()
     println(parts)
     println(s"CL Parsing took: ${(timeOut-timeIn)/1000.0}")
     if(parseTwice) {
-      timeIn = timeOut
-      val parts2 = kern.partitions(train)
+      timeIn = System.currentTimeMillis()
+      val parts2 = kern.parse(train)
       timeOut = System.currentTimeMillis()
       println(parts2)
       println(s"CL Parsing took x2: ${(timeOut-timeIn)/1000.0}")
