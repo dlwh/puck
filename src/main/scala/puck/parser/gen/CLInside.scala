@@ -15,8 +15,8 @@ case class CLInsideKernels(insideNNKernels: IndexedSeq[CLKernel],
                            insideTUKernels: IndexedSeq[CLKernel]) {
 
   def write(out: ZipOutputStream) {
-    ZipUtil.addKernelSet(out, "insideNN", insideNNKernels)
     ZipUtil.addKernelSet(out, "insideNT", insideNTKernels)
+    ZipUtil.addKernelSet(out, "insideNN", insideNNKernels)
     ZipUtil.addKernelSet(out, "insideTN", insideTNKernels)
     ZipUtil.addKernelSet(out, "insideTT", insideTTKernels)
     ZipUtil.addKernelSet(out, "insideNU", insideNUKernels)
@@ -26,8 +26,8 @@ case class CLInsideKernels(insideNNKernels: IndexedSeq[CLKernel],
 
 object CLInsideKernels {
   def read(in: ZipFile)(implicit context: CLContext) = {
-    val insideNN = ZipUtil.readKernelSet(in, "insideNN")
     val insideNT = ZipUtil.readKernelSet(in, "insideNT")
+    val insideNN = ZipUtil.readKernelSet(in, "insideNN")
     val insideTN = ZipUtil.readKernelSet(in, "insideTN")
     val insideTT = ZipUtil.readKernelSet(in, "insideTT")
     val insideNU = ZipUtil.readKernelSet(in, "insideNU")

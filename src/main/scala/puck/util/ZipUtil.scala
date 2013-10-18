@@ -5,6 +5,7 @@ import java.io._
 import com.nativelibs4java.opencl._
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
+import java.util
 
 
 object ZipUtil {
@@ -60,18 +61,22 @@ object ZipUtil {
 
   def readKernelSet(in: ZipFile, name: String)(implicit ctxt: CLContext): IndexedSeq[CLKernel] = {
     val entries = deserializeEntry[IndexedSeq[String]](in.getInputStream(in.getEntry(name+"/entries")))
+    println(entries)
     for(name <- entries) yield { readKernel(in, name) }
   }
 
 
   def addKernel(out: ZipOutputStream, name: String, k: CLKernel) {
-    val binaries = k.getProgram.getBinaries 
+    println(name, k.getFunctionName)
+    val binaries = k.getProgram.getBinaries
     val source = k.getProgram.getSource
     val sigs = ArrayBuffer[String]()
     for( (dev, data) <- binaries.asScala) {
       val sig = dev.createSignature
       sigs += sig
-      ZipUtil.addEntry(out, s"$name.binary.$sig", data)
+      val name1 = s"$name.binary.$sig"
+      println(name1,name)
+      ZipUtil.addEntry(out, name1, data)
     }
     ZipUtil.serializedEntry(out, s"$name.sigs", sigs)
     ZipUtil.addEntry(out, s"$name.name", k.getFunctionName.getBytes("utf-8"))
@@ -89,8 +94,10 @@ object ZipUtil {
 
     val kname = new String(readEntry(in, in.getEntry(s"$name.name")))
     val ksource = new String(readEntry(in, in.getEntry(s"$name.source")))
+    println(kname,ksource, binaries.toMap.mapValues(k => util.Arrays.hashCode(k)), sigs)
 
-    val prog = HackZipUtilHelper.newCLProgram(ctxt, binaries.toMap.asJava, ksource)
+    val prog = ctxt.createProgram(binaries.toMap.asJava, ksource)
+    println(prog.createKernels().map(_.getFunctionName).toList)
     prog.createKernel(kname)
   }
 }

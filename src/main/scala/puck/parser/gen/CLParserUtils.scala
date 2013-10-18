@@ -12,7 +12,9 @@ case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKer
   def write(out: ZipOutputStream) {
     ZipUtil.addKernel(out, "sumGrammarKernel", sumGrammarKernel)
     ZipUtil.addKernel(out, "sumSplitPointsKernel", sumSplitPointsKernel)
-    sys.error("haven't figured out the right way to store ints!")
+    ZipUtil.addKernel(out, "setRootScoresKernel", setRootScoresKernel)
+    ZipUtil.addKernel(out, "getMasksKernel", getMasksKernel)
+    ZipUtil.serializedEntry(out, "ints", Array(splitPointsBlockSize, groupSize, fieldSize))
   }
 
   def sumSplitPoints(parent: CLMatrix[Float], chart: CLMatrix[Float], chartIndices: Array[Int], parentIndices: Array[Int], chartIndicesPerGroup: Int, events: CLEvent*)(implicit queue: CLQueue) = {
@@ -102,8 +104,13 @@ case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKer
 
 object CLParserUtils {
   def read(zf: ZipFile)(implicit ctxt: CLContext) = {
-    sys.error("haven't figured out the right way to store ints!")
-    //CLParserUtilKernels(ZipUtil.readKernel(zf, "sumGrammarKernel"), ZipUtil.readKernel(zf, "sumSplitPointsKernel"))
+    val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("ints")))
+    CLParserUtils(ZipUtil.readKernel(zf, "sumGrammarKernel"),
+      ZipUtil.readKernel(zf, "sumSplitPointsKernel"),
+      ZipUtil.readKernel(zf, "setRootScoresKernel"),
+      ZipUtil.readKernel(zf, "getMasksKernel"),
+      ints(0), ints(1), ints(2)
+    )
   }
 
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {

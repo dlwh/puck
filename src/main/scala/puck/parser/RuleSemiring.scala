@@ -8,7 +8,7 @@ trait RuleSemiring extends Serializable {
 
   def accumulator(ids: Set[Int]):Accumulator
 
-  def timesIsIdempotent: Boolean
+  def plusIsIdempotent: Boolean
 
   def fromLogSpace(float: Float): Float
 
@@ -32,7 +32,7 @@ object ViterbiRuleSemiring extends RuleSemiring {
 
   def fromLogSpace(float: Float): Float = float
 
-  def timesIsIdempotent: Boolean = true
+  def plusIsIdempotent: Boolean = true
 
   def zeroString = if(zero == Float.NegativeInfinity) "-INFINITY" else zero.toString
 

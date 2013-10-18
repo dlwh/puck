@@ -15,7 +15,7 @@ import epic.parser._
 import breeze.config.CommandLineParser
 import epic.trees._
 import java.io.OutputStream
-import java.util.zip.{ZipFile, ZipOutputStream}
+import java.util.zip.{ZipInputStream, ZipFile, ZipOutputStream}
 import scala.collection.mutable.ArrayBuffer
 import java.util
 
@@ -746,7 +746,7 @@ object CLParserData {
       val score = grammar.ruleScoreArray(grammar.refinements.rules.project(r))(grammar.refinements.rules.localize(r))
       viterbi.fromLogSpace(score.toFloat)
     }
-    new CLParserData(grammar, structure, viterbi, ruleScores, inside, outside, util, viterbi.timesIsIdempotent)
+    new CLParserData(grammar, structure, viterbi, ruleScores, inside, outside, util, viterbi.plusIsIdempotent)
   }
 
   def read[C, L, W](file: ZipFile)(implicit context: CLContext) = {
@@ -758,7 +758,7 @@ object CLParserData {
     val util = CLParserUtils.read(file)
     val scores = ZipUtil.deserializeEntry[Array[Float]](file.getInputStream(file.getEntry("scores")))
 
-    CLParserData(gr, structure, semiring, scores, inside, outside, util, ???)
+    CLParserData(gr, structure, semiring, scores, inside, outside, util, semiring.plusIsIdempotent)
   }
 }
 

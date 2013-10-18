@@ -48,7 +48,6 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
   def apply(row: Int, col: Int) = {
     if(row < 0 || row >= rows) throw new IndexOutOfBoundsException((row,col) + " not in [0,"+rows+") x [0," + cols+")")
     if(col < 0 || col >= cols) throw new IndexOutOfBoundsException((row,col) + " not in [0,"+rows+") x [0," + cols+")")
-    println("zzz", linearIndex(row, col))
     data.mappedPointer.get(linearIndex(row, col))
   }
 
