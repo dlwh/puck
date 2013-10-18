@@ -100,19 +100,11 @@ object CLOutsideKernels {
     }
 
     val outside_L_TTKernels = structure.partitionsBothTermRules_LeftChild.zipWithIndex.map { case (partition, i) =>
-      val x = parserGen.binaryRuleApplication(partition.map(rotateLeftToParent), "outside_L_tt_binaries"+i)
-      val out = new PrintStream(new FileOutputStream(x.getFunctionName+".cl"))
-      out.println(x.getProgram.getSource)
-      out.close()
-      x
+       parserGen.binaryRuleApplication(partition.map(rotateLeftToParent), "outside_L_tt_binaries"+i)
     }
 
     val outside_R_TTKernels = structure.partitionsBothTermRules_RightChild.zipWithIndex.map { case (partition, i) =>
-      val x = parserGen.binaryRuleApplication(partition.map(rotateRightToParent), "outside_R_tt_binaries"+i)
-      val out = new PrintStream(new FileOutputStream(x.getFunctionName+".cl"))
-      out.println(x.getProgram.getSource)
-      out.close()
-      x
+      parserGen.binaryRuleApplication(partition.map(rotateRightToParent), "outside_R_tt_binaries"+i)
     }
 
     val outsideNUKernels = IndexedSeq(structure.unaryRules).zipWithIndex.map { case (partition, i) =>
