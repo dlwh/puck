@@ -27,9 +27,23 @@ class CLParserDataTest extends FunSuite {
     out.close()
     val in = new ZipFile(tempFile)
     val input = CLParserData.read(in)
-    assert(data.grammar === input.grammar)
+    assert(data.grammar.signature === input.grammar.signature)
   }
 
+  /*
+  test("debuggin") {
+    implicit val clcontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.GPU)
+    val ap = clcontext.createProgram("__kernel void add(int a, int b, __global int* c) { *c = a + b; }")
+    ap.createKernel("add")
+    val addBins = ap.getBinaries
+    val subBins = clcontext.createProgram("__kernel void sub(int a, int b, __global int* c) { *c = a - b; }").getBinaries
+    val ap2 = clcontext.createProgram(addBins, "__kernel void add(int a, int b, __global int* c) { *c = a + b; }")
+    ap2.createKernel("add")
+    val sp2 = clcontext.createProgram(subBins, "__kernel void sub(int a, int b, __global int* c) { *c = a - b; }")
+   sp2.setCached(true)
+    sp2.createKernel("sub")
+  }
+  */
 }
 
 object TstTreebank {
