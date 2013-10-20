@@ -36,6 +36,16 @@ object ZipUtil {
     addEntry(out, name, barr.toByteArray, compress)
   }
 
+  def serializeProgram(out: ZipOutputStream, name: String, kernel: CLProgram, compress: Boolean = true) {
+    val barr = new ByteArrayOutputStream()
+    kernel.store(barr)
+    addEntry(out, name, barr.toByteArray, compress)
+  }
+
+  def deserializeProgram(in: ZipFile, name: String)(implicit context: CLContext):CLProgram = {
+    context.loadProgram(in.getInputStream(in.getEntry(name)))
+  }
+
   def deserializeEntry[T](in: InputStream) = {
     val oin = new ObjectInputStream(in)
     val t = oin.readObject().asInstanceOf[T]
@@ -66,33 +76,15 @@ object ZipUtil {
 
 
   def addKernel(out: ZipOutputStream, name: String, k: CLKernel) {
-    val binaries = k.getProgram.getBinaries
-    val source = k.getProgram.getSource
-    val sigs = ArrayBuffer[String]()
-    for( (dev, data) <- binaries.asScala) {
-      val sig = dev.createSignature
-      sigs += sig
-      val name1 = s"$name.binary.$sig"
-      ZipUtil.addEntry(out, name1, data)
-    }
-    ZipUtil.serializedEntry(out, s"$name.sigs", sigs)
+    ZipUtil.serializeProgram(out, s"$name.program", k.getProgram)
     ZipUtil.addEntry(out, s"$name.name", k.getFunctionName.getBytes("utf-8"))
-    ZipUtil.addEntry(out, s"$name.source", source.getBytes("utf-8"))
   }
 
 
   def readKernel(in: ZipFile, name: String)(implicit ctxt: CLContext):CLKernel = {
-    val sigs = deserializeEntry[IndexedSeq[String]](in.getInputStream(in.getEntry(name+".sigs"))).toSet
-    val binaries = for(dev <- ctxt.getDevices;
-      sig = dev.createSignature if  sigs(sig);
-      entry <- Option(in.getEntry(s"$name.binary.$sig"))) yield {
-      dev -> readEntry(in, entry)
-    }
-
+    val prog= ZipUtil.deserializeProgram(in, s"$name.program")
     val kname = new String(readEntry(in, in.getEntry(s"$name.name")))
-    val ksource = new String(readEntry(in, in.getEntry(s"$name.source")))
 
-    val prog = ctxt.createProgram(binaries.toMap.asJava, ksource)
     prog.setCached(false)
     prog.createKernel(kname)
   }

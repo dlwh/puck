@@ -14,7 +14,7 @@ import epic.trees.annotations.{Xbarize, TreeAnnotator, FilterAnnotations}
 import epic.parser._
 import breeze.config.CommandLineParser
 import epic.trees._
-import java.io.OutputStream
+import java.io.{BufferedOutputStream, FileOutputStream, File, OutputStream}
 import java.util.zip.{ZipInputStream, ZipFile, ZipOutputStream}
 import scala.collection.mutable.ArrayBuffer
 import java.util
@@ -632,7 +632,9 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 object CLParser extends Logging {
 
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = Xbarize(),
-                    useGPU: Boolean = true, profile: Boolean = false, numToParse: Int = 1000, jvmParse: Boolean = false, parseTwice: Boolean = false)
+                    useGPU: Boolean = true, profile: Boolean = false,
+                    numToParse: Int = 1000, codeCache: File = new File("grammar.grz"),
+                    jvmParse: Boolean = false, parseTwice: Boolean = false)
 
   def main(args: Array[String]) = {
     import ParserParams.JointParams
@@ -643,7 +645,11 @@ object CLParser extends Logging {
     println("Training Parser...")
     println(params)
     val transformed = params.treebank.trainTrees.par.map { ti => annotator(ti) }.seq.toIndexedSeq
-    val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = GenerativeParser.extractGrammar(AnnotatedLabel.TOP, transformed)
+    val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = {
+      GenerativeParser.extractGrammar(AnnotatedLabel.TOP, transformed)
+    }
+
+
 
 
     implicit val context = if(useGPU) {
@@ -655,7 +661,21 @@ object CLParser extends Logging {
     }
     println(context)
 
-    val kern = fromSimpleGrammar[AnnotatedLabel, AnnotatedLabel, String](grammar, profile)
+    var parserData:CLParserData[AnnotatedLabel, AnnotatedLabel, String] = if(codeCache != null && codeCache.exists()) {
+      CLParserData.read(new ZipFile(codeCache))
+    } else {
+      null
+    }
+
+    if(parserData == null || parserData.grammar.signature != grammar.signature) {
+      println("Regenerating parser data")
+      parserData = CLParserData.make(grammar)
+      if(codeCache != null) {
+        parserData.write(new BufferedOutputStream(new FileOutputStream(codeCache)))
+      }
+    }
+
+    val kern = fromParserData[AnnotatedLabel, AnnotatedLabel, String](parserData, profile)
     val train = transformed.slice(1, 1+numToParse).map(_.words)
 
    // val partsX = kern.partitions(train)
@@ -696,6 +716,11 @@ object CLParser extends Logging {
 
   def fromSimpleGrammar[L, L2, W](grammar: SimpleRefinedGrammar[L, L2, W], profile: Boolean = false)(implicit context: CLContext) = {
     val data: CLParserData[L, L2, W] = CLParserData.make(grammar)
+    fromParserData(data, profile)
+  }
+
+
+  def fromParserData[L, L2, W](data: CLParserData[L, L2, W], profile: Boolean)(implicit context: CLContext): CLParser[L, L2, W] = {
     val kern = new CLParser[L, L2, W](data, profile = profile)
     kern
   }
