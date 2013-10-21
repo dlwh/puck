@@ -634,7 +634,8 @@ object CLParser extends Logging {
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = Xbarize(),
                     useGPU: Boolean = true, profile: Boolean = false,
                     numToParse: Int = 1000, codeCache: File = new File("grammar.grz"),
-                    jvmParse: Boolean = false, parseTwice: Boolean = false)
+                    jvmParse: Boolean = false, parseTwice: Boolean = false,
+                    textGrammarPrefix: String = null)
 
   def main(args: Array[String]) = {
     import ParserParams.JointParams
@@ -645,8 +646,10 @@ object CLParser extends Logging {
     println("Training Parser...")
     println(params)
     val transformed = params.treebank.trainTrees.par.map { ti => annotator(ti) }.seq.toIndexedSeq
-    val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = {
+    val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = if(textGrammarPrefix == null) {
       GenerativeParser.extractGrammar(AnnotatedLabel.TOP, transformed)
+    } else {
+      SimpleRefinedGrammar.parseBerkeleyText(textGrammarPrefix, -10)
     }
 
 

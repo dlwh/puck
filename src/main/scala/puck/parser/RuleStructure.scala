@@ -47,13 +47,6 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
     nontermIndex foreach {symIndex.index _}
     termIndex foreach {symIndex.index _}
 
-    val rootSet = syms --rhsSyms
-    if (rootSet.size > 1) {
-      throw new RuntimeException("Too many roots in the grammar: " + rootSet)
-    } else if(rootSet.size == 0) {
-      throw new RuntimeException("No root symbol in the grammar!" + rhsSyms)
-    }
-
     val root = grammar.root
 
     def doIndex(sym: L) = { val nt = nontermIndex(sym); if (nt >= 0) nt -> false else termIndex(sym) -> true }
@@ -98,9 +91,9 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   def labelIndexToTerminal(label: Int) = reverseIndex(label)
   def labelIndexToNonterminal(label: Int) = reverseIndex(label)
 
-  lazy val partitionsParent: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
-  lazy val partitionsLeftChild: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, targetLabel = GrammarPartitioner.LeftChild).toIndexedSeq
-  lazy val partitionsRightChild: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, targetLabel = GrammarPartitioner.RightChild).toIndexedSeq
+  lazy val partitionsParent     : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
+  lazy val partitionsLeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, targetLabel = GrammarPartitioner.LeftChild).toIndexedSeq
+  lazy val partitionsRightChild : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, targetLabel = GrammarPartitioner.RightChild).toIndexedSeq
 
   lazy val partitionsLeftTermRules           : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(leftTermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
   lazy val partitionsLeftTermRules_LeftChild : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(leftTermRules, targetLabel = GrammarPartitioner.LeftChild).toIndexedSeq
