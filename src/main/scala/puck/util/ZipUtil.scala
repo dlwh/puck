@@ -6,6 +6,7 @@ import com.nativelibs4java.opencl._
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.JavaConverters._
 import java.util
+import puck.parser.CLParser
 
 
 object ZipUtil {
@@ -47,7 +48,14 @@ object ZipUtil {
   }
 
   def deserializeEntry[T](in: InputStream) = {
-    val oin = new ObjectInputStream(in)
+    val loader = classOf[CLParser[_, _, _]].getClassLoader
+    val oin = new ObjectInputStream(in) {
+      @throws(classOf[IOException])
+      @throws(classOf[ClassNotFoundException])
+      protected override def  resolveClass(objectStreamClass: ObjectStreamClass): Class[_] = {
+        Class.forName(objectStreamClass.getName, true, loader)
+      }
+    }
     val t = oin.readObject().asInstanceOf[T]
     t
   }

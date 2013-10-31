@@ -9,7 +9,7 @@ import puck.linalg.CLMatrix
 import java.nio.{ByteBuffer, FloatBuffer}
 import puck.linalg.kernels.CLMatrixTransposeCopy
 import breeze.collection.mutable.TriangularArray
-import breeze.linalg.{DenseVector, DenseMatrix}
+import breeze.linalg.{Counter, DenseVector, DenseMatrix}
 import epic.trees.annotations.{Xbarize, TreeAnnotator, FilterAnnotations}
 import epic.parser._
 import breeze.config.CommandLineParser
@@ -311,6 +311,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     if(profile) {
       queue.finish()
       allProfilers.foreach(_.tock())
+      Thread.sleep(15)
       allProfilers.foreach(p => println(s"Outside $p"))
     }
 
@@ -445,8 +446,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
   private val insideBot = {(b: Batch, s: Int) =>  b.insideCharts(s).bot}
   private val insideTop = {(b: Batch, s: Int) =>  b.insideCharts(s).top}
-  //private val outsideBot = {(b: Batch, s: Int) =>  b.insideCharts(s).bot}
-  //private val outsideTop = {(b: Batch, s: Int) =>  b.insideCharts(s).top}
   private val outsideBot = {(b: Batch, s: Int) =>  b.outsideCharts.get(s).bot}
   private val outsideTop = {(b: Batch, s: Int) =>  b.outsideCharts.get(s).top}
 

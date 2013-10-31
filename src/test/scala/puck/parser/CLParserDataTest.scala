@@ -1,14 +1,18 @@
 package puck.parser
 
 import org.scalatest.FunSuite
-import com.nativelibs4java.opencl.{CLPlatform, JavaCL}
+import com.nativelibs4java.opencl.{CLProgram, CLPlatform, JavaCL}
 import epic.trees._
 import epic.parser._
 import epic.trees.TreeInstance
 import epic.trees.annotations.Xbarize
 import scala.collection.mutable.ArrayBuffer
-import java.io.{FileOutputStream, File, ByteArrayInputStream, ByteArrayOutputStream}
+import java.io._
 import java.util.zip.ZipFile
+import epic.trees.StandardTreeProcessor
+import epic.trees.TreeInstance
+import epic.trees.annotations.Xbarize
+import java.util
 
 /**
  * TODO
@@ -30,20 +34,26 @@ class CLParserDataTest extends FunSuite {
     assert(data.grammar.signature === input.grammar.signature)
   }
 
-  /*
   test("debuggin") {
     implicit val clcontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.GPU)
-    val ap = clcontext.createProgram("__kernel void add(int a, int b, __global int* c) { *c = a + b; }")
-    ap.createKernel("add")
-    val addBins = ap.getBinaries
-    val subBins = clcontext.createProgram("__kernel void sub(int a, int b, __global int* c) { *c = a - b; }").getBinaries
-    val ap2 = clcontext.createProgram(addBins, "__kernel void add(int a, int b, __global int* c) { *c = a + b; }")
-    ap2.createKernel("add")
-    val sp2 = clcontext.createProgram(subBins, "__kernel void sub(int a, int b, __global int* c) { *c = a - b; }")
-   sp2.setCached(true)
-    sp2.createKernel("sub")
+    implicit val cpucontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.CPU)
+
+    val src = "__kernel void add(int a, int b, __global int* c) { *c = a + b; }"
+    val ap = clcontext.createProgram(src)
+    val tempFile = File.createTempFile("xxx","parserdata")
+    tempFile.deleteOnExit()
+    val out = new FileOutputStream(tempFile)
+    CLProgram.writeBinaries(ap.getBinaries, src, "XXX", out)
+    out.close()
+    val in = new FileInputStream(tempFile)
+    // NPE in CLProgram here:
+    // devices is null if the signature isn't present.
+    //      List<CLDevice> devices = devicesBySignature.get(signature);
+    // for (CLDevice device : devices)
+    // ret.put(device, data);
+    CLProgram.readBinaries(util.Arrays.asList(cpucontext.getDevices:_*), "XXX", in)
+    in.close()
   }
-  */
 }
 
 object TstTreebank {

@@ -1,5 +1,6 @@
 package puck.util
 import com.nativelibs4java.opencl._
+import com.nativelibs4java.opencl.CLEvent.CommandExecutionStatus
 
 class CLProfiler(name: String) {
   private var startingWallTime:Long = -1L
@@ -46,9 +47,13 @@ class CLProfiler(name: String) {
   }
 
   override def toString() = {
-    val eventTimes = events.filter(_ ne null).map(e => (e.getProfilingCommandEnd - e.getProfilingCommandStart)/1E9).sum
-    val queueTimes = events.filter(_ ne null).map(e => (e.getProfilingCommandStart - e.getProfilingCommandQueued)/1E9).sum
-    val submitTimes = events.filter(_ ne null).map(e => (e.getProfilingCommandEnd - e.getProfilingCommandSubmit)/1E9).sum
+    val badEvents = events.filter(_ ne null).filter(_.getCommandExecutionStatus != CommandExecutionStatus.Complete)
+    if(badEvents.nonEmpty) {
+      println(s"Bunch of bad events! ${badEvents.map{x => x -> x.getCommandExecutionStatus}}")
+    }
+    val eventTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandEnd - e.getProfilingCommandStart)/1E9).sum
+    val queueTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandStart - e.getProfilingCommandQueued)/1E9).sum
+    val submitTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandEnd - e.getProfilingCommandSubmit)/1E9).sum
     f"Profile $name: ${totalWallTime / 1000.}%.3fs wall time. ${eventTimes}%.6fs processing time. ${queueTimes}%.6fs in queue. ${submitTimes}%.6fs submit."
   }
 

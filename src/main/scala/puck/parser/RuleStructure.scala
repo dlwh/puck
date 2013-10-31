@@ -95,17 +95,17 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   lazy val partitionsLeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, targetLabel = GrammarPartitioner.LeftChild).toIndexedSeq
   lazy val partitionsRightChild : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(nontermRules, targetLabel = GrammarPartitioner.RightChild).toIndexedSeq
 
-  lazy val partitionsLeftTermRules           : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(leftTermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
-  lazy val partitionsLeftTermRules_LeftChild : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(leftTermRules, targetLabel = GrammarPartitioner.LeftChild).toIndexedSeq
-  lazy val partitionsLeftTermRules_RightChild: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(leftTermRules, targetLabel = GrammarPartitioner.RightChild).toIndexedSeq
+  lazy val partitionsLeftTermRules            : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(leftTermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
+  lazy val partitionsLeftTermRules_LeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(leftTermRules, targetLabel = GrammarPartitioner.LeftChild).toIndexedSeq
+  lazy val partitionsLeftTermRules_RightChild : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(leftTermRules, targetLabel = GrammarPartitioner.RightChild).toIndexedSeq
 
-  lazy val partitionsRightTermRules: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(rightTermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
-  lazy val partitionsRightTermRules_LeftChild: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(rightTermRules, targetLabel = GrammarPartitioner.LeftChild).toIndexedSeq
-  lazy val partitionsRightTermRules_RightChild: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(rightTermRules, targetLabel = GrammarPartitioner.RightChild).toIndexedSeq
+  lazy val partitionsRightTermRules            : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(rightTermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
+  lazy val partitionsRightTermRules_LeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(rightTermRules, targetLabel = GrammarPartitioner.LeftChild).toIndexedSeq
+  lazy val partitionsRightTermRules_RightChild : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(rightTermRules, targetLabel = GrammarPartitioner.RightChild).toIndexedSeq
 
-  lazy val partitionsBothTermRules: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(bothTermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
-  lazy val partitionsBothTermRules_LeftChild: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(bothTermRules, targetLabel = GrammarPartitioner.LeftChild).toIndexedSeq
-  lazy val partitionsBothTermRules_RightChild: IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(bothTermRules, targetLabel = GrammarPartitioner.RightChild).toIndexedSeq
+  lazy val partitionsBothTermRules             : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(bothTermRules, targetLabel = GrammarPartitioner.Parent).toIndexedSeq
+  lazy val partitionsBothTermRules_LeftChild   : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(bothTermRules, targetLabel = GrammarPartitioner.LeftChild).toIndexedSeq
+  lazy val partitionsBothTermRules_RightChild  : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = GrammarPartitioner.partition(bothTermRules, targetLabel = GrammarPartitioner.RightChild).toIndexedSeq
 
   def numRules = grammar.index.size
 
@@ -136,7 +136,6 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
     val mask = pruningMaskForSyms(syms)
     val checks = mask.zipWithIndex.filter(_._1.nonEmpty).map{ case (mask, field) => "(((mask)).allowed[" + field + "] &(" + mask +"))"}
     checks.mkString("#define IS_ANY_IN_BLOCK_" +id +"(mask)  (", "||", ")")
-
   }
 }
 
