@@ -34,6 +34,7 @@ class CLParserDataTest extends FunSuite {
     assert(data.grammar.signature === input.grammar.signature)
   }
 
+  /*
   test("debuggin") {
     implicit val clcontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.GPU)
     implicit val cpucontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.CPU)
@@ -54,6 +55,7 @@ class CLParserDataTest extends FunSuite {
     CLProgram.readBinaries(util.Arrays.asList(cpucontext.getDevices:_*), "XXX", in)
     in.close()
   }
+  */
 }
 
 object TstTreebank {

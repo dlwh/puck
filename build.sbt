@@ -1,7 +1,5 @@
 import AssemblyKeys._ // put this at the top of the file
 
-assemblySettings
-
 organization := "org.scalanlp"
 
 name := "puck"
@@ -30,6 +28,8 @@ resolvers ++= Seq(
   "Sonatype Snapshots" at "https://oss.sonatype.org/content/repositories/snapshots/"
 )
 
+assemblySettings
+
 mergeStrategy in assembly <<= (mergeStrategy in assembly) { (old) =>
   {
     case PathList("META-INF", xs @ _*) =>
@@ -46,8 +46,11 @@ mergeStrategy in assembly <<= (mergeStrategy in assembly) { (old) =>
           MergeStrategy.filterDistinctLines
         case _ => MergeStrategy.deduplicate
       }
-    case x => MergeStrategy.first
+      case x => MergeStrategy.first
   }
 }
 
-seq(assemblySettings: _*)
+excludedJars in assembly <<= (fullClasspath in assembly) map { cp => 
+  cp filter {_.data.getName.contains("dx-")}
+}
+

@@ -229,10 +229,14 @@ object CLMatrix extends LowPriorityNativeMatrix {
         import m.queue
         if(rows.isEmpty) new CLMatrix(0, 0, m.data, 0, 0)
         else if(!m.isTranspose) {
+          assert(rows.head >= 0)
+          assert(rows.last < m.rows)
           require(rows.step == 1, "Sorry, we can't support row ranges with step sizes other than 1")
           val first = rows.head
           new CLMatrix(rows.length, m.cols, m.data, m.offset + first, m.majorStride)
         } else {
+          assert(rows.head >= 0)
+          assert(rows.last < m.rows)
           canSliceCols.apply (m.t, ::, rows).t
         }
       }
@@ -245,6 +249,8 @@ object CLMatrix extends LowPriorityNativeMatrix {
         import m.queue
         if(cols.isEmpty) new CLMatrix(m.rows, 0, m.data, 0, 1)
         else if(!m.isTranspose) {
+          assert(cols.head >= 0)
+          assert(cols.last < m.cols)
           val first = cols.head
           new CLMatrix(m.rows, cols.length, m.data, m.offset + first * m.majorStride, m.majorStride * cols.step)
         } else {
@@ -260,6 +266,10 @@ object CLMatrix extends LowPriorityNativeMatrix {
         import m.queue
         if(rows.isEmpty || cols.isEmpty) new CLMatrix(0, 0, m.data, 0, 1)
         else if(!m.isTranspose) {
+          assert(cols.head >= 0)
+          assert(cols.last < m.cols)
+          assert(rows.head >= 0)
+          assert(rows.last < m.rows)
           require(rows.step == 1, "Sorry, we can't support row ranges with step sizes other than 1 for non transposed matrices")
           val first = cols.head
           new CLMatrix(rows.length, cols.length, m.data, m.offset + first * m.rows + rows.head, m.majorStride * cols.step)(m.queue, implicitly)
