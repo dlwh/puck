@@ -685,30 +685,31 @@ object CLParser extends Logging {
     var timeIn = System.currentTimeMillis()
     val parts = kern.parse(train)
     var timeOut = System.currentTimeMillis()
-    println(parts)
+    println(parts zip train map {case (k,v) => k render v})
     println(s"CL Parsing took: ${(timeOut-timeIn)/1000.0}")
     if(parseTwice) {
       timeIn = System.currentTimeMillis()
       val parts2 = kern.parse(train)
       timeOut = System.currentTimeMillis()
-      println(parts2)
+      println(parts2 zip train map {case (k,v) => k render v})
       println(s"CL Parsing took x2: ${(timeOut-timeIn)/1000.0}")
     }
     if(jvmParse) {
-      timeIn = timeOut
+      val parser = SimpleChartParser(AugmentedGrammar.fromRefined(grammar), if(kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
+      timeIn = System.currentTimeMillis()
       val margs = train.map { w =>
-        val m = ChartMarginal(AugmentedGrammar.fromRefined(grammar).anchor(w), maxMarginal= kern.isViterbi)
+        val m = parser.apply(w)
         /*
         printChart(m, true, false)
         printChart(m, false, false)
         printChart(m, true, true)
         printChart(m, false, true)
         */
-        m.logPartition.toFloat
+        m -> w
       }
       timeOut = System.currentTimeMillis()
       println(s"Scala Parsing took: ${(timeOut-timeIn)/1000.0}")
-      println(margs)
+      println(margs.map{case (m ,w) => m render w})
     }
 
     kern.release()
