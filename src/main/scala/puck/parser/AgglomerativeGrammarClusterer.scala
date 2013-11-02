@@ -4,37 +4,45 @@ import scala.collection.{immutable, mutable}
 import collection.immutable.BitSet
 import epic.trees.BinaryRule
 
-object GrammarPartitioner {
-  sealed trait TargetLabel {
-    def clusterPieces(r: BinaryRule[Int]) = this match {
-      case Parent => BitSet(r.left) -> BitSet(r.right)
-      case LeftChild => BitSet(r.parent) -> BitSet(r.right)
-      case RightChild => BitSet(r.parent) -> BitSet(r.left)
+import GrammarClusterer._
+
+object AgglomerativeGrammarClusterer extends GrammarClusterer {
+
+
+  def partition(rules: IndexedSeq[(BinaryRule[Int], Int)],
+                maxPartitionLabelSize: Int = 100,
+                numRestarts: Int = 100,
+                targetLabel: TargetLabel = Parent): IndexedSeq[immutable.IndexedSeq[(BinaryRule[Int], Int)]] = {
+
+
+    var clusters_x = rules.groupBy(r => targetLabel.target(r._1))
+
+    val initialClusters = clusters_x.map { case (p:Int, r: IndexedSeq[(BinaryRule[Int], Int)]) =>
+      val (g1, g2) = r.map(rr => targetLabel.clusterPieces(rr._1)).unzip
+      p -> Partition(BitSet(p), g1.reduce( _ ++ _), g2.reduce(_ ++ _))
     }
 
-    def target(r: BinaryRule[Int]) = this match {
-      case Parent => r.parent
-      case LeftChild => r.left
-      case RightChild => r.right
+    val clusters = ((0 until numRestarts).par.aggregate(restart(initialClusters, maxPartitionLabelSize, 1.0))({ (c1, seed) =>
+      val r = new java.util.Random(seed)
+      val c2 = restart(initialClusters, maxPartitionLabelSize, .3 + .7 * r.nextDouble)
+      if(c1.values.map(_.badness).sum < c2.values.map(_.badness).sum) c1 else c2
+    }, {(c1, c2) => if(c1.values.map(_.badness).sum < c2.values.map(_.badness).sum) c1 else c2}))
+
+    println("Best badness: " + targetLabel  + " " + clusters.values.iterator.map(_.badness).sum)
+
+    var p = 0
+    for( Partition(targets, g1, g2, _) <- clusters.values.iterator) {
+      println("Partition " + p)
+      println("G1: " + g1.size + " " + g1)
+      println("G2: " + g2.size + " "  + g2)
+      println("targets: " + targets)
+      p += 1
     }
+
+    assert(clusters.values.iterator.flatMap(_.targets).toSet.size == clusters_x.keySet.size)
+    clusters.values.iterator.map(p => p.targets.flatMap(clusters_x).toIndexedSeq).toIndexedSeq
   }
-  case object Parent extends TargetLabel
-  case object LeftChild extends TargetLabel
-  case object RightChild extends TargetLabel
 
-  case class Partition(targets: BitSet, group1: BitSet, group2: BitSet, isPure: Boolean = true) {
-    def merge(p: Partition, maxSize: Int) = {
-      Some(Partition(targets | p.targets, group1 | p.group1, group2 | p.group2, false))
-      .filter(np => !np.isTooBig(maxSize)  || np.badness <= math.max(this.badness, p.badness))
-    }
-
-    def tSize = targets.size
-
-    def badness = group1.size + group2.size
-
-
-    def isTooBig(maxSize: Int) = !isPure && (group1.size + group2.size + targets.size) >maxSize
-  }
 
   private def restart(initialClusters: Map[Int, Partition], maxPartitionLabelSize: Int, random: =>Double) = {
 
@@ -96,37 +104,18 @@ object GrammarPartitioner {
     clusters
   }
 
-  def partition(rules: IndexedSeq[(BinaryRule[Int], Int)],
-                maxPartitionLabelSize: Int = 100,
-                numRestarts: Int = 100,
-                targetLabel: TargetLabel = Parent) = {
-
-
-    var clusters_x = rules.groupBy(r => targetLabel.target(r._1))
-
-     val initialClusters = clusters_x.map { case (p:Int, r: IndexedSeq[(BinaryRule[Int], Int)]) =>
-        val (g1, g2) = r.map(rr => targetLabel.clusterPieces(rr._1)).unzip
-        p -> Partition(BitSet(p), g1.reduce( _ ++ _), g2.reduce(_ ++ _))
-      }
-
-    val clusters = ((0 until numRestarts).par.aggregate(restart(initialClusters, maxPartitionLabelSize, 1.0))({ (c1, seed) =>
-      val r = new java.util.Random(seed)
-      val c2 = restart(initialClusters, maxPartitionLabelSize, .3 + .7 * r.nextDouble)
-      if(c1.values.map(_.badness).sum < c2.values.map(_.badness).sum) c1 else c2
-    }, {(c1, c2) => if(c1.values.map(_.badness).sum < c2.values.map(_.badness).sum) c1 else c2}))
-
-    println("Best badness: " + targetLabel  + " " + clusters.values.iterator.map(_.badness).sum)
-
-    var p = 0
-    for( Partition(targets, g1, g2, _) <- clusters.values.iterator) {
-      println("Partition " + p)
-      println("G1: " + g1.size + " " + g1)
-      println("G2: " + g2.size + " "  + g2)
-      println("targets: " + targets)
-      p += 1
+  case class Partition(targets: BitSet, group1: BitSet, group2: BitSet, isPure: Boolean = true) {
+    def merge(p: Partition, maxSize: Int) = {
+      Some(Partition(targets | p.targets, group1 | p.group1, group2 | p.group2, false))
+        .filter(np => !np.isTooBig(maxSize)  || np.badness <= math.max(this.badness, p.badness))
     }
 
-    assert(clusters.values.iterator.flatMap(_.targets).toSet.size == clusters_x.keySet.size)
-    clusters.values.iterator.map(p => p.targets.flatMap(clusters_x).toIndexedSeq)
+    def tSize = targets.size
+
+    def badness = group1.size + group2.size
+
+
+    def isTooBig(maxSize: Int) = !isPure && (group1.size + group2.size + targets.size) >maxSize
   }
+
 }
