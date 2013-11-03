@@ -10,13 +10,9 @@ import scala.collection.immutable
  *
  * @author dlwh
  **/
-trait GrammarClusterer {
-
+trait GrammarClusterer extends Serializable {
   def partition(rules: IndexedSeq[(BinaryRule[Int], Int)],
-                maxPartitionLabelSize: Int = 100,
-                numRestarts: Int = 100,
                 targetLabel: TargetLabel = Parent): IndexedSeq[immutable.IndexedSeq[(BinaryRule[Int], Int)]]
-
 }
 
 object GrammarClusterer {
