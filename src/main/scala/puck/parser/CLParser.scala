@@ -33,8 +33,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[L]] = synchronized {
     {for {
-      batch <- getBatches(sentences).iterator
-      //batch = addMasksToBatches(nomaskbatch)
+      xbatch <- getBatches(sentences).iterator
+      batch = addMasksToBatches(xbatch)
       evi = inside(batch)
       ev2 = if(needsOutside) outside(batch, evi) else evi
       (vimasks, ev3) = computeViterbiMasks(batch, ev2)
@@ -290,6 +290,10 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       allProfilers.foreach(_.tock())
       allProfilers.foreach(p => println(s"Inside $p"))
     }
+    if(pruned != 0.0)
+      println(s"Pruning: $pruned $notpruned ${pruned/(pruned * 1.0 + notpruned)}")
+    pruned = 0
+    notpruned = 0
 
     ev
   }
@@ -325,12 +329,16 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       Thread.sleep(15)
       allProfilers.foreach(p => println(s"Outside $p"))
     }
+    if(pruned != 0.0)
+      println(s"Pruning: $pruned $notpruned ${pruned/(pruned * 1.0 + notpruned)}")
+    pruned = 0
+    notpruned = 0
 
     ev
   }
 
   private def computeViterbiMasks(batch: Batch, events: CLEvent*):(CLMatrix[Int], CLEvent) = synchronized {
-    computeMasks(batch, -1E-4f, "viterbi", events:_*)
+    computeMasks(batch, -1E-3f, "viterbi", events:_*)
   }
 
   private def computeMasks(batch: Batch, threshold: Float, name: String, events: CLEvent*):(CLMatrix[Int], CLEvent) = synchronized {
@@ -475,6 +483,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   private lazy val outsideNN_R = new BinaryUpdateManager(data.outside.get.outside_R_NNKernels, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1))
 
 
+  var pruned, notpruned = 0
 
   private class BinaryUpdateManager(kernels: IndexedSeq[CLKernel],
                                     parentChart: (Batch,Int)=>ChartHalf,
@@ -493,10 +502,11 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       ev = events
       this.span = span
 
+
       for{
         sent <- 0 until batch.numSentences
         start <- 0 to batch.sentences(sent).length - span
-        if batch.allowedSpan(sent, start, start + span)
+        if {val x = batch.allowedSpan(sent, start, start + span); if(!x) pruned += 1;x}
         split <- ranger(start, start + span, batch.sentences(sent).length) if split >= 0 && split <= batch.sentences(sent).length
       } {
         val end = start + span
@@ -506,8 +516,12 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
         if(leftChildAllowed && rightChildAllowed) {
           val leftChild = if(split < start) leftChart(batch, sent).treeIndex(split,start) else leftChart(batch, sent).treeIndex(start, split)
           val rightChild = if(split < end) rightChart(batch, sent).treeIndex(split,end) else rightChart(batch, sent).treeIndex(end, split)
+          notpruned += 1
           enqueue(parentTi, leftChild, rightChild)
+        } else {
+          pruned += 1
         }
+
       }
 
       if(offset > 0) {
@@ -689,6 +703,8 @@ object CLParser extends Logging {
       val parser = SimpleChartParser(AugmentedGrammar.fromRefined(grammar), if(kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
       val parts2 = train.par.map(parser.charts(_).logPartition)
       println(parts2)
+      println("max difference: " + (DenseVector(partsX.map(_.toDouble):_*) - DenseVector(parts2.seq:_*)).norm(Double.PositiveInfinity))
+      System.exit(0)
     }
     var timeIn = System.currentTimeMillis()
     val parts = kern.parse(train)
