@@ -136,7 +136,8 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
 
   private case class Batch(lengthTotals: Array[Int],
                            insideCellOffsets: Array[Int],
-                           sentences: IndexedSeq[IndexedSeq[W]]) {
+                           sentences: IndexedSeq[IndexedSeq[W]],
+                           allowedSpan: (Int, Int, Int)=>Boolean = (_, _, _) => true) {
     def totalLength = lengthTotals.last
     def numSentences = sentences.length
     val maxLength = sentences.map(_.length).max
@@ -327,13 +328,17 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   }
 
   private def computeViterbiMasks(batch: Batch, events: CLEvent*):(CLMatrix[Int], CLEvent) = synchronized {
+    computeMasks(batch, -1E-4f, "viterbi", events:_*)
+  }
+
+  private def computeMasks(batch: Batch, threshold: Float, name: String, events: CLEvent*):(CLMatrix[Int], CLEvent) = synchronized {
     val masks = new CLMatrix[Int](cellSize/32, devParent.size / (cellSize/32), devParent.data.asCLIntBuffer)
-    val prof = new CLProfiler("viterbi")
+    val prof = new CLProfiler(name)
     prof.tick()
     val ev = data.util.getMasks(masks(::, 0 until batch.insideCellOffsets.last),
       devCharts(::, 0 until batch.insideCellOffsets.last),
       devCharts(::, batch.insideCellOffsets.last until batch.insideCellOffsets.last * 2),
-      batch.outsideCharts.get.head.bot.globalRowOffset, batch.insideCellOffsets, structure.root, -1E-4f, events:_*)
+      batch.outsideCharts.get.head.bot.globalRowOffset, batch.insideCellOffsets, structure.root, threshold, events:_*)
     prof += ev
     if(profile) {
       queue.finish()
@@ -479,13 +484,18 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       for{
         sent <- 0 until batch.numSentences
         start <- 0 to batch.sentences(sent).length - span
+        if batch.allowedSpan(sent, start, start + span)
         split <- ranger(start, start + span, batch.sentences(sent).length) if split >= 0 && split <= batch.sentences(sent).length
       } {
         val end = start + span
         val parentTi = parentChart(batch, sent).treeIndex(start,end)
-        val leftChild = if(split < start) leftChart(batch, sent).treeIndex(split,start) else leftChart(batch, sent).treeIndex(start, split)
-        val rightChild = if(split < end) rightChart(batch, sent).treeIndex(split,end) else rightChart(batch, sent).treeIndex(end, split)
-        enqueue(parentTi, leftChild, rightChild)
+        val leftChildAllowed = if(split < start) batch.allowedSpan(sent,split, start) else batch.allowedSpan(sent,start, split)
+        val rightChildAllowed = if(split < end) batch.allowedSpan(sent,split,end) else batch.allowedSpan(sent,end, split)
+        if(leftChildAllowed && rightChildAllowed) {
+          val leftChild = if(split < start) leftChart(batch, sent).treeIndex(split,start) else leftChart(batch, sent).treeIndex(start, split)
+          val rightChild = if(split < end) rightChart(batch, sent).treeIndex(split,end) else rightChart(batch, sent).treeIndex(end, split)
+          enqueue(parentTi, leftChild, rightChild)
+        }
       }
 
       if(offset > 0) {

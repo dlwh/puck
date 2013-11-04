@@ -92,7 +92,7 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   def labelIndexToTerminal(label: Int) = reverseIndex(label)
   def labelIndexToNonterminal(label: Int) = reverseIndex(label)
 
-  val clusterer = new AgglomerativeGrammarClusterer()//new ILPGrammarClusterer(2, 55)
+  val clusterer:GrammarClusterer = new AgglomerativeGrammarClusterer()//new ILPGrammarClusterer(2, 55)
 
   lazy val partitionsParent  : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = clusterer.partition(nontermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
   lazy val partitionsLeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = clusterer.partition(nontermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
