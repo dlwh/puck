@@ -6,7 +6,7 @@ import epic.trees.BinaryRule
 
 import GrammarClusterer._
 
-class AgglomerativeGrammarClusterer(numRestarts: Int, maxPartitionLabelSize: Int) extends GrammarClusterer {
+class AgglomerativeGrammarClusterer(numRestarts: Int = 100, maxPartitionLabelSize: Int = 128) extends GrammarClusterer {
 
 
   def partition(rules: IndexedSeq[(BinaryRule[Int], Int)],
