@@ -34,23 +34,46 @@ class ILPGrammarClusterer(maxNumPartitions: Int = 32, partitionBadnessThreshold:
     val targetVariables = Array.tabulate(maxNumPartitions)(i => rules.map(_._1).map(targetLabel.target).toSet.iterator.map{ (l:Int) => l -> Binary(s"parent_${i}_$l")}.toMap)
 
     // each parent must be in exactly one partition
+    // also, break some symmetries
+    val pindices = targetVariables.head.keys.toIndexedSeq
+    for( pindex <- pindices) {
+      val i = math.min(pindex, maxNumPartitions - 1)
+      // each parent has to be in a partition <= it's index in pindex
+      constraints += (0 to i).map(targetVariables(_)(pindices(i))).reduceLeft[Expression](_ + _) =:= 1
+      // can't be in any of the bigger ones
+      constraints ++= (i+1 until maxNumPartitions).map(targetVariables(_)(pindices(i)) =:= 0.0)
+    }
+    /*
     for( l <- targetVariables.head.keys) {
       val eachPartitionL = targetVariables.map(_(l)).reduceLeft[Expression](_ + _)
       constraints += eachPartitionL =:= 1
     }
+    */
     val leftVariables = Array.tabulate(maxNumPartitions)(i => rules.map(_._1).flatMap(targetLabel.clusterPieces(_)._1).toSet.iterator.map{ (l:Int) => l -> Binary(s"left_${i}_$l")}.toMap)
     val rightVariables = Array.tabulate(maxNumPartitions)(i => rules.map(_._1).flatMap(targetLabel.clusterPieces(_)._2).toSet.iterator.map{ (l:Int) => l -> Binary(s"right_${i}_$l")}.toMap)
 
+    val rulesByParent = rules.map(_._1).groupBy(targetLabel.target)
+
     // if a parent is in a partition, so must all left and right children in its rules
     for {
-      p <- 0 until maxNumPartitions
-      (r, id) <- rules
-      target = targetVariables(p)(targetLabel.target(r))
-      (left, right) = targetLabel.clusterPieces(r)
-      toEnsurePresent <- left.map(leftVariables(p)).iterator ++ right.map(rightVariables(p)).iterator
+      (target, rules) <- rulesByParent
     } {
-      // target == 1 implies toEnsurePresent == 1
-      constraints += target <= toEnsurePresent
+      val pindex = math.min(pindices.indexOf(target), maxNumPartitions - 1)
+      val (lefts, rights) = rules.map(targetLabel.clusterPieces).unzip
+      val left = lefts.reduceLeft(_ | _).toIndexedSeq
+      val right = rights.reduceLeft(_ | _).toIndexedSeq
+      for(p <- 0 to pindex) {
+        for(l <- left)
+          constraints += targetVariables(p)(target) <= leftVariables(p)(l)
+        for(r <- right)
+          constraints += targetVariables(p)(target) <= rightVariables(p)(r)
+      }
+
+      // follows from symmetry breaking above
+      for(l <- left)
+        constraints += (0 to pindex).map(p => leftVariables(p)(l)).reduceLeft[Expression](_ + _) >= 1.0
+      for(l <- right)
+        constraints += (0 to pindex).map(p => rightVariables(p)(l)).reduceLeft[Expression](_ + _) >= 1.0
     }
 
     val leftSums = leftVariables.map(_.values.reduceLeft[Expression](_ + _))
@@ -63,10 +86,7 @@ class ILPGrammarClusterer(maxNumPartitions: Int = 32, partitionBadnessThreshold:
       constraints += (leftSums(p) + rightSums(p) + targetSums(p) - partitionBadnessThreshold) <= badnesses(p)
     }
 
-    // break some symmetries
-    val pindices = targetVariables.head.keys.toIndexedSeq
-    for(i <- 0 until maxNumPartitions if i < pindices.length)
-      constraints += targetVariables(i)(pindices(i)) <= i
+
 
     val objective = -badnesses.reduceLeft[Expression](_ + _) subjectTo (constraints: _*)
     println(objective)
