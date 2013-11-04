@@ -34,10 +34,11 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[L]] = synchronized {
     {for {
       batch <- getBatches(sentences).iterator
+      //batch = addMasksToBatches(nomaskbatch)
       evi = inside(batch)
       ev2 = if(needsOutside) outside(batch, evi) else evi
-      (masks, ev3) = computeViterbiMasks(batch, ev2)
-      t <- extractParses(batch, masks, ev3)
+      (vimasks, ev3) = computeViterbiMasks(batch, ev2)
+      t <- extractParses(batch, vimasks, ev3)
     } yield {
       t
     }}.toIndexedSeq
@@ -56,6 +57,7 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       batch.insideCharts(i).top(0,batch.insideCharts(i).length, structure.root)
     }}.toIndexedSeq
   }
+
 
 
   private implicit val queue = if(profile) context.createDefaultProfilingQueue() else context.createDefaultQueue()
@@ -259,11 +261,11 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
   println(structure.nontermIndex.zipWithIndex)
   println(structure.termIndex.zipWithIndex)
 
-  private def inside(batch: Batch):CLEvent = synchronized {
+  private def inside(batch: Batch, events: CLEvent*):CLEvent = synchronized {
     allProfilers.foreach(_.clear())
     allProfilers.foreach(_.tick())
 
-    var eZC = zmk.fillMemory(devCharts.data, _zero)
+    var eZC = zmk.fillMemory(devCharts.data, _zero, events:_*)
     val init = batch.initializeTagScores(eZC)
     hdTransferEvents += init
     memFillEvents += eZC
@@ -346,6 +348,16 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
       println(s"Masks $prof")
     }
     masks -> ev
+  }
+
+
+  private def addMasksToBatches(batch: Batch, ev: CLEvent*): Batch = {
+    val insideEvents = inside(batch, ev:_*)
+    val outsideEvents = outside(batch, insideEvents)
+    val (masks, ev2) = computeMasks(batch, -7, "masks", outsideEvents)
+    val denseMasks = masks.toDense
+    ev2.waitFor()
+    batch.copy(allowedSpan = (sent, begin, end) => denseMasks(::, batch.insideCellOffsets(sent) + ChartHalf.chartIndex(begin, end, batch.sentences(sent).length)).any)
   }
 
   private def extractParses(batch: Batch, masks: CLMatrix[Int], events: CLEvent*) = {

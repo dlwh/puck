@@ -63,7 +63,10 @@ class ILPGrammarClusterer(maxNumPartitions: Int = 32, partitionBadnessThreshold:
       constraints += (leftSums(p) + rightSums(p) + targetSums(p) - partitionBadnessThreshold) <= badnesses(p)
     }
 
-    constraints += targetVariables.head.head._2 =:= 1.0
+    // break some symmetries
+    val pindices = targetVariables.head.keys.toIndexedSeq
+    for(i <- 0 until maxNumPartitions if i < pindices.length)
+      constraints += targetVariables(i)(pindices(i)) <= i
 
     val objective = -badnesses.reduceLeft[Expression](_ + _) subjectTo (constraints: _*)
     println(objective)
