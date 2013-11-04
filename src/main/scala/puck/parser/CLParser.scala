@@ -18,6 +18,7 @@ import java.io.{BufferedOutputStream, FileOutputStream, File, OutputStream}
 import java.util.zip.{ZipInputStream, ZipFile, ZipOutputStream}
 import scala.collection.mutable.ArrayBuffer
 import java.util
+import BitHacks._
 
 /**
  * TODO
@@ -166,8 +167,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
         chart
       }
     }
-
-
 
 
     def initializeTagScores(events: CLEvent*) = {
@@ -393,42 +392,6 @@ class CLParser[C, L, W](data: CLParserData[C, L, W],
     }
   }
 
-  def asBitSet(col: DenseVector[Int]):java.util.BitSet = {
-    val bitset = new java.util.BitSet()
-    var i = 0
-    var fsb = -1
-    val cc = col.copy
-    while(i < cc.length) {
-      while(cc(i) != 0) {
-        if(cc(i) < 0)
-          fsb = 31
-        else
-          fsb = BitHacks.log2(cc(i))
-        bitset.set(i * 32 + fsb)
-        cc(i) &= ~(1<<fsb)
-      }
-      i += 1
-    }
-
-    bitset
-  }
-
-  def firstSetBit(col: DenseVector[Int]):Int = {
-    var i = 0
-    var fsb = -1
-    while(i < col.length && fsb < 0) {
-      if(col(i) < 0)
-        fsb = 31
-      else if(col(i) == 0)
-        fsb = -1
-      else
-        fsb = BitHacks.log2(col(i))
-      i += 1
-    }
-
-    if(fsb < 0) -1
-    else ((i-1) * 32) + fsb;
-  }
 
 
   private def insideBinaryPass(batch: Batch, span: Int, events: CLEvent*) = {
