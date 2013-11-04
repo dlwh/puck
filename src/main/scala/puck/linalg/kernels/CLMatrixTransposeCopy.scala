@@ -40,7 +40,7 @@ class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut:
     src: CLMatrix[Float],
     events: CLEvent*)(implicit queue: CLQueue):CLEvent = synchronized {
     require(src.rows == numCols, src.rows +" " + dstColPointers.length)
-    assert(dstColPointers.slice(0,numCols).forall(_ < dst.cols))
+    assert(dstColPointers.slice(0,numCols).forall(_ < dst.cols), dstColPointers.toIndexedSeq.filter(_ != 0).map(x => x -> (x < dst.cols)) -> dst.cols)
     require(dst.rows == src.cols)
     require(dst.isTranspose == src.isTranspose)
 

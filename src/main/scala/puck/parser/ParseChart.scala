@@ -12,7 +12,6 @@ class ChartHalf(val length: Int, val matrix: CLMatrix[Float], isBot: Boolean) {
   val globalRowOffset = matrix.offset / matrix.rows
 
   def apply(begin: Int, end: Int, label: Int) = {
-    println("qqq", matrix.offset,label, ChartHalf.chartIndex(begin, end, length))
     matrix(label, ChartHalf.chartIndex(begin, end, length))
   }
 
