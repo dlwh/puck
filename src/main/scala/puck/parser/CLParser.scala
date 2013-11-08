@@ -587,8 +587,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     // TODO: ugh, state
     private var ev:Seq[CLEvent] = IndexedSeq.empty[CLEvent]
 
+    var lastParent = -1
+
     def doUpdates(batch: Batch, span: Int, events: CLEvent*) = {
       ev = events
+      lastParent = -1
 
       for{
         sent <- 0 until batch.numSentences
@@ -616,11 +619,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     }
 
     def enqueue(span: Int, parent: Int, left: Int, right: Int) {
-      if(parentOffset == 0 || pArray(parentOffset-1) != parent) {
+      if(parentOffset == 0 || lastParent != parent) {
         splitPointOffsets(parentOffset) = offset
         pArray(parentOffset) = parent
         parentOffset += 1
       }
+      lastParent = parent
       lArray(offset) = left
       rArray(offset) = right
       offset += 1

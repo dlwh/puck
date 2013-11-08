@@ -16,7 +16,7 @@ libraryDependencies ++= Seq(
   "com.nativelibs4java" % "javacl" % "1.0-SNAPSHOT"
 )
 
-// fork := true
+fork := true
 
 javaOptions ++= Seq("-Xmx6g")
 
@@ -44,7 +44,7 @@ mergeStrategy in assembly <<= (mergeStrategy in assembly) { (old) =>
           MergeStrategy.filterDistinctLines
         case ("spring.schemas" :: Nil) | ("spring.handlers" :: Nil) =>
           MergeStrategy.filterDistinctLines
-        case _ => MergeStrategy.deduplicate
+        case _ => MergeStrategy.first
       }
       case x => MergeStrategy.first
   }
