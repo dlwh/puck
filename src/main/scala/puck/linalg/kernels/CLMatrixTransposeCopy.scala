@@ -9,26 +9,54 @@ import java.util
 // TODO... i bet kernel has a context, so this leaks the context...
 class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut: CLKernel) {
 
+  def permuteTransposeCopy(dst: CLMatrix[Float],
+                           src: CLMatrix[Float],
+                           srcColumnPointers: Array[Int], numCols: Int,
+                           events: CLEvent*)(implicit queue: CLQueue):CLEvent = {
+    val ptr = Pointer.pointerToArray[java.lang.Integer](srcColumnPointers)
+    val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, numCols)
+    val ev = intBuffer.write(queue, 0, numCols, ptr, false, events: _*)
+    val res = this.permuteTransposeCopy(dst, src, intBuffer.asInstanceOf[CLBuffer[Int]], numCols, ev)
+    res.invokeUponCompletion(new Runnable() {
+      def run() = {
+        ptr.release(); intBuffer.release()
+      }
+    })
+    res
+  }
 
   def permuteTransposeCopy(dst: CLMatrix[Float],
     src: CLMatrix[Float],
-    srcColumnPointers: Array[Int], events: CLEvent*)(implicit queue: CLQueue):CLEvent = synchronized {
-    require(dst.rows == srcColumnPointers.length, dst.rows + " " + srcColumnPointers.length)
-    require(dst.isTranspose == src.isTranspose)
+    srcColumnPointers: CLBuffer[Int], numCols: Int,
+    events: CLEvent*)(implicit queue: CLQueue):CLEvent = {
+    synchronized {
+      require(dst.rows == numCols, dst.rows + " " + numCols)
+      require(dst.isTranspose == src.isTranspose)
 
-    val ptr = Pointer.pointerToArray[java.lang.Integer](srcColumnPointers)
-    val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, srcColumnPointers.length)
-    val ev = intBuffer.write(queue, 0, srcColumnPointers.length, ptr, false, events:_*)
-    kernel.setArgs(
-      dst.data.safeBuffer, Integer.valueOf(dst.offset), Integer.valueOf(dst.majorStride), 
-      src.data.safeBuffer, Integer.valueOf(src.offset), Integer.valueOf(src.majorStride), 
-      intBuffer,
-      Integer.valueOf(src.rows),
-      Integer.valueOf(srcColumnPointers.length))
-    val adjustedSrcCols = ((srcColumnPointers.length + blockSize - 1)/blockSize)*blockSize
-    val adjustedSrcRowBlocks = ((src.rows + blockSize - 1)/blockSize)
-    //val res = kernel.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), (ev +: events):_*)
-    val res = kernel.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), (ev +: events):_*)
+      kernel.setArgs(
+        dst.data.safeBuffer, Integer.valueOf(dst.offset), Integer.valueOf(dst.majorStride),
+        src.data.safeBuffer, Integer.valueOf(src.offset), Integer.valueOf(src.majorStride),
+        srcColumnPointers,
+        Integer.valueOf(src.rows),
+        Integer.valueOf(numCols))
+      val adjustedSrcCols = ((numCols + blockSize - 1) / blockSize) * blockSize
+      val adjustedSrcRowBlocks = ((src.rows + blockSize - 1) / blockSize)
+      kernel.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), (events): _*)
+    }
+  }
+
+  def permuteTransposeCopyOut(dst: CLMatrix[Float],
+    dstColPointers: Array[Int], numCols: Int,
+    src: CLMatrix[Float],
+    events: CLEvent*)(implicit queue: CLQueue):CLEvent = synchronized {
+    require(src.rows == numCols, src.rows +" " + numCols)
+    assert(dstColPointers.slice(0,numCols).forall(_ < dst.cols), dstColPointers.toIndexedSeq.filter(_ != 0).map(x => x -> (x < dst.cols)) -> dst.cols)
+    require(dst.rows == src.cols)
+    require(dst.isTranspose == src.isTranspose)
+    val ptr = Pointer.pointerToArray[java.lang.Integer](dstColPointers)
+    val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, numCols)
+    val ev = intBuffer.write(queue, 0, numCols, ptr, false, events:_*)
+    val res = permuteTransposeCopyOut(dst, intBuffer.asInstanceOf[CLBuffer[Int]], numCols, src, ev)
     res.invokeUponCompletion(new Runnable() {
       def run() = { ptr.release(); intBuffer.release() }
     })
@@ -36,32 +64,26 @@ class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut:
   }
 
   def permuteTransposeCopyOut(dst: CLMatrix[Float],
-    dstColPointers: Array[Int], numCols: Int,
-    src: CLMatrix[Float],
-    events: CLEvent*)(implicit queue: CLQueue):CLEvent = synchronized {
-    require(src.rows == numCols, src.rows +" " + dstColPointers.length)
-    assert(dstColPointers.slice(0,numCols).forall(_ < dst.cols), dstColPointers.toIndexedSeq.filter(_ != 0).map(x => x -> (x < dst.cols)) -> dst.cols)
+                              dstColPointers: CLBuffer[Int], numCols: Int,
+                              src: CLMatrix[Float],
+                              events: CLEvent*)(implicit queue: CLQueue):CLEvent = synchronized {
     require(dst.rows == src.cols)
     require(dst.isTranspose == src.isTranspose)
+    assert(numCols == src.rows)
 
-    val ptr = Pointer.pointerToArray[java.lang.Integer](dstColPointers)
-    val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, numCols)
-    val ev = intBuffer.write(queue, 0, numCols, ptr, false, events:_*)
     kernelOut.setArgs(
       dst.data.safeBuffer, Integer.valueOf(dst.offset), Integer.valueOf(dst.majorStride), 
-      intBuffer,
+      dstColPointers,
       src.data.safeBuffer, Integer.valueOf(src.offset), Integer.valueOf(src.majorStride), 
       Integer.valueOf(numCols),
       Integer.valueOf(src.cols))
     val adjustedSrcCols = ((src.cols + blockSize - 1)/blockSize)*blockSize
     val adjustedSrcRowBlocks = ((numCols + blockSize - 1)/blockSize)
     //val res = kernelOut.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), (ev +: events):_*)
-    val res = kernelOut.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), (ev +: events):_*)
-    res.invokeUponCompletion(new Runnable() {
-      def run() = { ptr.release(); intBuffer.release() }
-    })
-    res
+    kernelOut.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), events:_*)
   }
+
+
 
 
 }
