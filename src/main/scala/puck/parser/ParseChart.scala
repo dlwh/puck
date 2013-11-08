@@ -15,13 +15,13 @@ class ChartHalf(val length: Int, val matrix: CLMatrix[Float], isBot: Boolean) {
     matrix(label, ChartHalf.chartIndex(begin, end, length))
   }
 
-  def spanRangeSlice(spanLength: Int, firstPos: Int = 0, end: Int = length): Range = {
+  def spanRangeSlice(spanLength: Int, firstPos: Int = 0, end: Int = length): Array[Int] = {
     assert(spanLength > 0)
     val firstIndex: Int = ChartHalf.chartIndex(firstPos, firstPos + spanLength, length)
     assert(firstIndex >= 0, (firstPos, spanLength, length, end))
     val lastIndex = math.min(ChartHalf.chartIndex(0,spanLength+1,length), end + firstIndex)
     assert(lastIndex >= 0)
-    (firstIndex + globalRowOffset until lastIndex + globalRowOffset)
+    Array.range(firstIndex + globalRowOffset, lastIndex + globalRowOffset)
   }
 
   def treeIndex(begin: Int, end: Int) = globalRowOffset + ChartHalf.chartIndex(begin, end, length)

@@ -93,7 +93,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     val sizeOfFloat = 4
     val fractionOfMemoryToUse = 0.8 // slack!
     val amountOfMemory = ((context.getMaxMemAllocSize min maxAllocSize) * fractionOfMemoryToUse).toInt - data.map(_.ruleScores.length).sum * sizeOfFloat - maxSentencesPerBatch * 3 * 4;
-    val maxPossibleNumberOfCells = (amountOfMemory/sizeOfFloat) / (cellSize + 1) toInt // + 1 for offsets
+    val maxPossibleNumberOfCells = (amountOfMemory/sizeOfFloat) / (cellSize + 3) toInt // + 1 for offsets
     // We want numGPUCells and numGPUChartCells to be divisible by 16, so that we get aligned strided access:
     //       On devices of compute capability 1.0 or 1.1, the k-th thread in a half warp must access the
     //       k-th word in a segment aligned to 16 times the size of the elements being accessed; however,
@@ -123,15 +123,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   // finally, we have the array of parse charts, which is insanely large. It's also where
   // we do rescaling, etc.
   private val devParent, devLeft, devRight = new CLMatrix[Float](numGPUCells, cellSize)
-  private val devParentPointers = context.createIntBuffer(CLMem.Usage.Input, numGPUCells)
+  private val devParentPointers, devLeftPointers, devRightPointers = context.createIntBuffer(CLMem.Usage.Input, numGPUCells)
   // transposed
   private val devCharts = new CLMatrix[Float](cellSize, numGPUChartCells)
 
   // (dest, leftSource, rightSource) (right Source if applicable)
-  val lArray, rArray = {
-    new Array[Int](numGPUCells)
-  }
-  val pArray = {
+  val pArray, lArray, rArray = {
     val bb = ByteBuffer.allocateDirect(4 * numGPUCells).order(ByteOrder.LITTLE_ENDIAN)
     Pointer.pointerToInts(bb.asIntBuffer())
   }
@@ -425,21 +422,23 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def doUnaryUpdates(batch: Batch, span: Int, events: CLEvent*) = {
       import batch._
       var offset = 0
-      def enqueue(parent: Array[Int], left: IndexedSeq[Int]) {
+      def enqueue(parent: Array[Int], left: Array[Int]) {
         pArray.setIntsAtOffset(offset * 4, parent)
-        left.copyToArray(lArray, offset)
+        lArray.setIntsAtOffset(offset * 4, left)
         offset += parent.length
       }
       for(sent <- 0 until batch.numSentences if batch.sentences(sent).length >= span) {
-        enqueue(batch.insideCharts(sent).top.spanRangeSlice(span).toArray,
+        enqueue(batch.insideCharts(sent).top.spanRangeSlice(span),
           batch.insideCharts(sent).bot.spanRangeSlice(span))
       }
 
       val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, events:_*)
       memFillEvents += zz
 
-      val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, lArray, offset, events:_*)
+      val wevl = devLeftPointers.write(queue, lArray, false, events:_*)
+      val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
       transferEvents += wl
+      transferEvents += wevl
       debugFinish()
 
       val kernels = if(span == 1) data.inside.insideTUKernels else data.inside.insideNUKernels
@@ -451,7 +450,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       unaryEvents ++= endEvents
 
       val ev2 = devParentPointers.write(queue, pArray, false, endEvents:_*)
-      ev2.waitFor
+//      ev2.waitFor
       val ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*)
       sumToChartsEvents += ev
       ev
@@ -460,10 +459,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def doOutsideUnaryUpdates(batch: Batch, span: Int, events: CLEvent*) = {
       import batch._
       var offset = 0
-      def enqueue(parent: Array[Int], left: IndexedSeq[Int]) {
+      def enqueue(parent: Array[Int], left: Array[Int]) {
         assert(parent.forall(_ < devCharts.cols))
         pArray.setIntsAtOffset(offset * 4, parent)
-        left.copyToArray(lArray, offset)
+        lArray.setIntsAtOffset(offset * 4, left)
         offset += parent.length
       }
       for(sent <- 0 until batch.numSentences if batch.sentences(sent).length >= span) {
@@ -473,8 +472,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, events:_*)
       memFillEvents += zz
+      val wevl = devLeftPointers.write(queue, lArray, false, events:_*)
 
-      val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, lArray, offset, events:_*)
+      val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
+      transferEvents += wevl
       transferEvents += wl
       debugFinish()
 
@@ -487,7 +488,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       unaryEvents ++= endEvents
 
       val ev2 = devParentPointers.write(queue, pArray, false, endEvents:_*)
-      ev2.waitFor // should be totally unnecessary sigh
+      transferEvents += ev2
+//      ev2.waitFor // should be totally unnecessary sigh
       val ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*)
       sumToChartsEvents += ev
       ev
@@ -631,10 +633,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def flushQueue(span: Int) {
       if(offset != 0) {
         splitPointOffsets(parentOffset) = offset
-        val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, lArray, offset, ev:_*)
-        val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, rArray, offset, ev:_*)
+        val wevl = devLeftPointers.write(queue, lArray, false, ev:_*)
+        val wevr = devRightPointers.write(queue, rArray, false, ev:_*)
+        val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
+        val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, devRightPointers, offset, wevr)
         transferEvents += wl
         transferEvents += wr
+        transferEvents += wevl
+        transferEvents += wevr
         val zz = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*)
         memFillEvents += zz
         ev = kernels.map{ kernel =>
