@@ -250,8 +250,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
       val ev2 = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, events:_*)
       val ev = devParent(0 until totalLength, ::).writeFrom(dm, false, ev2)
-//      println(devParentPointers.read(queue, ev2).getInts.take(totalLengthForSpan(1)).toIndexedSeq)
-      transposeCopy.permuteTransposeCopyOut(devCharts,  devParentPointers, totalLengthForSpan(1), devParent(0 until totalLength, ::), (ev2 +: ev):_*)
+      val evr = transposeCopy.permuteTransposeCopyOut(devCharts,  devParentPointers, totalLengthForSpan(1), devParent(0 until totalLength, ::), (ev2 +: ev):_*)
+      debugFinish()
+      evr
     }
 
 
@@ -296,12 +297,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
 
       ev = Seq(insideNT.doUpdates(batch, span, ev :_*))
-      debugFinish()
       ev = Seq(insideTN.doUpdates(batch, span, ev :_*))
-      debugFinish()
       ev = Seq(insideNN.doUpdates(batch, span, ev :_*))
-      debugFinish()
-      assert(ev.length == 1)
       ev.head
     }
 
@@ -343,7 +340,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def outsideNT_R = new BinaryUpdateManager(this, data.outside.get.outside_R_NTKernels, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
     private def outsideTN_R = new BinaryUpdateManager(this, data.outside.get.outside_R_TNKernels, outsideTop, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
     private def outsideNN_R = new BinaryUpdateManager(this, data.outside.get.outside_R_NNKernels, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1))
-
 
 
     def addMasksToBatches(batch: Batch, ev: CLEvent*): Batch = {
@@ -421,7 +417,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       trees
     }
 
-
     def doUnaryUpdates(batch: Batch, span: Int, events: CLEvent*) = {
       import batch._
       var offset = 0
@@ -440,6 +435,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       memFillEvents += zz
 
       val wevl = devLeftPointers.write(queue, Pointer.pointerToArray[Integer](lArray), false, events:_*)
+      debugFinish()
       val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
       transferEvents += wl
       transferEvents += wevl
@@ -456,6 +452,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       val ev2 = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, endEvents:_*)
       val ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*)
+      debugFinish()
       sumToChartsEvents += ev
       ev
     }
@@ -594,7 +591,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     var ev = Seq.empty[CLEvent]
 
-
     private def enqueue(span: Int, parent: Int, left: Int, right: Int) {
       if(parentOffset == 0 || lastParent != parent) {
         splitPointOffsets(parentOffset) = offset
@@ -618,6 +614,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val wevr = devRightPointers.write(queue, Pointer.pointerToArray[Integer](rArray), false, ev:_*)
         val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
         val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, devRightPointers, offset, wevr)
+        debugFinish()
         transferEvents += wl
         transferEvents += wr
         transferEvents += wevl
@@ -629,12 +626,15 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           kernel.enqueueNDRange(queue, Array(offset), wl, wr, zz)
         }
 
+        debugFinish()
         binaryEvents ++= ev
         val sumEv = parser.data.util.sumSplitPoints(devParent,
           devCharts,
           java.util.Arrays.copyOf(pArray, parentOffset),
           java.util.Arrays.copyOf(splitPointOffsets, parentOffset + 1),
           32 / span max 1, ev:_*)
+        debugFinish()
+
         sumEvents += sumEv
         ev = IndexedSeq(sumEv)
         offset = 0
@@ -650,16 +650,18 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       parentOffset = 0
       lastParent = -1
 
-      for{
+      for {
         sent <- 0 until batch.numSentences
         start <- 0 to batch.sentences(sent).length - span
         if batch.allowedSpan(sent, start, start + span)
-        split <- ranger(start, start + span, batch.sentences(sent).length) if split >= 0 && split <= batch.sentences(sent).length
+        split <- ranger(start, start + span, batch.sentences(sent).length)
+        if split >= 0 && split <= batch.sentences(sent).length
       } {
         val end = start + span
         val parentTi = parentChart(batch, sent).treeIndex(start,end)
         val leftChildAllowed = if(split < start) batch.allowedSpan(sent,split, start) else batch.allowedSpan(sent,start, split)
         val rightChildAllowed = if(split < end) batch.allowedSpan(sent,split,end) else batch.allowedSpan(sent,end, split)
+
         if(leftChildAllowed && rightChildAllowed) {
           val leftChild = if(split < start) leftChart(batch, sent).treeIndex(split,start) else leftChart(batch, sent).treeIndex(start, split)
           val rightChild = if(split < end) rightChart(batch, sent).treeIndex(split,end) else rightChart(batch, sent).treeIndex(end, split)
@@ -672,6 +674,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         flushQueue(span)
       }
 
+      assert(ev.length == 1)
       ev.head
     }
 
@@ -700,9 +703,6 @@ object CLParser extends Logging {
     } else {
       SimpleRefinedGrammar.parseBerkeleyText(textGrammarPrefix, -10)
     }
-
-
-
 
     implicit val context = if(useGPU) {
       val gpu = JavaCL.listPlatforms.flatMap(_.listGPUDevices(true)).head
