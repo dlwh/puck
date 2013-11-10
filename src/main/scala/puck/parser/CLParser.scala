@@ -128,10 +128,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val devCharts = new CLMatrix[Float](cellSize, numGPUChartCells)
 
   // (dest, leftSource, rightSource) (right Source if applicable)
-  val pArray, lArray, rArray = {
-    val bb = ByteBuffer.allocateDirect(4 * numGPUCells).order(ByteOrder.LITTLE_ENDIAN)
-    Pointer.pointerToInts(bb.asIntBuffer())
-  }
+  val pArray, lArray, rArray = new Array[Int](numGPUCells)
   val splitPointOffsets = new Array[Int](numGPUCells+1)
 
   // other stuff
@@ -249,11 +246,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       for(i <- 0 until numSentences par) {
         tagScoresFor(batch, dm, i)
         val parent = insideCharts(i).bot.spanRangeSlice(1)
-        pArray.setIntsAtOffset(_workArrayOffsetsForSpan(1)(i) * 4, parent.toArray)
+        parent.copyToArray(pArray, _workArrayOffsetsForSpan(1)(i) )
       }
-      val ev2 = devParentPointers.write(queue, pArray, false, events:_*)
+      val ev2 = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, events:_*)
       val ev = devParent(0 until totalLength, ::).writeFrom(dm, false, ev2)
-      ev2.waitFor
 //      println(devParentPointers.read(queue, ev2).getInts.take(totalLengthForSpan(1)).toIndexedSeq)
       transposeCopy.permuteTransposeCopyOut(devCharts,  devParentPointers, totalLengthForSpan(1), devParent(0 until totalLength, ::), (ev2 +: ev):_*)
     }
@@ -300,8 +296,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
 
       ev = Seq(insideNT.doUpdates(batch, span, ev :_*))
+      debugFinish()
       ev = Seq(insideTN.doUpdates(batch, span, ev :_*))
+      debugFinish()
       ev = Seq(insideNN.doUpdates(batch, span, ev :_*))
+      debugFinish()
       assert(ev.length == 1)
       ev.head
     }
@@ -311,10 +310,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private val outsideBot = {(b: Batch, s: Int) =>  b.outsideCharts.get(s).bot}
     private val outsideTop = {(b: Batch, s: Int) =>  b.outsideCharts.get(s).top}
 
-    private val insideTT = new BinaryUpdateManager(this, data.inside.insideTTKernels, insideBot, insideBot, insideBot, (b, e, l) => (b+1 to b+1))
-    private val insideNT = new BinaryUpdateManager(this, data.inside.insideNTKernels, insideBot, insideTop, insideBot, (b, e, l) => (e-1 to e-1))
-    private val insideTN = new BinaryUpdateManager(this, data.inside.insideTNKernels, insideBot, insideBot, insideTop, (b, e, l) => (b+1 to b+1))
-    private val insideNN = new BinaryUpdateManager(this, data.inside.insideNNKernels, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1))
+    private def insideTT = new BinaryUpdateManager(this, data.inside.insideTTKernels, insideBot, insideBot, insideBot, (b, e, l) => (b+1 to b+1))
+    private def insideNT = new BinaryUpdateManager(this, data.inside.insideNTKernels, insideBot, insideTop, insideBot, (b, e, l) => (e-1 to e-1))
+    private def insideTN = new BinaryUpdateManager(this, data.inside.insideTNKernels, insideBot, insideBot, insideTop, (b, e, l) => (b+1 to b+1))
+    private def insideNN = new BinaryUpdateManager(this, data.inside.insideNNKernels, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1))
 
     private def outsideBinaryPass(batch: Batch, span: Int, events: CLEvent) = {
       var ev = events
@@ -334,16 +333,16 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
 
     // here, "parentChart" is actually the left child, left is the parent, right is the right completion
-    private lazy val outsideTT_L = new BinaryUpdateManager(this, data.outside.get.outside_L_TTKernels, outsideBot, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
-    private lazy val outsideNT_L = new BinaryUpdateManager(this, data.outside.get.outside_L_NTKernels, outsideTop, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
-    private lazy val outsideTN_L = new BinaryUpdateManager(this, data.outside.get.outside_L_TNKernels, outsideBot, outsideBot, insideTop, (b, e, l) => (e+1 to l))
-    private lazy val outsideNN_L = new BinaryUpdateManager(this, data.outside.get.outside_L_NNKernels, outsideTop, outsideBot, insideTop, (b, e, l) => (e+1 to l))
+    private def outsideTT_L = new BinaryUpdateManager(this, data.outside.get.outside_L_TTKernels, outsideBot, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
+    private def outsideNT_L = new BinaryUpdateManager(this, data.outside.get.outside_L_NTKernels, outsideTop, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
+    private def outsideTN_L = new BinaryUpdateManager(this, data.outside.get.outside_L_TNKernels, outsideBot, outsideBot, insideTop, (b, e, l) => (e+1 to l))
+    private def outsideNN_L = new BinaryUpdateManager(this, data.outside.get.outside_L_NNKernels, outsideTop, outsideBot, insideTop, (b, e, l) => (e+1 to l))
 
     // here, "parentChart" is actually the right child, right is the parent, left is the left completion
-    private lazy val outsideTT_R = new BinaryUpdateManager(this, data.outside.get.outside_R_TTKernels, outsideBot, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
-    private lazy val outsideNT_R = new BinaryUpdateManager(this, data.outside.get.outside_R_NTKernels, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
-    private lazy val outsideTN_R = new BinaryUpdateManager(this, data.outside.get.outside_R_TNKernels, outsideTop, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
-    private lazy val outsideNN_R = new BinaryUpdateManager(this, data.outside.get.outside_R_NNKernels, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1))
+    private def outsideTT_R = new BinaryUpdateManager(this, data.outside.get.outside_R_TTKernels, outsideBot, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
+    private def outsideNT_R = new BinaryUpdateManager(this, data.outside.get.outside_R_NTKernels, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
+    private def outsideTN_R = new BinaryUpdateManager(this, data.outside.get.outside_R_TNKernels, outsideTop, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
+    private def outsideNN_R = new BinaryUpdateManager(this, data.outside.get.outside_R_NNKernels, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1))
 
 
 
@@ -358,7 +357,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def extractParses(batch: Batch, masks: CLMatrix[Int], events: CLEvent*) = {
       events.foreach(_.waitFor())
-      var in = if(profile) System.currentTimeMillis() else 0L
+      val in = if(profile) System.currentTimeMillis() else 0L
       val dmMasks:DenseMatrix[Int] = masks.toDense
       val trees = for(s <- 0 until batch.numSentences par) yield {
         import batch.insideCellOffsets
@@ -427,10 +426,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       import batch._
       var offset = 0
       def enqueue(parent: Array[Int], left: Array[Int]) {
-        pArray.setIntsAtOffset(offset * 4, parent)
-        lArray.setIntsAtOffset(offset * 4, left)
+        parent.copyToArray(pArray, offset)
+        left.copyToArray(lArray, offset)
         offset += parent.length
       }
+
       for(sent <- 0 until batch.numSentences if batch.sentences(sent).length >= span) {
         enqueue(batch.insideCharts(sent).top.spanRangeSlice(span),
           batch.insideCharts(sent).bot.spanRangeSlice(span))
@@ -439,7 +439,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, events:_*)
       memFillEvents += zz
 
-      val wevl = devLeftPointers.write(queue, Pointer.pointerToArray[Integer](lArray.toArray), false, events:_*)
+      val wevl = devLeftPointers.write(queue, Pointer.pointerToArray[Integer](lArray), false, events:_*)
       val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
       transferEvents += wl
       transferEvents += wevl
@@ -454,7 +454,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       unaryEvents ++= endEvents
 
 
-      val ev2 = devParentPointers.write(queue,  Pointer.pointerToArray[Integer](pArray.toArray), false, endEvents:_*)
+      val ev2 = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, endEvents:_*)
       val ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*)
       sumToChartsEvents += ev
       ev
@@ -465,18 +465,18 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       var offset = 0
       def enqueue(parent: Array[Int], left: Array[Int]) {
         assert(parent.forall(_ < devCharts.cols))
-        pArray.setIntsAtOffset(offset * 4, parent)
-        lArray.setIntsAtOffset(offset * 4, left)
+        parent.copyToArray(pArray, offset)
+        left.copyToArray(lArray, offset)
         offset += parent.length
       }
       for(sent <- 0 until batch.numSentences if batch.sentences(sent).length >= span) {
-        enqueue(batch.outsideCharts.get(sent).bot.spanRangeSlice(span).toArray,
+        enqueue(batch.outsideCharts.get(sent).bot.spanRangeSlice(span),
           batch.outsideCharts.get(sent).top.spanRangeSlice(span))
       }
 
       val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, events:_*)
       memFillEvents += zz
-      val wevl = devLeftPointers.write(queue, lArray, false, events:_*)
+      val wevl = devLeftPointers.write(queue, Pointer.pointerToArray[Integer](lArray), false, events:_*)
       wevl.waitFor
 
       val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
@@ -492,7 +492,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       debugFinish()
       unaryEvents ++= endEvents
 
-      val ev2 = devParentPointers.write(queue, pArray, false, endEvents:_*)
+      val ev2 = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, endEvents:_*)
       ev2.waitFor
       transferEvents += ev2
       val ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*)
@@ -586,63 +586,69 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                                     rightChart: (Batch,Int)=>ChartHalf,
                                     ranger: (Int, Int, Int)=>Range) {
 
+    var parentOffset = 0 // number of unique parent spans used so far
+    var offset = 0 // number of cells used so far.
+
+    // TODO: ugh, state
+    var lastParent = -1
+
+    var ev = Seq.empty[CLEvent]
+
+
+    private def enqueue(span: Int, parent: Int, left: Int, right: Int) {
+      if(parentOffset == 0 || lastParent != parent) {
+        splitPointOffsets(parentOffset) = offset
+        pArray(parentOffset) = parent
+        parentOffset += 1
+      }
+      lastParent = parent
+      lArray(offset) = left
+      rArray(offset) = right
+      offset += 1
+      if(offset >= numGPUCells)  {
+        println(s"flush!")
+        flushQueue(span)
+      }
+    }
+
+    private def flushQueue(span: Int) {
+      if(offset != 0) {
+        splitPointOffsets(parentOffset) = offset
+        val wevl = devLeftPointers.write(queue, Pointer.pointerToArray[Integer](lArray), false, ev:_*)
+        val wevr = devRightPointers.write(queue, Pointer.pointerToArray[Integer](rArray), false, ev:_*)
+        val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
+        val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, devRightPointers, offset, wevr)
+        transferEvents += wl
+        transferEvents += wr
+        transferEvents += wevl
+        transferEvents += wevr
+        val zz = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*)
+        memFillEvents += zz
+        ev = kernels.map{ kernel =>
+          kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, parser.devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
+          kernel.enqueueNDRange(queue, Array(offset), wl, wr, zz)
+        }
+
+        binaryEvents ++= ev
+        val sumEv = parser.data.util.sumSplitPoints(devParent,
+          devCharts,
+          java.util.Arrays.copyOf(pArray, parentOffset),
+          java.util.Arrays.copyOf(splitPointOffsets, parentOffset + 1),
+          32 / span max 1, ev:_*)
+        sumEvents += sumEv
+        ev = IndexedSeq(sumEv)
+        offset = 0
+        parentOffset = 0
+      }
+    }
 
 
 
     def doUpdates(batch: Batch, span: Int, events: CLEvent*) = {
-      var parentOffset = 0 // number of unique parent spans used so far
-      var offset = 0 // number of cells used so far.
 
-      // TODO: ugh, state
-      var ev:Seq[CLEvent] = events
-      var lastParent = -1
-
-      def enqueue(span: Int, parent: Int, left: Int, right: Int) {
-        if(parentOffset == 0 || lastParent != parent) {
-          splitPointOffsets(parentOffset) = offset
-          pArray(parentOffset) = parent
-          parentOffset += 1
-        }
-        lastParent = parent
-        lArray(offset) = left
-        rArray(offset) = right
-        offset += 1
-        if(offset >= numGPUCells)  {
-          println(s"flush!")
-          flushQueue(span)
-        }
-      }
-
-      def flushQueue(span: Int) {
-        if(offset != 0) {
-          splitPointOffsets(parentOffset) = offset
-          val wevl = devLeftPointers.write(queue, Pointer.pointerToArray[Integer](lArray.toArray), false, ev:_*)
-          val wevr = devRightPointers.write(queue, Pointer.pointerToArray[Integer](rArray.toArray), false, ev:_*)
-          val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
-          val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, devRightPointers, offset, wevr)
-          transferEvents += wl
-          transferEvents += wr
-          transferEvents += wevl
-          transferEvents += wevr
-          val zz = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*)
-          memFillEvents += zz
-          ev = kernels.map{ kernel =>
-            kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, parser.devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
-            kernel.enqueueNDRange(queue, Array(offset), wl, wr, zz)
-          }
-
-          binaryEvents ++= ev
-          val sumEv = parser.data.util.sumSplitPoints(devParent,
-            devCharts,
-            pArray.toArray.map(_.intValue()).take(parentOffset),
-            java.util.Arrays.copyOf(splitPointOffsets, parentOffset + 1),
-            32 / span max 1, ev:_*)
-          sumEvents += sumEv
-          ev = IndexedSeq(sumEv)
-          offset = 0
-          parentOffset = 0
-        }
-      }
+      ev = events
+      parentOffset = 0
+      lastParent = -1
 
       for{
         sent <- 0 until batch.numSentences
@@ -669,11 +675,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev.head
     }
 
-
   }
-
-
-
 }
 
 object CLParser extends Logging {
