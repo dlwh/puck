@@ -6,13 +6,15 @@ import org.bridj.Pointer
 case class CLBufferMappedPointerPair[V](val buffer: CLBuffer[V])(implicit queue: CLQueue) {
   private var _mappedPointer:Pointer[V] = null
   
-  def mappedPointer = synchronized {
+  def mappedPointer:Pointer[V] = mappedPointer()
+
+  def mappedPointer(events: CLEvent*): Pointer[V] = synchronized {
     if(_mappedPointer eq null) {
-      _mappedPointer = buffer.map(queue, CLMem.MapFlags.ReadWrite)
-    } 
+      _mappedPointer = buffer.map(queue, CLMem.MapFlags.ReadWrite, events:_*)
+    }
     _mappedPointer
   }
-  
+
   def unmap(evs: CLEvent*) = synchronized {
     if(_mappedPointer ne null) { 
       val ev = buffer.unmap(queue, _mappedPointer, evs:_*)

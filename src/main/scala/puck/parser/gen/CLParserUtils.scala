@@ -37,7 +37,7 @@ case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKer
     val numGroups = (chartIndices.length + chartIndicesPerGroup - 1)/chartIndicesPerGroup * chartIndicesPerGroup
     val rowBlocks = (numSyms + splitPointsBlockSize - 1)/splitPointsBlockSize
 
-    val ev = sumSplitPointsKernel.enqueueNDRange(queue, Array(numGroups * groupSize, rowBlocks), Array(groupSize, 1), evCI, evPI)
+    val ev = sumSplitPointsKernel.enqueueNDRange(queue, Array(numGroups * groupSize, rowBlocks), Array(groupSize, 1), Seq(evCI, evPI)++events :_*)
 
     ev.invokeUponCompletion(new Runnable() {
       def run() = { ptrCI.release(); intBufferCI.release(); ptrPI.release(); intBufferPI.release(); }

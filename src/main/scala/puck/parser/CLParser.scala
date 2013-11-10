@@ -141,6 +141,15 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   private val parsers = data.map(new ActualParser(_))
 
+  def debugRaces = true
+  def debugCharts = false
+
+  def debugFinish() {
+    if(debugRaces || debugCharts) queue.finish()
+  }
+
+
+
   private class ActualParser(val data: CLParserData[C, L, W]) {
     import data._
     val devRules = context.createFloatBuffer(CLMem.Usage.Input, FloatBuffer.wrap(ruleScores), false)
@@ -150,12 +159,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def _zero: Float = data.semiring.zero
     def _one: Float = data.semiring.one
 
-    def debugFinish() {
-      if(debugRaces || debugCharts) queue.finish()
-    }
-
     def debugCharts(batch: Batch) {
-      if(debugCharts) {
+      if(CLParser.this.debugCharts) {
         println("inside")
         println(batch.insideCharts(0).bot.toString(structure, _zero))
         println(batch.insideCharts(0).top.toString(structure, _zero))
@@ -179,12 +184,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       var ev = doUnaryUpdates(batch, 1, init)
 
-
       for(span <- 2 to batch.maxLength) {
         println(span)
         ev = insideBinaryPass(batch, span, ev)
         ev = doUnaryUpdates(batch, span, ev)
-        debugFinish()
       }
       debugCharts(batch)
 
@@ -293,6 +296,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       var ev = events
       if(span == 2) {
         ev = Seq(insideTT.doUpdates(batch, span, ev :_*))
+        debugFinish()
       }
 
       ev = Seq(insideNT.doUpdates(batch, span, ev :_*))
@@ -315,10 +319,15 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def outsideBinaryPass(batch: Batch, span: Int, events: CLEvent) = {
       var ev = events
 
+      debugFinish()
       ev = outsideTN_R.doUpdates(batch, span, ev)
+      debugFinish()
       ev = outsideNT_L.doUpdates(batch, span, ev)
+      debugFinish()
       ev = outsideNN_L.doUpdates(batch, span, ev)
+      debugFinish()
       ev = outsideNN_R.doUpdates(batch, span, ev)
+      debugFinish()
       ev
     }
 
@@ -335,11 +344,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private lazy val outsideNT_R = new BinaryUpdateManager(this, data.outside.get.outside_R_NTKernels, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
     private lazy val outsideTN_R = new BinaryUpdateManager(this, data.outside.get.outside_R_TNKernels, outsideTop, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
     private lazy val outsideNN_R = new BinaryUpdateManager(this, data.outside.get.outside_R_NNKernels, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1))
-
-
-    def debugRaces = false
-    def debugCharts = false
-
 
 
 
@@ -435,7 +439,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, events:_*)
       memFillEvents += zz
 
-      val wevl = devLeftPointers.write(queue, lArray, false, events:_*)
+      val wevl = devLeftPointers.write(queue, Pointer.pointerToArray[Integer](lArray.toArray), false, events:_*)
       val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
       transferEvents += wl
       transferEvents += wevl
@@ -449,8 +453,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       debugFinish()
       unaryEvents ++= endEvents
 
-      val ev2 = devParentPointers.write(queue, pArray, false, endEvents:_*)
-//      ev2.waitFor
+
+      val ev2 = devParentPointers.write(queue,  Pointer.pointerToArray[Integer](pArray.toArray), false, endEvents:_*)
       val ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*)
       sumToChartsEvents += ev
       ev
@@ -473,6 +477,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, events:_*)
       memFillEvents += zz
       val wevl = devLeftPointers.write(queue, lArray, false, events:_*)
+      wevl.waitFor
 
       val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
       transferEvents += wevl
@@ -488,8 +493,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       unaryEvents ++= endEvents
 
       val ev2 = devParentPointers.write(queue, pArray, false, endEvents:_*)
+      ev2.waitFor
       transferEvents += ev2
-//      ev2.waitFor // should be totally unnecessary sigh
       val ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*)
       sumToChartsEvents += ev
       ev
@@ -637,8 +642,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def flushQueue(span: Int) {
       if(offset != 0) {
         splitPointOffsets(parentOffset) = offset
-        val wevl = devLeftPointers.write(queue, lArray, false, ev:_*)
-        val wevr = devRightPointers.write(queue, rArray, false, ev:_*)
+        val wevl = devLeftPointers.write(queue, Pointer.pointerToArray[Integer](lArray.toArray), false, ev:_*)
+        val wevr = devRightPointers.write(queue, Pointer.pointerToArray[Integer](rArray.toArray), false, ev:_*)
         val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
         val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, devRightPointers, offset, wevr)
         transferEvents += wl
