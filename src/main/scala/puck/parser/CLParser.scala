@@ -56,7 +56,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     {for {
       batch <- getBatches(sentences).iterator
       evi = parsers.last.inside(batch)
-      //_ = if(needsOutside) outside(batch, evi).waitFor() else evi.waitFor
+      _ = if(needsOutside) parsers.last.outside(batch, evi).waitFor() else evi.waitFor
+//      _ = if(needsOutside) parsers.last.outside(batch, evi).waitFor() else evi.waitFor
+      evi3 = parsers.last.inside(batch)
+      _ = evi3.waitFor()
       i <- 0 until batch.numSentences
     } yield {
       batch.insideCharts(i).top(0,batch.insideCharts(i).length, data.head.structure.root)
@@ -199,25 +202,30 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     }
 
     def outside(batch: Batch, event: CLEvent):CLEvent = synchronized {
+      var ev = event
+      /*
       allProfilers.foreach(_.clear())
       allProfilers.foreach(_.tick())
 
-      var ev = event
 
       ev = data.util.setRootScores(devCharts, batch.outsideCharts.get.map(_.top.rootIndex).toArray, structure.root, _one, ev)
-      ev = doOutsideUnaryUpdates(batch, batch.maxLength, ev)
+//      ev = outsideNU.doUpdates(batch, batch.maxLength, ev)
 
       for(span <- (batch.maxLength-1) to 1 by -1) {
         println(span)
-        ev = outsideBinaryPass(batch, span, ev)
-        ev = doOutsideUnaryUpdates(batch, span, ev)
+//        ev = outsideBinaryPass(batch, span, ev)
+//        if(span == 1) {
+//          ev = outsideTU.doUpdates(batch, span, ev)
+//        } else {
+//          ev = outsideNU.doUpdates(batch, span, ev)
+//        }
         debugFinish()
       }
 
-      ev = outsideTT_L.doUpdates(batch, 1, ev)
-      ev = outsideNT_R.doUpdates(batch, 1, ev)
-      ev = outsideTN_L.doUpdates(batch, 1, ev)
-      ev = outsideTT_R.doUpdates(batch, 1, ev)
+//      ev = outsideTT_L.doUpdates(batch, 1, ev)
+//      ev = outsideNT_R.doUpdates(batch, 1, ev)
+//      ev = outsideTN_L.doUpdates(batch, 1, ev)
+//      ev = outsideTT_R.doUpdates(batch, 1, ev)
 
       debugCharts(batch)
 
@@ -229,12 +237,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         Thread.sleep(15)
         allProfilers.foreach(p => println(s"Outside $p"))
       }
+      */
 
       ev
     }
 
     def computeViterbiMasks(batch: Batch, events: CLEvent*):(CLMatrix[Int], CLEvent) = synchronized {
-      computeMasks(batch, -1E-2f, "viterbi", events:_*)
+      computeMasks(batch, -1E-3f, "viterbi", events:_*)
     }
 
 
@@ -343,6 +352,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def outsideNT_R = new BinaryUpdateManager(this, data.outside.get.outside_R_NTKernels, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
     private def outsideTN_R = new BinaryUpdateManager(this, data.outside.get.outside_R_TNKernels, outsideTop, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
     private def outsideNN_R = new BinaryUpdateManager(this, data.outside.get.outside_R_NNKernels, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1))
+
+    private def outsideTU = new UnaryUpdateManager(this, data.outside.get.outsideTUKernels, outsideBot, outsideTop)
+    private def outsideNU = new UnaryUpdateManager(this, data.outside.get.outsideNUKernels, outsideBot, outsideTop)
 
 
     def addMasksToBatches(batch: Batch, ev: CLEvent*): Batch = {
