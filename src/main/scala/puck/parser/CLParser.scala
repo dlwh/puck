@@ -20,6 +20,7 @@ import scala.collection.mutable.ArrayBuffer
 import java.util
 import BitHacks._
 import org.bridj.Pointer
+import scala.Array
 
 /**
  * TODO
@@ -85,9 +86,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     queue.release()
   }
 
-
   val cellSize = data.map(d => ((d.structure.numNonTerms max d.structure.numTerms)+31)/32 * 32).max
-
 
   val (numGPUCells:Int, numGPUChartCells: Int) = {
     val sizeOfFloat = 4
@@ -138,7 +137,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   private val parsers = data.map(new ActualParser(_))
 
-  def debugRaces = true
+  def debugRaces = false//true
   def debugCharts = false
 
   def debugFinish() {
@@ -179,12 +178,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       hdTransferEvents += init
       memFillEvents += eZC
 
-      var ev = doUnaryUpdates(batch, 1, init)
+      var ev = insideTU.doUpdates(batch, 1, init)
 
       for(span <- 2 to batch.maxLength) {
         println(span)
         ev = insideBinaryPass(batch, span, ev)
-        ev = doUnaryUpdates(batch, span, ev)
+        ev = insideNU.doUpdates(batch, span, ev)
       }
       debugCharts(batch)
 
@@ -235,7 +234,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     }
 
     def computeViterbiMasks(batch: Batch, events: CLEvent*):(CLMatrix[Int], CLEvent) = synchronized {
-      computeMasks(batch, -1E-3f, "viterbi", events:_*)
+      computeMasks(batch, -1E-2f, "viterbi", events:_*)
     }
 
 
@@ -306,6 +305,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private val insideTop = {(b: Batch, s: Int) =>  b.insideCharts(s).top}
     private val outsideBot = {(b: Batch, s: Int) =>  b.outsideCharts.get(s).bot}
     private val outsideTop = {(b: Batch, s: Int) =>  b.outsideCharts.get(s).top}
+
+
+    private def insideTU = new UnaryUpdateManager(this, data.inside.insideTUKernels, insideTop, insideBot)
+    private def insideNU = new UnaryUpdateManager(this, data.inside.insideNUKernels, insideTop, insideBot)
 
     private def insideTT = new BinaryUpdateManager(this, data.inside.insideTTKernels, insideBot, insideBot, insideBot, (b, e, l) => (b+1 to b+1))
     private def insideNT = new BinaryUpdateManager(this, data.inside.insideNTKernels, insideBot, insideTop, insideBot, (b, e, l) => (e-1 to e-1))
@@ -415,46 +418,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       }
       trees
-    }
-
-    def doUnaryUpdates(batch: Batch, span: Int, events: CLEvent*) = {
-      import batch._
-      var offset = 0
-      def enqueue(parent: Array[Int], left: Array[Int]) {
-        parent.copyToArray(pArray, offset)
-        left.copyToArray(lArray, offset)
-        offset += parent.length
-      }
-
-      for(sent <- 0 until batch.numSentences if batch.sentences(sent).length >= span) {
-        enqueue(batch.insideCharts(sent).top.spanRangeSlice(span),
-          batch.insideCharts(sent).bot.spanRangeSlice(span))
-      }
-
-      val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, events:_*)
-      memFillEvents += zz
-
-      val wevl = devLeftPointers.write(queue, Pointer.pointerToArray[Integer](lArray), false, events:_*)
-      debugFinish()
-      val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
-      transferEvents += wl
-      transferEvents += wevl
-      debugFinish()
-
-      val kernels = if(span == 1) data.inside.insideTUKernels else data.inside.insideNUKernels
-      val endEvents = kernels.map{(kernel) =>
-        kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(totalLengthForSpan(span)))
-        kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), wl, zz)
-      }
-      debugFinish()
-      unaryEvents ++= endEvents
-
-
-      val ev2 = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, endEvents:_*)
-      val ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*)
-      debugFinish()
-      sumToChartsEvents += ev
-      ev
     }
 
     def doOutsideUnaryUpdates(batch: Batch, span: Int, events: CLEvent*) = {
@@ -679,6 +642,78 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     }
 
   }
+
+  private class UnaryUpdateManager(parser: ActualParser,
+                                    kernels: IndexedSeq[CLKernel],
+                                    parentChart: (Batch,Int)=>ChartHalf,
+                                    childChart: (Batch,Int)=>ChartHalf) {
+
+    var offset = 0 // number of cells used so far.
+
+    var ev = Seq.empty[CLEvent]
+
+    private def enqueue(span: Int, parent: Int, left: Int) {
+      lArray(offset) = left
+      pArray(offset) = parent
+      offset += 1
+      if(offset >= numGPUCells)  {
+        println(s"flush!")
+        flushQueue(span)
+      }
+    }
+
+    private def flushQueue(span: Int) = {
+      if(offset != 0) {
+        val zz = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*)
+        memFillEvents += zz
+
+        val wevl = devLeftPointers.write(queue, Pointer.pointerToArray[Integer](lArray), false, ev:_*)
+        debugFinish()
+        val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
+        transferEvents += wl
+        transferEvents += wevl
+        debugFinish()
+
+        val endEvents = kernels.map{(kernel) =>
+          kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, parser.devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
+          kernel.enqueueNDRange(queue, Array(offset), wl, zz)
+        }
+        debugFinish()
+        unaryEvents ++= endEvents
+
+        val ev2 = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, endEvents:_*)
+        val _ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*)
+        debugFinish()
+        sumToChartsEvents += _ev
+        offset = 0
+        this.ev = IndexedSeq(_ev)
+      }
+    }
+
+    def doUpdates(batch: Batch, span: Int, events: CLEvent*) = {
+      ev = events
+
+      for {
+        sent <- 0 until batch.numSentences
+        start <- 0 to batch.sentences(sent).length - span
+        if batch.allowedSpan(sent, start, start + span)
+      } {
+        val end = start + span
+        val parentTi = parentChart(batch, sent).treeIndex(start,end)
+        val child = childChart(batch, sent).treeIndex(start,end)
+
+        enqueue(span, parentTi, child)
+      }
+
+      if(offset > 0) {
+        flushQueue(span)
+      }
+
+      assert(ev.length == 1)
+      ev.head
+    }
+
+  }
 }
 
 object CLParser extends Logging {
@@ -708,10 +743,10 @@ object CLParser extends Logging {
       val gpu = JavaCL.listPlatforms.flatMap(_.listGPUDevices(true)).head
       JavaCL.createContext(new java.util.HashMap(), gpu)
     } else {
-      val gpu = JavaCL.listPlatforms.flatMap(_.listGPUDevices(true)).last
-      JavaCL.createContext(new java.util.HashMap(), gpu)
-//      val cpuPlatform:CLPlatform = JavaCL.listPlatforms().filter(_.listCPUDevices(true).nonEmpty).head
-//      cpuPlatform.createContext(new java.util.HashMap(), cpuPlatform.listCPUDevices(true):_*)
+//      val gpu = JavaCL.listPlatforms.flatMap(_.listGPUDevices(true)).last
+//      JavaCL.createContext(new java.util.HashMap(), gpu)
+      val cpuPlatform:CLPlatform = JavaCL.listPlatforms().filter(_.listCPUDevices(true).nonEmpty).head
+      cpuPlatform.createContext(new java.util.HashMap(), cpuPlatform.listCPUDevices(true):_*)
     }
     println(context)
 

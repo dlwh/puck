@@ -130,7 +130,7 @@ object CLParserUtils {
 
 
     val blockSize = 32
-    val groupSize = if(context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel")) {
+    val groupSize = if(true && context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel") && context.getDevices.head.toString.contains("Core")) {
       1
     } else {
       val x = context.getDevices.head.getMaxWorkItemSizes
