@@ -50,16 +50,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     }.toIndexedSeq
   }
 
-
-
   def partitions(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[Float] = synchronized {
     {for {
       batch <- getBatches(sentences).iterator
       evi = parsers.last.inside(batch)
-      _ = if(needsOutside) parsers.last.outside(batch, evi).waitFor() else evi.waitFor
-//      _ = if(needsOutside) parsers.last.outside(batch, evi).waitFor() else evi.waitFor
-      evi3 = parsers.last.inside(batch)
-      _ = evi3.waitFor()
       i <- 0 until batch.numSentences
     } yield {
       batch.insideCharts(i).top(0,batch.insideCharts(i).length, data.head.structure.root)
@@ -140,14 +134,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   private val parsers = data.map(new ActualParser(_))
 
-  def debugRaces = false//true
-  def debugCharts = false
-
-  def debugFinish() {
-    if(debugRaces || debugCharts) queue.finish()
-  }
-
-
 
   private class ActualParser(val data: CLParserData[C, L, W]) {
     import data._
@@ -158,19 +144,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def _zero: Float = data.semiring.zero
     def _one: Float = data.semiring.one
 
-    def debugCharts(batch: Batch) {
-      if(CLParser.this.debugCharts) {
-        println("inside")
-        println(batch.insideCharts(0).bot.toString(structure, _zero))
-        println(batch.insideCharts(0).top.toString(structure, _zero))
-        if(needsOutside) {
-
-          println("outside")
-          println(batch.outsideCharts.get(0).bot.toString(structure, _zero))
-          println(batch.outsideCharts.get(0).top.toString(structure, _zero))
-        }
-      }
-    }
 
     def inside(batch: Batch, events: CLEvent*):CLEvent = synchronized {
       allProfilers.foreach(_.clear())
@@ -188,9 +161,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         ev = insideBinaryPass(batch, span, ev)
         ev = insideNU.doUpdates(batch, span, ev)
       }
-      debugCharts(batch)
-
-      debugFinish()
 
       if(profile) {
         queue.finish()
@@ -203,33 +173,28 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def outside(batch: Batch, event: CLEvent):CLEvent = synchronized {
       var ev = event
-      /*
       allProfilers.foreach(_.clear())
       allProfilers.foreach(_.tick())
 
-
       ev = data.util.setRootScores(devCharts, batch.outsideCharts.get.map(_.top.rootIndex).toArray, structure.root, _one, ev)
-//      ev = outsideNU.doUpdates(batch, batch.maxLength, ev)
+      ev = outsideNU.doUpdates(batch, batch.maxLength, ev)
 
       for(span <- (batch.maxLength-1) to 1 by -1) {
         println(span)
-//        ev = outsideBinaryPass(batch, span, ev)
-//        if(span == 1) {
-//          ev = outsideTU.doUpdates(batch, span, ev)
-//        } else {
-//          ev = outsideNU.doUpdates(batch, span, ev)
-//        }
-        debugFinish()
+        ev = outsideBinaryPass(batch, span, ev)
+        if(span == 1) {
+          ev = outsideTU.doUpdates(batch, span, ev)
+        } else {
+          ev = outsideNU.doUpdates(batch, span, ev)
+        }
+
       }
 
-//      ev = outsideTT_L.doUpdates(batch, 1, ev)
-//      ev = outsideNT_R.doUpdates(batch, 1, ev)
-//      ev = outsideTN_L.doUpdates(batch, 1, ev)
-//      ev = outsideTT_R.doUpdates(batch, 1, ev)
+      ev = outsideTT_L.doUpdates(batch, 1, ev)
+      ev = outsideNT_R.doUpdates(batch, 1, ev)
+      ev = outsideTN_L.doUpdates(batch, 1, ev)
+      ev = outsideTT_R.doUpdates(batch, 1, ev)
 
-      debugCharts(batch)
-
-      debugFinish()
 
       if(profile) {
         queue.finish()
@@ -237,7 +202,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         Thread.sleep(15)
         allProfilers.foreach(p => println(s"Outside $p"))
       }
-      */
 
       ev
     }
@@ -259,7 +223,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val ev2 = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, events:_*)
       val ev = devParent(0 until totalLength, ::).writeFrom(dm, false, ev2)
       val evr = transposeCopy.permuteTransposeCopyOut(devCharts,  devParentPointers, totalLengthForSpan(1), devParent(0 until totalLength, ::), (ev2 +: ev):_*)
-      debugFinish()
+
       evr
     }
 
@@ -295,13 +259,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       masks -> ev
     }
 
-
-
     private def insideBinaryPass(batch: Batch, span: Int, events: CLEvent*) = {
       var ev = events
       if(span == 2) {
         ev = Seq(insideTT.doUpdates(batch, span, ev :_*))
-        debugFinish()
       }
 
       ev = Seq(insideNT.doUpdates(batch, span, ev :_*))
@@ -310,11 +271,22 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev.head
     }
 
+    private def outsideBinaryPass(batch: Batch, span: Int, events: CLEvent) = {
+      var ev = events
+
+
+      ev = outsideTN_R.doUpdates(batch, span, ev)
+      ev = outsideNT_L.doUpdates(batch, span, ev)
+      ev = outsideNN_L.doUpdates(batch, span, ev)
+      ev = outsideNN_R.doUpdates(batch, span, ev)
+
+      ev
+    }
+
     private val insideBot = {(b: Batch, s: Int) =>  b.insideCharts(s).bot}
     private val insideTop = {(b: Batch, s: Int) =>  b.insideCharts(s).top}
     private val outsideBot = {(b: Batch, s: Int) =>  b.outsideCharts.get(s).bot}
     private val outsideTop = {(b: Batch, s: Int) =>  b.outsideCharts.get(s).top}
-
 
     private def insideTU = new UnaryUpdateManager(this, data.inside.insideTUKernels, insideTop, insideBot)
     private def insideNU = new UnaryUpdateManager(this, data.inside.insideNUKernels, insideTop, insideBot)
@@ -323,23 +295,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def insideNT = new BinaryUpdateManager(this, data.inside.insideNTKernels, insideBot, insideTop, insideBot, (b, e, l) => (e-1 to e-1))
     private def insideTN = new BinaryUpdateManager(this, data.inside.insideTNKernels, insideBot, insideBot, insideTop, (b, e, l) => (b+1 to b+1))
     private def insideNN = new BinaryUpdateManager(this, data.inside.insideNNKernels, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1))
-
-    private def outsideBinaryPass(batch: Batch, span: Int, events: CLEvent) = {
-      var ev = events
-
-      debugFinish()
-      ev = outsideTN_R.doUpdates(batch, span, ev)
-      debugFinish()
-      ev = outsideNT_L.doUpdates(batch, span, ev)
-      debugFinish()
-      ev = outsideNN_L.doUpdates(batch, span, ev)
-      debugFinish()
-      ev = outsideNN_R.doUpdates(batch, span, ev)
-      debugFinish()
-      ev
-    }
-
-
 
     // here, "parentChart" is actually the left child, left is the parent, right is the right completion
     private def outsideTT_L = new BinaryUpdateManager(this, data.outside.get.outside_L_TTKernels, outsideBot, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
@@ -454,14 +409,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
       transferEvents += wevl
       transferEvents += wl
-      debugFinish()
+
 
       val kernels = if(span == 1) data.outside.get.outsideTUKernels else data.outside.get.outsideNUKernels
       val endEvents = kernels.map{(kernel) =>
         kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(totalLengthForSpan(span)))
         kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), wl, zz)
       }
-      debugFinish()
+
       unaryEvents ++= endEvents
 
       val ev2 = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, endEvents:_*)
@@ -589,7 +544,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val wevr = devRightPointers.write(queue, Pointer.pointerToArray[Integer](rArray), false, ev:_*)
         val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
         val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, devRightPointers, offset, wevr)
-        debugFinish()
+
         transferEvents += wl
         transferEvents += wr
         transferEvents += wevl
@@ -601,17 +556,18 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           kernel.enqueueNDRange(queue, Array(offset), wl, wr, zz)
         }
 
-        debugFinish()
+
         binaryEvents ++= ev
         val sumEv = parser.data.util.sumSplitPoints(devParent,
           devCharts,
           java.util.Arrays.copyOf(pArray, parentOffset),
           java.util.Arrays.copyOf(splitPointOffsets, parentOffset + 1),
           32 / span max 1, ev:_*)
-        debugFinish()
+
 
         sumEvents += sumEv
         ev = IndexedSeq(sumEv)
+        queue.finish()
         offset = 0
         parentOffset = 0
       }
@@ -680,22 +636,22 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         memFillEvents += zz
 
         val wevl = devLeftPointers.write(queue, Pointer.pointerToArray[Integer](lArray), false, ev:_*)
-        debugFinish()
+
         val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
         transferEvents += wl
         transferEvents += wevl
-        debugFinish()
 
-        val endEvents = kernels.map{(kernel) =>
+        val endEvents = kernels.map{ kernel  =>
           kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, parser.devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
           kernel.enqueueNDRange(queue, Array(offset), wl, zz)
         }
-        debugFinish()
+
         unaryEvents ++= endEvents
 
         val ev2 = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, endEvents:_*)
         val _ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*)
-        debugFinish()
+
+        queue.finish()
         sumToChartsEvents += _ev
         offset = 0
         this.ev = IndexedSeq(_ev)
