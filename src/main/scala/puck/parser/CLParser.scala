@@ -316,8 +316,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val insideEvents = inside(batch, ev:_*)
       val outsideEvents = outside(batch, insideEvents)
       val (masks, ev2) = computeMasks(batch, -7, "masks", outsideEvents)
-      val denseMasks = masks.toDense
       ev2.waitFor()
+      val denseMasks = masks.toDense
       batch.copy(allowedSpan = (sent, begin, end) => denseMasks(::, batch.insideCellOffsets(sent) + ChartHalf.chartIndex(begin, end, batch.sentences(sent).length)).any)
     }
 
