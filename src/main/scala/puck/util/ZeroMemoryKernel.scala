@@ -37,7 +37,6 @@ __kernel void shaped_fill(__global float* data, int beginOffset, int rows, int c
     math.min(size0, 32).toInt
   }
 
-
   val kernel = program.createKernel("mem_zero")
   val shapedKernel = program.createKernel("shaped_fill")
 

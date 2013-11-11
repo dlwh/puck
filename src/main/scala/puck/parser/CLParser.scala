@@ -515,14 +515,16 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, parser.devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
           kernel.enqueueNDRange(queue, Array(offset), wl, wr, zz)
         }
-
-
         binaryEvents ++= ev
+
+        val wevp = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, ev:_*)
+        transferEvents += wevp
+
         val sumEv = parser.data.util.sumSplitPoints(devParent,
           devCharts,
-          java.util.Arrays.copyOf(pArray, parentOffset),
+          devParentPointers, parentOffset,
           java.util.Arrays.copyOf(splitPointOffsets, parentOffset + 1),
-          32 / span max 1, ev:_*)
+          32 / span max 1, wevp)
 
 
         sumEvents += sumEv
