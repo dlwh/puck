@@ -387,46 +387,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       trees
     }
 
-    def doOutsideUnaryUpdates(batch: Batch, span: Int, events: CLEvent*) = {
-      import batch._
-      var offset = 0
-      def enqueue(parent: Array[Int], left: Array[Int]) {
-        assert(parent.forall(_ < devCharts.cols))
-        parent.copyToArray(pArray, offset)
-        left.copyToArray(lArray, offset)
-        offset += parent.length
-      }
-      for(sent <- 0 until batch.numSentences if batch.sentences(sent).length >= span) {
-        enqueue(batch.outsideCharts.get(sent).bot.spanRangeSlice(span),
-          batch.outsideCharts.get(sent).top.spanRangeSlice(span))
-      }
-
-      val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, events:_*)
-      memFillEvents += zz
-      val wevl = devLeftPointers.write(queue, Pointer.pointerToArray[Integer](lArray), false, events:_*)
-      wevl.waitFor
-
-      val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
-      transferEvents += wevl
-      transferEvents += wl
-
-
-      val kernels = if(span == 1) data.outside.get.outsideTUKernels else data.outside.get.outsideNUKernels
-      val endEvents = kernels.map{(kernel) =>
-        kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRules, Integer.valueOf(numGPUCells), Integer.valueOf(totalLengthForSpan(span)))
-        kernel.enqueueNDRange(queue, Array(totalLengthForSpan(span)), wl, zz)
-      }
-
-      unaryEvents ++= endEvents
-
-      val ev2 = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, endEvents:_*)
-      ev2.waitFor
-      transferEvents += ev2
-      val ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*)
-      sumToChartsEvents += ev
-      ev
-    }
-
   }
 
   private case class Batch(lengthTotals: Array[Int],
