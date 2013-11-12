@@ -642,6 +642,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 object CLParser extends Logging {
 
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = Xbarize(),
+                    prune: Boolean = false,
                     useGPU: Boolean = true, profile: Boolean = false,
                     numToParse: Int = 1000, codeCache: File = new File("grammar.grz"),
                     jvmParse: Boolean = false, parseTwice: Boolean = false,
@@ -655,9 +656,14 @@ object CLParser extends Logging {
     import myParams._
     println("Training Parser...")
     println(params)
-    val transformed = params.treebank.trainTrees.par.map { ti => annotator(ti) }.seq.toIndexedSeq
-    val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = if(textGrammarPrefix == null) {
+
+    lazy val genGrammar = {
+      val transformed = params.treebank.trainTrees.par.map { ti => annotator(ti) }.seq.toIndexedSeq
       GenerativeParser.extractGrammar(AnnotatedLabel.TOP, transformed)
+    }
+
+    val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = if(textGrammarPrefix == null) {
+      genGrammar
     } else {
       SimpleRefinedGrammar.parseBerkeleyText(textGrammarPrefix, -10)
     }
@@ -687,8 +693,13 @@ object CLParser extends Logging {
       }
     }
 
-    val kern = fromParserData[AnnotatedLabel, AnnotatedLabel, String](parserData, profile)
-    val train = transformed.slice(1, 1+numToParse).map(_.words)
+    val kern = if(prune) {
+      val genData = if(grammar eq genGrammar) parserData else CLParserData.make(genGrammar)
+      fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](IndexedSeq(genData, parserData), profile)
+    } else {
+      fromParserData[AnnotatedLabel, AnnotatedLabel, String](parserData, profile)
+    }
+    val train =  params.treebank.trainTrees.take(numToParse).map(_.words)
 
 
     if(checkPartitions) {
@@ -743,6 +754,11 @@ object CLParser extends Logging {
 
   def fromParserData[L, L2, W](data: CLParserData[L, L2, W], profile: Boolean)(implicit context: CLContext): CLParser[L, L2, W] = {
     val kern = new CLParser[L, L2, W](IndexedSeq(data), profile = profile)
+    kern
+  }
+
+  def fromParserDatas[L, L2, W](data: IndexedSeq[CLParserData[L, L2, W]], profile: Boolean)(implicit context: CLContext): CLParser[L, L2, W] = {
+    val kern = new CLParser[L, L2, W](data, profile = profile)
     kern
   }
 
