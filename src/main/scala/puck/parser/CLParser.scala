@@ -6,20 +6,18 @@ import com.nativelibs4java.opencl._
 import com.typesafe.scalalogging.log4j.Logging
 import puck.util.{ZipUtil, BitHacks, ZeroMemoryKernel, CLProfiler}
 import puck.linalg.CLMatrix
-import java.nio.{ByteOrder, ByteBuffer, FloatBuffer}
+import java.nio.FloatBuffer
 import puck.linalg.kernels.CLMatrixTransposeCopy
 import breeze.collection.mutable.TriangularArray
-import breeze.linalg.{Counter, DenseVector, DenseMatrix}
-import epic.trees.annotations.{Xbarize, TreeAnnotator, FilterAnnotations}
+import breeze.linalg.{DenseVector, DenseMatrix}
+import epic.trees.annotations.{Xbarize, TreeAnnotator}
 import epic.parser._
 import breeze.config.CommandLineParser
 import epic.trees._
 import java.io.{BufferedOutputStream, FileOutputStream, File, OutputStream}
-import java.util.zip.{ZipInputStream, ZipFile, ZipOutputStream}
+import java.util.zip.{ZipFile, ZipOutputStream}
 import scala.collection.mutable.ArrayBuffer
-import java.util
 import BitHacks._
-import org.bridj.Pointer
 import scala.Array
 
 /**
@@ -82,6 +80,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     devRight.release()
     parsers.foreach(_.release())
     queue.release()
+    devParentPtrs.release()
+    devLeftPtrs.release()
+    devRightPtrs.release()
   }
 
   val cellSize = data.map(d => ((d.structure.numNonTerms max d.structure.numTerms)+31)/32 * 32).max
@@ -120,7 +121,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   // finally, we have the array of parse charts, which is insanely large. It's also where
   // we do rescaling, etc.
   private val devParent, devLeft, devRight = new CLMatrix[Float](numGPUCells, cellSize)
-  private val devParentPointers, devLeftPointers, devRightPointers = context.createIntBuffer(CLMem.Usage.Input, numGPUCells)
+  private val devParentPtrs, devLeftPtrs, devRightPtrs = context.createIntBuffer(CLMem.Usage.Input, numGPUCells)
   private val devSplitPointOffsets = context.createIntBuffer(CLMem.Usage.Input, numGPUCells + 1)
   // transposed
   private val devCharts = new CLMatrix[Float](cellSize, numGPUChartCells)
@@ -172,8 +173,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       allProfilers.foreach(_.clear())
       allProfilers.foreach(_.tick())
 
-      ev = devParentPointers.writeArray(queue, batch.outsideCharts.get.map(_.top.rootIndex).toArray, batch.outsideCharts.get.length, ev) profileIn hdTransferEvents
-      ev = data.util.setRootScores(devCharts, devParentPointers, batch.outsideCharts.get.length, structure.root, data.semiring.one, ev) profileIn memFillEvents
+      ev = devParentPtrs.writeArray(queue, batch.outsideCharts.get.map(_.top.rootIndex).toArray, batch.outsideCharts.get.length, ev) profileIn hdTransferEvents
+      ev = data.util.setRootScores(devCharts, devParentPtrs, batch.outsideCharts.get.length, structure.root, data.semiring.one, ev) profileIn memFillEvents
 
       ev = outsideNU.doUpdates(batch, batch.maxLength, ev)
 
@@ -219,9 +220,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         parent.copyToArray(pArray, _workArrayOffsetsForSpan(1)(i) )
       }
 
-      val ev2 = devParentPointers.writeArray(queue, pArray, totalLengthForSpan(1), events:_*) profileIn hdTransferEvents
+      val ev2 = devParentPtrs.writeArray(queue, pArray, totalLengthForSpan(1), events:_*) profileIn hdTransferEvents
       val ev = devParent(0 until totalLength, ::).writeFrom(dm, false, ev2) map (_ profileIn  hdTransferEvents)
-      transposeCopy.permuteTransposeCopyOut(devCharts,  devParentPointers, totalLengthForSpan(1), devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn sumToChartsEvents
+      transposeCopy.permuteTransposeCopyOut(devCharts,  devParentPtrs, totalLengthForSpan(1), devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn sumToChartsEvents
     }
 
 
@@ -314,7 +315,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val (masks, ev2) = computeMasks(batch, -7, "masks", outsideEvents)
       ev2.waitFor()
       val denseMasks = masks.toDense
-      batch.copy(allowedSpan = (sent, begin, end) => denseMasks(::, batch.insideCellOffsets(sent) + ChartHalf.chartIndex(begin, end, batch.sentences(sent).length)).any)
+      batch.copy(masks = Some(IndexedSeq.tabulate(batch.numSentences)(sent => TriangularArray.tabulate(batch.sentences(sent).length+1)((begin, end) =>
+        if(begin == end) null
+        else denseMasks(::, batch.insideCellOffsets(sent) + ChartHalf.chartIndex(begin, end, batch.sentences(sent).length))))
+      ))
     }
 
     def extractParses(batch: Batch, masks: CLMatrix[Int], events: CLEvent*) = {
@@ -387,7 +391,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private case class Batch(lengthTotals: Array[Int],
                            insideCellOffsets: Array[Int],
                            sentences: IndexedSeq[IndexedSeq[W]],
-                           allowedSpan: (Int, Int, Int)=>Boolean = (_, _, _) => true) {
+                           masks: Option[IndexedSeq[TriangularArray[DenseVector[Int]]]]) {
     def totalLength = lengthTotals.last
     def numSentences = sentences.length
     val maxLength = sentences.map(_.length).max
@@ -395,6 +399,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       assert(insideCellOffsets.last * 2 <= devCharts.cols)
     else
       assert(insideCellOffsets.last <= devCharts.cols)
+
+    def isAllowedSpan(sent: Int, begin: Int, end: Int) = masks match {
+      case None => true
+      case Some(m) => m(sent)(begin, end).any
+    }
 
 
     val _workArrayOffsetsForSpan = Array.tabulate(maxLength+1)(span => sentences.scanLeft(0)((off, sent) => off + math.max(0,sent.length-span+1)).toArray)
@@ -423,7 +432,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         chart
       }
     }
-
 
   }
 
@@ -458,7 +466,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     val cellTotals = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2)
     if(needsOutside)
       assert(cellTotals.last * 2 <= devCharts.cols, cellTotals.last * 2 + " " +  devCharts.cols)
-    Batch(lengthTotals.toArray, cellTotals.toArray, sentences)
+    Batch(lengthTotals.toArray, cellTotals.toArray, sentences, None)
   }
 
   private class BinaryUpdateManager(parser: ActualParser,
@@ -497,15 +505,15 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         splitPointOffsets(parentOffset) = offset
 
         // copy ptrs to opencl
-        val evTLeftPtrs  = devLeftPointers.writeArray(queue, lArray, offset, ev:_*) profileIn hdTransferEvents
-        val evTRightPtrs = devRightPointers.writeArray(queue, rArray, offset, ev:_*) profileIn hdTransferEvents
+        val evTLeftPtrs  =  devLeftPtrs.writeArray(queue, lArray, offset, ev:_*) profileIn hdTransferEvents
+        val evTRightPtrs = devRightPtrs.writeArray(queue, rArray, offset, ev:_*) profileIn hdTransferEvents
 
         // do transpose based on ptrs
-        val evTransLeft  = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, evTLeftPtrs) profileIn transferEvents
-        val evTransRight = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, devRightPointers, offset, evTRightPtrs) profileIn transferEvents
+        val evTransLeft  = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPtrs, offset, evTLeftPtrs) profileIn transferEvents
+        val evTransRight = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, devRightPtrs, offset, evTRightPtrs) profileIn transferEvents
 
         // copy parent pointers
-        val evWriteDevParent = devParentPointers.writeArray(queue, pArray, parentOffset, ev:_*) profileIn hdTransferEvents
+        val evWriteDevParent = devParentPtrs.writeArray(queue, pArray, parentOffset, ev:_*) profileIn hdTransferEvents
         // corresponding splits
         val evWriteDevSplitPoint = devSplitPointOffsets.writeArray(queue, splitPointOffsets, parentOffset + 1, ev:_*) profileIn hdTransferEvents
 
@@ -519,7 +527,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
         val sumEv = parser.data.util.sumSplitPoints(devParent,
           devCharts,
-          devParentPointers, parentOffset,
+          devParentPtrs, parentOffset,
           devSplitPointOffsets,
           32 / span max 1, evWriteDevParent, evWriteDevSplitPoint) profileIn sumEvents
 
@@ -542,14 +550,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       for {
         sent <- 0 until batch.numSentences
         start <- 0 to batch.sentences(sent).length - span
-        if batch.allowedSpan(sent, start, start + span)
+        if batch.isAllowedSpan(sent, start, start + span)
         split <- ranger(start, start + span, batch.sentences(sent).length)
         if split >= 0 && split <= batch.sentences(sent).length
       } {
         val end = start + span
         val parentTi = parentChart(batch, sent).treeIndex(start,end)
-        val leftChildAllowed = if(split < start) batch.allowedSpan(sent,split, start) else batch.allowedSpan(sent,start, split)
-        val rightChildAllowed = if(split < end) batch.allowedSpan(sent,split,end) else batch.allowedSpan(sent,end, split)
+        val leftChildAllowed = if(split < start) batch.isAllowedSpan(sent,split, start) else batch.isAllowedSpan(sent, start, split)
+        val rightChildAllowed = if(split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
 
         if(leftChildAllowed && rightChildAllowed) {
           val leftChild = if(split < start) leftChart(batch, sent).treeIndex(split,start) else leftChart(batch, sent).treeIndex(start, split)
@@ -592,9 +600,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       if(offset != 0) {
         val zz = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
 
-        val wevl = devLeftPointers.writeArray(queue, lArray, offset, ev:_*) profileIn hdTransferEvents
+        val wevl = devLeftPtrs.writeArray(queue, lArray, offset, ev:_*) profileIn hdTransferEvents
 
-        val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl) profileIn transferEvents
+        val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPtrs, offset, wevl) profileIn transferEvents
 
         val endEvents = kernels.map{ kernel  =>
           kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, parser.devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
@@ -602,10 +610,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         }
 
 
-        val ev2 = devParentPointers.writeArray(queue, pArray, offset, ev:_*) profileIn hdTransferEvents
+        val ev2 = devParentPtrs.writeArray(queue, pArray, offset, ev:_*) profileIn hdTransferEvents
 
-        val _ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*) profileIn sumToChartsEvents
-
+        val _ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPtrs, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*) profileIn sumToChartsEvents
 
         queue.finish()
         offset = 0
@@ -619,7 +626,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       for {
         sent <- 0 until batch.numSentences
         start <- 0 to batch.sentences(sent).length - span
-        if batch.allowedSpan(sent, start, start + span)
+        if batch.isAllowedSpan(sent, start, start + span)
       } {
         val end = start + span
         val parentTi = parentChart(batch, sent).treeIndex(start,end)
@@ -699,6 +706,7 @@ object CLParser extends Logging {
     } else {
       fromParserData[AnnotatedLabel, AnnotatedLabel, String](parserData, profile)
     }
+
     val train =  params.treebank.trainTrees.take(numToParse).map(_.words)
 
 
