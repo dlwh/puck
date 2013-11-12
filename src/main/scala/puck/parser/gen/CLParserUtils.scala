@@ -33,25 +33,16 @@ case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKer
   }
 
   def setRootScores(charts: CLMatrix[Float],
-                    chartIndices: Array[Int],
+                    chartIndices: CLBuffer[Integer], numChartIndices: Int,
                     root: Int,
                     one: Float,
                     events: CLEvent*)(implicit queue: CLQueue):CLEvent = {
 
-    val ptrCI = Pointer.pointerToArray[java.lang.Integer](chartIndices)
-    val intBufferCI = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, chartIndices.length)
-    val evCI = intBufferCI.write(queue, 0, chartIndices.length, ptrCI, false, events:_*)
-
-    setRootScoresKernel.setArgs(charts.data.safeBuffer, intBufferCI,
-      Integer.valueOf(chartIndices.length), Integer.valueOf(charts.rows),
+    setRootScoresKernel.setArgs(charts.data.safeBuffer, chartIndices,
+      Integer.valueOf(numChartIndices), Integer.valueOf(charts.rows),
       Integer.valueOf(root), java.lang.Float.valueOf(one))
 
-    val ev = setRootScoresKernel.enqueueNDRange(queue, Array(chartIndices.length), evCI)
-
-    ev.invokeUponCompletion(new Runnable() {
-      def run() = { ptrCI.release(); intBufferCI.release();}
-    })
-    ev
+    setRootScoresKernel.enqueueNDRange(queue, Array(numChartIndices), events:_*)
   }
 
   def getMasks(masks: CLMatrix[Int],

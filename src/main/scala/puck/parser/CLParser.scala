@@ -143,7 +143,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def release() { devRules.release() }
 
     def _zero: Float = data.semiring.zero
-    def _one: Float = data.semiring.one
 
 
     def inside(batch: Batch, events: CLEvent*):CLEvent = synchronized {
@@ -177,7 +176,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       allProfilers.foreach(_.clear())
       allProfilers.foreach(_.tick())
 
-      ev = data.util.setRootScores(devCharts, batch.outsideCharts.get.map(_.top.rootIndex).toArray, structure.root, _one, ev)
+      ev = devParentPointers.write(queue, Pointer.pointerToArray[Integer](batch.outsideCharts.get.map(_.top.rootIndex).toArray), false, ev)
+      transferEvents += ev
+      ev = data.util.setRootScores(devCharts, devParentPointers, batch.outsideCharts.get.length, structure.root, data.semiring.one, ev)
+
       ev = outsideNU.doUpdates(batch, batch.maxLength, ev)
 
       for(span <- (batch.maxLength-1) to 1 by -1) {
