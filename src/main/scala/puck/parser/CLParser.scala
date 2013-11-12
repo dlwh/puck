@@ -65,6 +65,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   def needsOutside = true
   def isViterbi = data.last.isViterbi
 
+  private val initMemFillEvents  = new CLProfiler("initMemfill")
   private val memFillEvents  = new CLProfiler("memfill")
   private val hdTransferEvents  = new CLProfiler("Host2Dev Transfer")
   private val transferEvents  = new CLProfiler("Transfer")
@@ -72,7 +73,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val unaryEvents  = new CLProfiler("Unary")
   private val sumToChartsEvents  = new CLProfiler("SumToCharts")
   private val sumEvents  = new CLProfiler("Sum")
-  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, sumToChartsEvents, sumEvents, memFillEvents, hdTransferEvents)
+  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, sumToChartsEvents, sumEvents, initMemFillEvents, memFillEvents, hdTransferEvents)
 
   def release() {
     devParent.release()
@@ -132,9 +133,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val zmk = ZeroMemoryKernel()
   private val transposeCopy = CLMatrixTransposeCopy()
 
-
   private val parsers = data.map(new ActualParser(_))
-
 
   private class ActualParser(val data: CLParserData[C, L, W]) {
     import data._
@@ -144,15 +143,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def _zero: Float = data.semiring.zero
 
-
     def inside(batch: Batch, events: CLEvent*):CLEvent = synchronized {
       allProfilers.foreach(_.clear())
       allProfilers.foreach(_.tick())
 
-      var eZC = zmk.fillMemory(devCharts.data, _zero, events:_*)
-      val init = initializeTagScores(batch, eZC)
-      hdTransferEvents.prof(init)
-      memFillEvents.prof(eZC)
+      val evZeroCharts = zmk.fillMemory(devCharts.data, _zero, events:_*) profileIn initMemFillEvents
+      val init = initializeTagScores(batch, evZeroCharts)
 
       var ev = insideTU.doUpdates(batch, 1, init)
 
@@ -176,9 +172,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       allProfilers.foreach(_.clear())
       allProfilers.foreach(_.tick())
 
-      ev = devParentPointers.writeArray(queue, batch.outsideCharts.get.map(_.top.rootIndex).toArray, batch.outsideCharts.get.length, ev)
-      hdTransferEvents.prof(ev)
-      ev = data.util.setRootScores(devCharts, devParentPointers, batch.outsideCharts.get.length, structure.root, data.semiring.one, ev)
+      ev = devParentPointers.writeArray(queue, batch.outsideCharts.get.map(_.top.rootIndex).toArray, batch.outsideCharts.get.length, ev) profileIn hdTransferEvents
+      ev = data.util.setRootScores(devCharts, devParentPointers, batch.outsideCharts.get.length, structure.root, data.semiring.one, ev) profileIn memFillEvents
 
       ev = outsideNU.doUpdates(batch, batch.maxLength, ev)
 
@@ -223,13 +218,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val parent = insideCharts(i).bot.spanRangeSlice(1)
         parent.copyToArray(pArray, _workArrayOffsetsForSpan(1)(i) )
       }
-      val ev2 = devParentPointers.writeArray(queue, pArray, totalLengthForSpan(1), events:_*)
-      hdTransferEvents.prof(ev2)
-      val ev = devParent(0 until totalLength, ::).writeFrom(dm, false, ev2)
-      hdTransferEvents.prof(ev)
-      val evr = transposeCopy.permuteTransposeCopyOut(devCharts,  devParentPointers, totalLengthForSpan(1), devParent(0 until totalLength, ::), (ev2 +: ev):_*)
 
-      evr
+      val ev2 = devParentPointers.writeArray(queue, pArray, totalLengthForSpan(1), events:_*) profileIn hdTransferEvents
+      val ev = devParent(0 until totalLength, ::).writeFrom(dm, false, ev2) map (_ profileIn  hdTransferEvents)
+      transposeCopy.permuteTransposeCopyOut(devCharts,  devParentPointers, totalLengthForSpan(1), devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn sumToChartsEvents
     }
 
 
@@ -503,37 +495,35 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def flushQueue(span: Int) {
       if(offset != 0) {
         splitPointOffsets(parentOffset) = offset
-        val wevl = devLeftPointers.writeArray(queue, lArray, offset, ev:_*)
-        hdTransferEvents.prof(wevl)
-        val wevr = devRightPointers.writeArray(queue, rArray, offset, ev:_*)
-        hdTransferEvents.prof(wevr)
-        val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
-        val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, devRightPointers, offset, wevr)
 
-        transferEvents.prof(wl)
-        transferEvents.prof(wr)
-        val zz = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*)
-        memFillEvents.prof(zz)
+        // copy ptrs to opencl
+        val evTLeftPtrs  = devLeftPointers.writeArray(queue, lArray, offset, ev:_*) profileIn hdTransferEvents
+        val evTRightPtrs = devRightPointers.writeArray(queue, rArray, offset, ev:_*) profileIn hdTransferEvents
+
+        // do transpose based on ptrs
+        val evTransLeft  = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, evTLeftPtrs) profileIn transferEvents
+        val evTransRight = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, devRightPointers, offset, evTRightPtrs) profileIn transferEvents
+
+        // copy parent pointers
+        val evWriteDevParent = devParentPointers.writeArray(queue, pArray, parentOffset, ev:_*) profileIn hdTransferEvents
+        // corresponding splits
+        val evWriteDevSplitPoint = devSplitPointOffsets.writeArray(queue, splitPointOffsets, parentOffset + 1, ev:_*) profileIn hdTransferEvents
+
+        val zeroParent = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
+//        val zeroParent = zmk.fillMemory(devParent.data.safeBuffer, parser._zero, ev:_*) profileIn memFillEvents
         ev = kernels.map{ kernel =>
           kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, parser.devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
-          kernel.enqueueNDRange(queue, Array(offset), wl, wr, zz)
+          kernel.enqueueNDRange(queue, Array(offset), evTransLeft, evTransRight, zeroParent) profileIn binaryEvents
         }
-        binaryEvents.prof(ev)
 
-        val wevp = devParentPointers.writeArray(queue, pArray, parentOffset, ev:_*)
-        hdTransferEvents.prof(wevp)
-
-        val wevsplit = devSplitPointOffsets.writeArray(queue, splitPointOffsets, parentOffset + 1, ev:_*)
-        hdTransferEvents.prof(wevsplit)
 
         val sumEv = parser.data.util.sumSplitPoints(devParent,
           devCharts,
           devParentPointers, parentOffset,
           devSplitPointOffsets,
-          32 / span max 1, wevp, wevsplit)
+          32 / span max 1, evWriteDevParent, evWriteDevSplitPoint) profileIn sumEvents
 
 
-        sumEvents.prof(sumEv)
         ev = IndexedSeq(sumEv)
         queue.finish()
         offset = 0
@@ -600,30 +590,24 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     private def flushQueue(span: Int) = {
       if(offset != 0) {
-        val zz = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*)
-        memFillEvents.prof(zz)
+        val zz = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
 
-        val wevl = devLeftPointers.writeArray(queue, lArray, offset, ev:_*)
-        hdTransferEvents.prof(wevl)
+        val wevl = devLeftPointers.writeArray(queue, lArray, offset, ev:_*) profileIn hdTransferEvents
 
-        val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
-        transferEvents.prof(wl)
+        val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl) profileIn transferEvents
 
         val endEvents = kernels.map{ kernel  =>
           kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, parser.devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
-          kernel.enqueueNDRange(queue, Array(offset), wl, zz)
+          kernel.enqueueNDRange(queue, Array(offset), wl, zz) profileIn unaryEvents
         }
 
-        unaryEvents.prof(endEvents)
 
-        val ev2 = devParentPointers.writeArray(queue, pArray, offset, endEvents:_*)
-        hdTransferEvents.prof(ev2)
+        val ev2 = devParentPointers.writeArray(queue, pArray, offset, ev:_*) profileIn hdTransferEvents
 
-        val _ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*)
+        val _ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*) profileIn sumToChartsEvents
 
 
         queue.finish()
-        sumToChartsEvents.prof(_ev)
         offset = 0
         this.ev = IndexedSeq(_ev)
       }
@@ -823,6 +807,7 @@ object CLParserData {
     CLParserData(gr, structure, semiring, scores, inside, outside, util, semiring.plusIsIdempotent)
   }
 }
+
 
 
 
