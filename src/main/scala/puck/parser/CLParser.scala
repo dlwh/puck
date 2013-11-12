@@ -176,7 +176,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       allProfilers.foreach(_.clear())
       allProfilers.foreach(_.tick())
 
-      ev = devParentPointers.write(queue, Pointer.pointerToArray[Integer](batch.outsideCharts.get.map(_.top.rootIndex).toArray), false, ev)
+      ev = devParentPointers.writeArray(queue, batch.outsideCharts.get.map(_.top.rootIndex).toArray, batch.outsideCharts.get.length, ev)
       transferEvents += ev
       ev = data.util.setRootScores(devCharts, devParentPointers, batch.outsideCharts.get.length, structure.root, data.semiring.one, ev)
 
@@ -223,7 +223,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val parent = insideCharts(i).bot.spanRangeSlice(1)
         parent.copyToArray(pArray, _workArrayOffsetsForSpan(1)(i) )
       }
-      val ev2 = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, events:_*)
+      val ev2 = devParentPointers.writeArray(queue, pArray, totalLengthForSpan(1), events:_*)
       val ev = devParent(0 until totalLength, ::).writeFrom(dm, false, ev2)
       val evr = transposeCopy.permuteTransposeCopyOut(devCharts,  devParentPointers, totalLengthForSpan(1), devParent(0 until totalLength, ::), (ev2 +: ev):_*)
 
@@ -501,8 +501,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def flushQueue(span: Int) {
       if(offset != 0) {
         splitPointOffsets(parentOffset) = offset
-        val wevl = devLeftPointers.write(queue, Pointer.pointerToArray[Integer](lArray), false, ev:_*)
-        val wevr = devRightPointers.write(queue, Pointer.pointerToArray[Integer](rArray), false, ev:_*)
+        val wevl = devLeftPointers.writeArray(queue, lArray, offset, ev:_*)
+        val wevr = devRightPointers.writeArray(queue, rArray, offset, ev:_*)
         val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
         val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, devRightPointers, offset, wevr)
 
@@ -518,10 +518,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         }
         binaryEvents ++= ev
 
-        val wevp = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, ev:_*)
+        val wevp = devParentPointers.writeArray(queue, pArray, parentOffset, ev:_*)
         transferEvents += wevp
 
-        val wevsplit = devSplitPointOffsets.write(queue, Pointer.pointerToArray[Integer](splitPointOffsets), false, ev:_*)
+        val wevsplit = devSplitPointOffsets.writeArray(queue, splitPointOffsets, parentOffset + 1, ev:_*)
         transferEvents += wevsplit
 
         val sumEv = parser.data.util.sumSplitPoints(devParent,
@@ -601,7 +601,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val zz = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*)
         memFillEvents += zz
 
-        val wevl = devLeftPointers.write(queue, Pointer.pointerToArray[Integer](lArray), false, ev:_*)
+        val wevl = devLeftPointers.writeArray(queue, lArray, offset, ev:_*)
 
         val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
         transferEvents += wl
@@ -614,7 +614,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
         unaryEvents ++= endEvents
 
-        val ev2 = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, endEvents:_*)
+        val ev2 = devParentPointers.writeArray(queue, pArray, offset, endEvents:_*)
         val _ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*)
 
         queue.finish()
