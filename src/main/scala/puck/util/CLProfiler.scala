@@ -19,21 +19,21 @@ class CLProfiler(name: String) {
   }
 
   def +=(event: CLEvent):this.type = {
-    if (event ne null) events += event 
+    if (event ne null) events += event
     this
   }
 
   def ++=(event: Traversable[CLEvent]):this.type = {
-    if (event ne null) events ++= event 
+    if (event ne null) events ++= event
     this
   }
 
-  def apply(events: IndexedSeq[CLEvent]):events.type = {
+  def prof(events: Seq[CLEvent]):events.type = {
     this.events ++= events
     events
   }
 
-  def apply(event: CLEvent):event.type = {
+  def prof(event: CLEvent):event.type = {
     this.events += event
     event
   }

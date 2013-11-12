@@ -151,8 +151,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       var eZC = zmk.fillMemory(devCharts.data, _zero, events:_*)
       val init = initializeTagScores(batch, eZC)
-      hdTransferEvents += init
-      memFillEvents += eZC
+      hdTransferEvents.prof(init)
+      memFillEvents.prof(eZC)
 
       var ev = insideTU.doUpdates(batch, 1, init)
 
@@ -177,7 +177,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       allProfilers.foreach(_.tick())
 
       ev = devParentPointers.writeArray(queue, batch.outsideCharts.get.map(_.top.rootIndex).toArray, batch.outsideCharts.get.length, ev)
-      hdTransferEvents += ev
+      hdTransferEvents.prof(ev)
       ev = data.util.setRootScores(devCharts, devParentPointers, batch.outsideCharts.get.length, structure.root, data.semiring.one, ev)
 
       ev = outsideNU.doUpdates(batch, batch.maxLength, ev)
@@ -224,9 +224,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         parent.copyToArray(pArray, _workArrayOffsetsForSpan(1)(i) )
       }
       val ev2 = devParentPointers.writeArray(queue, pArray, totalLengthForSpan(1), events:_*)
-      hdTransferEvents += ev2
+      hdTransferEvents.prof(ev2)
       val ev = devParent(0 until totalLength, ::).writeFrom(dm, false, ev2)
-      hdTransferEvents ++= ev
+      hdTransferEvents.prof(ev)
       val evr = transposeCopy.permuteTransposeCopyOut(devCharts,  devParentPointers, totalLengthForSpan(1), devParent(0 until totalLength, ::), (ev2 +: ev):_*)
 
       evr
@@ -504,27 +504,27 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       if(offset != 0) {
         splitPointOffsets(parentOffset) = offset
         val wevl = devLeftPointers.writeArray(queue, lArray, offset, ev:_*)
-        hdTransferEvents += wevl
+        hdTransferEvents.prof(wevl)
         val wevr = devRightPointers.writeArray(queue, rArray, offset, ev:_*)
-        hdTransferEvents += wevr
+        hdTransferEvents.prof(wevr)
         val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
         val wr = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, devRightPointers, offset, wevr)
 
-        transferEvents += wl
-        transferEvents += wr
+        transferEvents.prof(wl)
+        transferEvents.prof(wr)
         val zz = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*)
-        memFillEvents += zz
+        memFillEvents.prof(zz)
         ev = kernels.map{ kernel =>
           kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, parser.devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
           kernel.enqueueNDRange(queue, Array(offset), wl, wr, zz)
         }
-        binaryEvents ++= ev
+        binaryEvents.prof(ev)
 
         val wevp = devParentPointers.writeArray(queue, pArray, parentOffset, ev:_*)
-        hdTransferEvents += wevp
+        hdTransferEvents.prof(wevp)
 
         val wevsplit = devSplitPointOffsets.writeArray(queue, splitPointOffsets, parentOffset + 1, ev:_*)
-        hdTransferEvents += wevsplit
+        hdTransferEvents.prof(wevsplit)
 
         val sumEv = parser.data.util.sumSplitPoints(devParent,
           devCharts,
@@ -533,7 +533,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           32 / span max 1, wevp, wevsplit)
 
 
-        sumEvents += sumEv
+        sumEvents.prof(sumEv)
         ev = IndexedSeq(sumEv)
         queue.finish()
         offset = 0
@@ -580,9 +580,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   }
 
   private class UnaryUpdateManager(parser: ActualParser,
-                                    kernels: IndexedSeq[CLKernel],
-                                    parentChart: (Batch,Int)=>ChartHalf,
-                                    childChart: (Batch,Int)=>ChartHalf) {
+                                   kernels: IndexedSeq[CLKernel],
+                                   parentChart: (Batch,Int)=>ChartHalf,
+                                   childChart: (Batch,Int)=>ChartHalf) {
 
     var offset = 0 // number of cells used so far.
 
@@ -601,29 +601,29 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def flushQueue(span: Int) = {
       if(offset != 0) {
         val zz = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*)
-        memFillEvents += zz
+        memFillEvents.prof(zz)
 
         val wevl = devLeftPointers.writeArray(queue, lArray, offset, ev:_*)
-        hdTransferEvents += wevl
+        hdTransferEvents.prof(wevl)
 
         val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPointers, offset, wevl)
-        transferEvents += wl
+        transferEvents.prof(wl)
 
         val endEvents = kernels.map{ kernel  =>
           kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, parser.devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
           kernel.enqueueNDRange(queue, Array(offset), wl, zz)
         }
 
-        unaryEvents ++= endEvents
+        unaryEvents.prof(endEvents)
 
         val ev2 = devParentPointers.writeArray(queue, pArray, offset, endEvents:_*)
-        hdTransferEvents += ev2
+        hdTransferEvents.prof(ev2)
 
         val _ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPointers, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*)
 
 
         queue.finish()
-        sumToChartsEvents += _ev
+        sumToChartsEvents.prof(_ev)
         offset = 0
         this.ev = IndexedSeq(_ev)
       }
@@ -682,8 +682,8 @@ object CLParser extends Logging {
       val gpu = JavaCL.listPlatforms.flatMap(_.listGPUDevices(true)).head
       JavaCL.createContext(new java.util.HashMap(), gpu)
     } else {
-//      val gpu = JavaCL.listPlatforms.flatMap(_.listGPUDevices(true)).last
-//      JavaCL.createContext(new java.util.HashMap(), gpu)
+      //      val gpu = JavaCL.listPlatforms.flatMap(_.listGPUDevices(true)).last
+      //      JavaCL.createContext(new java.util.HashMap(), gpu)
       val cpuPlatform:CLPlatform = JavaCL.listPlatforms().filter(_.listCPUDevices(true).nonEmpty).head
       cpuPlatform.createContext(new java.util.HashMap(), cpuPlatform.listCPUDevices(true):_*)
     }
@@ -823,5 +823,6 @@ object CLParserData {
     CLParserData(gr, structure, semiring, scores, inside, outside, util, semiring.plusIsIdempotent)
   }
 }
+
 
 
