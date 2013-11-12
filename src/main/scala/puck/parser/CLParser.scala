@@ -277,7 +277,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def outsideBinaryPass(batch: Batch, span: Int, events: CLEvent) = {
       var ev = events
 
-
       ev = outsideTN_R.doUpdates(batch, span, ev)
       ev = outsideNT_L.doUpdates(batch, span, ev)
       ev = outsideNN_L.doUpdates(batch, span, ev)
@@ -385,7 +384,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val out = if(profile) System.currentTimeMillis() else 0L
       if(profile) {
         println(s"Parse extraction took:  ${(out - in)/1000.0}s")
-
       }
       trees
     }
