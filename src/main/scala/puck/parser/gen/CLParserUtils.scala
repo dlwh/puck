@@ -17,28 +17,19 @@ case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKer
     ZipUtil.serializedEntry(out, "ints", Array(splitPointsBlockSize, groupSize, fieldSize))
   }
 
-  def sumSplitPoints(parent: CLMatrix[Float], chart: CLMatrix[Float], chartIndices: CLBuffer[Integer], numChartIndices: Int, parentIndices: Array[Int], chartIndicesPerGroup: Int, events: CLEvent*)(implicit queue: CLQueue) = {
-    require(numChartIndices == parentIndices.length - 1)
+  def sumSplitPoints(parent: CLMatrix[Float], chart: CLMatrix[Float], chartIndices: CLBuffer[Integer], numChartIndices: Int, splitPointIndicesIntoWorkArray: CLBuffer[Integer], chartIndicesPerGroup: Int, events: CLEvent*)(implicit queue: CLQueue) = {
+//    require(numChartIndices == splitPointIndicesIntoWorkArray.length - 1)
     val parentStride = parent.rows
     val numSyms = parent.cols
 
-    val ptrPI = Pointer.pointerToArray[java.lang.Integer](parentIndices)
-    val intBufferPI = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, parentIndices.length)
-    val evPI = intBufferPI.write(queue, 0, parentIndices.length, ptrPI, false, events:_*)
-
-    sumSplitPointsKernel.setArgs(parent.data.safeBuffer, chart.data.safeBuffer, chartIndices, intBufferPI,
+    sumSplitPointsKernel.setArgs(parent.data.safeBuffer, chart.data.safeBuffer, chartIndices, splitPointIndicesIntoWorkArray,
       Integer.valueOf(parentStride), Integer.valueOf(numChartIndices), Integer.valueOf(chartIndicesPerGroup),
       Integer.valueOf(numSyms))
 
     val numGroups = (numChartIndices + chartIndicesPerGroup - 1)/chartIndicesPerGroup * chartIndicesPerGroup
     val rowBlocks = (numSyms + splitPointsBlockSize - 1)/splitPointsBlockSize
 
-    val ev = sumSplitPointsKernel.enqueueNDRange(queue, Array(numGroups * groupSize, rowBlocks), Array(groupSize, 1), Seq(evPI)++events :_*)
-
-    ev.invokeUponCompletion(new Runnable() {
-      def run() = { ptrPI.release(); intBufferPI.release(); }
-    })
-    ev
+    sumSplitPointsKernel.enqueueNDRange(queue, Array(numGroups * groupSize, rowBlocks), Array(groupSize, 1), events :_*)
   }
 
   def setRootScores(charts: CLMatrix[Float],

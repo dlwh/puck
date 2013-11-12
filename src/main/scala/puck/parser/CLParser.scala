@@ -89,7 +89,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     val sizeOfFloat = 4
     val fractionOfMemoryToUse = 0.8 // slack!
     val amountOfMemory = ((context.getMaxMemAllocSize min maxAllocSize) * fractionOfMemoryToUse).toInt - data.map(_.ruleScores.length).sum * sizeOfFloat - maxSentencesPerBatch * 3 * 4;
-    val maxPossibleNumberOfCells = (amountOfMemory/sizeOfFloat) / (cellSize + 3) toInt // + 1 for offsets
+    val maxPossibleNumberOfCells = (amountOfMemory/sizeOfFloat) / (cellSize + 4) toInt // + 1 for offsets
     // We want numGPUCells and numGPUChartCells to be divisible by 16, so that we get aligned strided access:
     //       On devices of compute capability 1.0 or 1.1, the k-th thread in a half warp must access the
     //       k-th word in a segment aligned to 16 times the size of the elements being accessed; however,
@@ -120,6 +120,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   // we do rescaling, etc.
   private val devParent, devLeft, devRight = new CLMatrix[Float](numGPUCells, cellSize)
   private val devParentPointers, devLeftPointers, devRightPointers = context.createIntBuffer(CLMem.Usage.Input, numGPUCells)
+  private val devSplitPointOffsets = context.createIntBuffer(CLMem.Usage.Input, numGPUCells + 1)
   // transposed
   private val devCharts = new CLMatrix[Float](cellSize, numGPUChartCells)
 
@@ -520,11 +521,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val wevp = devParentPointers.write(queue, Pointer.pointerToArray[Integer](pArray), false, ev:_*)
         transferEvents += wevp
 
+        val wevsplit = devSplitPointOffsets.write(queue, Pointer.pointerToArray[Integer](splitPointOffsets), false, ev:_*)
+        transferEvents += wevsplit
+
         val sumEv = parser.data.util.sumSplitPoints(devParent,
           devCharts,
           devParentPointers, parentOffset,
-          java.util.Arrays.copyOf(splitPointOffsets, parentOffset + 1),
-          32 / span max 1, wevp)
+          devSplitPointOffsets,
+          32 / span max 1, wevp, wevsplit)
 
 
         sumEvents += sumEv
