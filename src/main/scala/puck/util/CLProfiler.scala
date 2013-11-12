@@ -28,12 +28,12 @@ class CLProfiler(name: String) {
     this
   }
 
-  def adding(events: IndexedSeq[CLEvent]):events.type = {
+  def apply(events: IndexedSeq[CLEvent]):events.type = {
     this.events ++= events
     events
   }
 
-  def adding(event: CLEvent):event.type = {
+  def apply(event: CLEvent):event.type = {
     this.events += event
     event
   }
