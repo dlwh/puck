@@ -18,7 +18,6 @@ import java.io.{BufferedOutputStream, FileOutputStream, File, OutputStream}
 import java.util.zip.{ZipFile, ZipOutputStream}
 import scala.collection.mutable.ArrayBuffer
 import BitHacks._
-import scala.Array
 
 /**
  * TODO
@@ -49,13 +48,25 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   }
 
   def partitions(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[Float] = synchronized {
-    {for {
-      batch <- getBatches(sentences).iterator
-      evi = parsers.last.inside(batch)
-      i <- 0 until batch.numSentences
-    } yield {
-      batch.insideCharts(i).top(0,batch.insideCharts(i).length, data.head.structure.root)
-    }}.toIndexedSeq
+    getBatches(sentences).iterator.flatMap{ batch =>
+      val finalBatch = parsers.take(data.length-1).foldLeft(batch){(b, parser) =>
+        var ev = parser.inside(batch)
+        ev = if(needsOutside) parser.outside(batch, ev) else ev
+        parser.addMasksToBatches(b)
+      }
+
+      val ev = parsers.last.inside(finalBatch)
+      ev.waitFor()
+      for( i <- 0 until batch.numSentences) yield
+        batch.insideCharts(i).top(0,batch.insideCharts(i).length, data.head.structure.root)
+    }.toIndexedSeq
+//    {for {
+//      batch <- getBatches(sentences).iterator
+//      evi = parsers.last.inside(batch)
+//      i <- 0 until batch.numSentences
+//    } yield {
+//      batch.insideCharts(i).top(0,batch.insideCharts(i).length, data.head.structure.root)
+//    }}.toIndexedSeq
   }
 
   private implicit val queue = if(profile) context.createDefaultProfilingQueue() else context.createDefaultQueue()
@@ -315,10 +326,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val (masks, ev2) = computeMasks(batch, -7, "masks", outsideEvents)
       ev2.waitFor()
       val denseMasks = masks.toDense
-      batch.copy(masks = Some(IndexedSeq.tabulate(batch.numSentences)(sent => TriangularArray.tabulate(batch.sentences(sent).length+1)((begin, end) =>
-        if(begin == end) null
-        else denseMasks(::, batch.insideCellOffsets(sent) + ChartHalf.chartIndex(begin, end, batch.sentences(sent).length))))
-      ))
+      masks.data.waitUnmap()
+      batch.copy(masks = Some(denseMasks))
     }
 
     def extractParses(batch: Batch, masks: CLMatrix[Int], events: CLEvent*) = {
@@ -380,6 +389,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       }
       val out = if(profile) System.currentTimeMillis() else 0L
+      masks.data.waitUnmap()
       if(profile) {
         println(s"Parse extraction took:  ${(out - in)/1000.0}s")
       }
@@ -391,7 +401,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private case class Batch(lengthTotals: Array[Int],
                            insideCellOffsets: Array[Int],
                            sentences: IndexedSeq[IndexedSeq[W]],
-                           masks: Option[IndexedSeq[TriangularArray[DenseVector[Int]]]]) {
+                           masks: Option[DenseMatrix[Int]]) {
     def totalLength = lengthTotals.last
     def numSentences = sentences.length
     val maxLength = sentences.map(_.length).max
@@ -400,10 +410,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     else
       assert(insideCellOffsets.last <= devCharts.cols)
 
-    def isAllowedSpan(sent: Int, begin: Int, end: Int) = masks match {
-      case None => true
-      case Some(m) => m(sent)(begin, end).any
-    }
+    def isAllowedSpan(sent: Int, begin: Int, end: Int) = maskFor(sent, begin, end).forall(_.any)
+
+    def maskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).bot.cellOffset(begin, end)))
+
+    def hasMasks = masks.nonEmpty
 
 
     val _workArrayOffsetsForSpan = Array.tabulate(maxLength+1)(span => sentences.scanLeft(0)((off, sent) => off + math.max(0,sent.length-span+1)).toArray)
@@ -476,6 +487,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                                     rightChart: (Batch,Int)=>ChartHalf,
                                     ranger: (Int, Int, Int)=>Range) {
 
+    case class WorkItem(sent: Int, begin: Int, end: Int, masks: DenseVector[Double])
+
     var parentOffset = 0 // number of unique parent spans used so far
     var offset = 0 // number of cells used so far.
 
@@ -547,21 +560,41 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       parentOffset = 0
       lastParent = -1
 
+      val allSpans = if(batch.hasMasks) {
+        val in = System.currentTimeMillis()
+        import BitHacks.OrderBitVectors.OrderingBitVectors
+        val allSpans = for {
+          sent <- 0 until batch.numSentences
+          start <- 0 to batch.sentences(sent).length - span
+          mask <-  batch.maskFor(sent, start, start + span)
+          if mask.any
+        } yield (sent, start, start+span, mask)
+        val ordered = allSpans.sortBy(_._4)
+        val out = System.currentTimeMillis()
+        println(s"Sorting $span took " + (out - in)/1000.0)
+//        println(ordered.mkString("{\t","\n\t","\n}"))
+        allSpans
+      } else {
+         for {
+          sent <- 0 until batch.numSentences
+          start <- 0 to batch.sentences(sent).length - span
+        } yield (sent, start, start+span, null)
+      }
+
       for {
-        sent <- 0 until batch.numSentences
-        start <- 0 to batch.sentences(sent).length - span
-        if batch.isAllowedSpan(sent, start, start + span)
+        (sent, start, end, _) <- allSpans
+        if batch.isAllowedSpan(sent,start,start+span)
         split <- ranger(start, start + span, batch.sentences(sent).length)
         if split >= 0 && split <= batch.sentences(sent).length
       } {
         val end = start + span
-        val parentTi = parentChart(batch, sent).treeIndex(start,end)
+        val parentTi = parentChart(batch, sent).cellOffset(start,end)
         val leftChildAllowed = if(split < start) batch.isAllowedSpan(sent,split, start) else batch.isAllowedSpan(sent, start, split)
         val rightChildAllowed = if(split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
 
         if(leftChildAllowed && rightChildAllowed) {
-          val leftChild = if(split < start) leftChart(batch, sent).treeIndex(split,start) else leftChart(batch, sent).treeIndex(start, split)
-          val rightChild = if(split < end) rightChart(batch, sent).treeIndex(split,end) else rightChart(batch, sent).treeIndex(end, split)
+          val leftChild = if(split < start) leftChart(batch, sent).cellOffset(split,start) else leftChart(batch, sent).cellOffset(start, split)
+          val rightChild = if(split < end) rightChart(batch, sent).cellOffset(split,end) else rightChart(batch, sent).cellOffset(end, split)
           enqueue(span, parentTi, leftChild, rightChild)
         }
 
@@ -629,8 +662,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         if batch.isAllowedSpan(sent, start, start + span)
       } {
         val end = start + span
-        val parentTi = parentChart(batch, sent).treeIndex(start,end)
-        val child = childChart(batch, sent).treeIndex(start,end)
+        val parentTi = parentChart(batch, sent).cellOffset(start,end)
+        val child = childChart(batch, sent).cellOffset(start,end)
 
         enqueue(span, parentTi, child)
       }

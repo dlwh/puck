@@ -24,9 +24,9 @@ class ChartHalf(val length: Int, val matrix: CLMatrix[Float], isBot: Boolean) {
     Array.range(firstIndex + globalRowOffset, lastIndex + globalRowOffset)
   }
 
-  def treeIndex(begin: Int, end: Int) = globalRowOffset + ChartHalf.chartIndex(begin, end, length)
+  def cellOffset(begin: Int, end: Int) = globalRowOffset + ChartHalf.chartIndex(begin, end, length)
 
-  def rootIndex = treeIndex(0, length)
+  def rootIndex = cellOffset(0, length)
 
   def cellString(begin: Int, end: Int, structure: RuleStructure[_, _], zero: Float) = {
     val span = end-begin
@@ -38,7 +38,7 @@ class ChartHalf(val length: Int, val matrix: CLMatrix[Float], isBot: Boolean) {
         structure.termIndex.get(k) -> v
       else 
         structure.nontermIndex.get(k) -> v
-    }.mkString(s"$r ${treeIndex(begin, end)} ($begin,$end) ${if(isBot) "bot" else "top"} {",", ", "}")
+    }.mkString(s"$r ${cellOffset(begin, end)} ($begin,$end) ${if(isBot) "bot" else "top"} {",", ", "}")
 
   }
 
