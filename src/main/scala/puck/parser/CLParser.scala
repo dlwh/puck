@@ -60,13 +60,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       for( i <- 0 until batch.numSentences) yield
         batch.insideCharts(i).top(0,batch.insideCharts(i).length, data.head.structure.root)
     }.toIndexedSeq
-//    {for {
-//      batch <- getBatches(sentences).iterator
-//      evi = parsers.last.inside(batch)
-//      i <- 0 until batch.numSentences
-//    } yield {
-//      batch.insideCharts(i).top(0,batch.insideCharts(i).length, data.head.structure.root)
-//    }}.toIndexedSeq
   }
 
   private implicit val queue = if(profile) context.createDefaultProfilingQueue() else context.createDefaultQueue()
@@ -608,19 +601,19 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     var offset = 0 // number of cells used so far.
 
-    var ev = Seq.empty[CLEvent]
-
-    private def enqueue(span: Int, parent: Int, left: Int) {
+    private def enqueue(span: Int, parent: Int, left: Int, events: Seq[CLEvent]) = {
       lArray(offset) = left
       pArray(offset) = parent
       offset += 1
       if(offset >= numGPUCells)  {
         println(s"flush!")
-        flushQueue(span)
+        flushQueue(span, events)
+      } else {
+        events
       }
     }
 
-    private def flushQueue(span: Int) = {
+    private def flushQueue(span: Int, ev: Seq[CLEvent]) = {
       if(offset != 0) {
         val zz = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
 
@@ -640,12 +633,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
         queue.finish()
         offset = 0
-        this.ev = IndexedSeq(_ev)
+        IndexedSeq(_ev)
+      } else {
+        ev
       }
     }
 
     def doUpdates(batch: Batch, span: Int, events: CLEvent*) = {
-      ev = events
+      var ev = events
 
       for {
         sent <- 0 until batch.numSentences
@@ -656,11 +651,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val parentTi = parentChart(batch, sent).cellOffset(start,end)
         val child = childChart(batch, sent).cellOffset(start,end)
 
-        enqueue(span, parentTi, child)
+        ev = enqueue(span, parentTi, child, ev)
       }
 
       if(offset > 0) {
-        flushQueue(span)
+        flushQueue(span, ev)
       }
 
       assert(ev.length == 1)
@@ -794,14 +789,7 @@ object CLParser extends Logging {
     kern
   }
 
-  private def printChart[L, W](chart: ChartMarginal[L, W], isBot: Boolean, isOutside: Boolean) = {
-    val cc1 = if(isOutside) chart.outside else chart.inside
-    val cc = if (isBot) cc1.bot else cc1.top
-    val m = chart
-    if(isOutside) println("outside")
-    for(span <- 1 to m.length; begin <- 0 to m.length-span)
-      println(cc.enteredLabelScores(begin,begin+span).map{ case (k,v) => (k,v.map(_.toFloat).mkString("{",",","}"))}.mkString(s"!!($begin,${begin+span}) ${if(isBot) "bot" else "top"} {",", ", "}"))
-  }
+
 }
 
 
