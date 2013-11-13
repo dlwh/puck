@@ -189,14 +189,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         } else {
           ev = outsideNU.doUpdates(batch, span, ev)
         }
-
       }
 
       ev = outsideTT_L.doUpdates(batch, 1, ev)
       ev = outsideNT_R.doUpdates(batch, 1, ev)
       ev = outsideTN_L.doUpdates(batch, 1, ev)
       ev = outsideTT_R.doUpdates(batch, 1, ev)
-
 
       if(profile) {
         queue.finish()
@@ -297,19 +295,19 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def insideNN = new BinaryUpdateManager(this, data.inside.insideNNKernels, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1))
 
     // here, "parentChart" is actually the left child, left is the parent, right is the right completion
-    private def outsideTT_L = new BinaryUpdateManager(this, data.outside.get.outside_L_TTKernels, outsideBot, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
-    private def outsideNT_L = new BinaryUpdateManager(this, data.outside.get.outside_L_NTKernels, outsideTop, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
-    private def outsideTN_L = new BinaryUpdateManager(this, data.outside.get.outside_L_TNKernels, outsideBot, outsideBot, insideTop, (b, e, l) => (e+1 to l))
-    private def outsideNN_L = new BinaryUpdateManager(this, data.outside.get.outside_L_NNKernels, outsideTop, outsideBot, insideTop, (b, e, l) => (e+1 to l))
+    private def outsideTT_L = new BinaryUpdateManager(this, data.outside.outside_L_TTKernels, outsideBot, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
+    private def outsideNT_L = new BinaryUpdateManager(this, data.outside.outside_L_NTKernels, outsideTop, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
+    private def outsideTN_L = new BinaryUpdateManager(this, data.outside.outside_L_TNKernels, outsideBot, outsideBot, insideTop, (b, e, l) => (e+1 to l))
+    private def outsideNN_L = new BinaryUpdateManager(this, data.outside.outside_L_NNKernels, outsideTop, outsideBot, insideTop, (b, e, l) => (e+1 to l))
 
     // here, "parentChart" is actually the right child, right is the parent, left is the left completion
-    private def outsideTT_R = new BinaryUpdateManager(this, data.outside.get.outside_R_TTKernels, outsideBot, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
-    private def outsideNT_R = new BinaryUpdateManager(this, data.outside.get.outside_R_NTKernels, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
-    private def outsideTN_R = new BinaryUpdateManager(this, data.outside.get.outside_R_TNKernels, outsideTop, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
-    private def outsideNN_R = new BinaryUpdateManager(this, data.outside.get.outside_R_NNKernels, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1))
+    private def outsideTT_R = new BinaryUpdateManager(this, data.outside.outside_R_TTKernels, outsideBot, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
+    private def outsideNT_R = new BinaryUpdateManager(this, data.outside.outside_R_NTKernels, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
+    private def outsideTN_R = new BinaryUpdateManager(this, data.outside.outside_R_TNKernels, outsideTop, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
+    private def outsideNN_R = new BinaryUpdateManager(this, data.outside.outside_R_NNKernels, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1))
 
-    private def outsideTU = new UnaryUpdateManager(this, data.outside.get.outsideTUKernels, outsideBot, outsideTop)
-    private def outsideNU = new UnaryUpdateManager(this, data.outside.get.outsideNUKernels, outsideBot, outsideTop)
+    private def outsideTU = new UnaryUpdateManager(this, data.outside.outsideTUKernels, outsideBot, outsideTop)
+    private def outsideNU = new UnaryUpdateManager(this, data.outside.outsideNUKernels, outsideBot, outsideTop)
 
 
     def addMasksToBatches(batch: Batch, ev: CLEvent*): Batch = {
@@ -404,7 +402,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def maskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).bot.cellOffset(begin, end)))
 
     def hasMasks = masks.nonEmpty
-
 
     val _workArrayOffsetsForSpan = Array.tabulate(maxLength+1)(span => sentences.scanLeft(0)((off, sent) => off + math.max(0,sent.length-span+1)).toArray)
     def workArrayOffsetsForSpan(sent: Int, span: Int) = Range(_workArrayOffsetsForSpan(span)(sent), _workArrayOffsetsForSpan(span)(sent+1))
