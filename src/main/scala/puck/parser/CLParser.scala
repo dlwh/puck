@@ -36,12 +36,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     getBatches(sentences).iterator.flatMap{ batch =>
       val finalBatch = parsers.take(data.length-1).foldLeft(batch){(b, parser) =>
         var ev = parser.inside(batch)
-        ev = if(needsOutside) parser.outside(batch, ev) else ev
+        ev = parser.outside(batch, ev)
         parser.addMasksToBatches(b)
       }
 
       var ev = parsers.last.inside(finalBatch)
-      ev = if(needsOutside) parsers.last.outside(finalBatch, ev) else ev
+      ev = parsers.last.outside(finalBatch, ev)
       val (vimasks, ev3) = parsers.last.computeViterbiMasks(finalBatch, ev)
       parsers.last.extractParses(batch, vimasks, ev3)
     }.toIndexedSeq
@@ -51,7 +51,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     getBatches(sentences).iterator.flatMap{ batch =>
       val finalBatch = parsers.take(data.length-1).foldLeft(batch){(b, parser) =>
         var ev = parser.inside(batch)
-        ev = if(needsOutside) parser.outside(batch, ev) else ev
+        ev = parser.outside(batch, ev)
         parser.addMasksToBatches(b)
       }
 
@@ -71,7 +71,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   private implicit val queue = if(profile) context.createDefaultProfilingQueue() else context.createDefaultQueue()
 
-  def needsOutside = true
   def isViterbi = data.last.isViterbi
 
   private val initMemFillEvents  = new CLProfiler("initMemfill")
@@ -111,12 +110,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     //       requested on a device with compute capability 1.1 or lower.
     val numberOfUnitsOf16 = maxPossibleNumberOfCells / 16
     // average sentence length of sentence, let's say n.
-    // for the gpu charts, we'll need (n choose 2) * 2 = n^2 - n cells (*2 more if needsOutside)
+    // for the gpu charts, we'll need (n choose 2) * 2 * 2 =
     // for the "P/L/R" parts, the maximum number of relaxations (P = L * R * rules) for a fixed span
     // in a fixed sentence is (n/2)^2= n^2/4.
     // Take n = 32, then we want our P/L/R arrays to be of the ratio (3 * 256):992 \approx 3/4 (3/4 exaclty if we exclude the - n term)
     //
-    val relativeSizeOfChartsToP = if(needsOutside) 8 else 4
+    val relativeSizeOfChartsToP = 8
     val baseSize = numberOfUnitsOf16 / (3 + relativeSizeOfChartsToP)
     val extra = numberOfUnitsOf16 % (3 + relativeSizeOfChartsToP)
     val plrSize = baseSize
@@ -184,8 +183,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       allProfilers.foreach(_.clear())
       allProfilers.foreach(_.tick())
 
-      ev = devParentPtrs.writeArray(queue, batch.outsideCharts.get.map(_.top.rootIndex).toArray, batch.outsideCharts.get.length, ev) profileIn hdTransferEvents
-      ev = data.util.setRootScores(devCharts, devParentPtrs, batch.outsideCharts.get.length, structure.root, data.semiring.one, ev) profileIn memFillEvents
+      ev = devParentPtrs.writeArray(queue, batch.outsideCharts.map(_.top.rootIndex).toArray, batch.outsideCharts.length, ev) profileIn hdTransferEvents
+      ev = data.util.setRootScores(devCharts, devParentPtrs, batch.outsideCharts.length, structure.root, data.semiring.one, ev) profileIn memFillEvents
 
       ev = outsideNU.doUpdates(batch, batch.maxLength, ev)
 
@@ -258,13 +257,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val ev = data.util.getMasks(masks(::, 0 until batch.insideCellOffsets.last),
         devCharts(::, 0 until batch.insideCellOffsets.last),
         devCharts(::, batch.insideCellOffsets.last until batch.insideCellOffsets.last * 2),
-        batch.outsideCharts.get.head.bot.globalRowOffset, batch.insideCellOffsets, structure.root, threshold, events:_*)
-      prof += ev
+        batch.outsideCharts.head.bot.globalRowOffset, batch.insideCellOffsets, structure.root, threshold, events:_*) profileIn prof
       if(profile) {
         queue.finish()
         prof.tock()
         println(s"Masks $prof")
       }
+
       masks -> ev
     }
 
@@ -293,8 +292,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     private val insideBot = {(b: Batch, s: Int) =>  b.insideCharts(s).bot}
     private val insideTop = {(b: Batch, s: Int) =>  b.insideCharts(s).top}
-    private val outsideBot = {(b: Batch, s: Int) =>  b.outsideCharts.get(s).bot}
-    private val outsideTop = {(b: Batch, s: Int) =>  b.outsideCharts.get(s).top}
+    private val outsideBot = {(b: Batch, s: Int) =>  b.outsideCharts(s).bot}
+    private val outsideTop = {(b: Batch, s: Int) =>  b.outsideCharts(s).top}
 
     private def insideTU = new UnaryUpdateManager(this, data.inside.insideTUKernels, insideTop, insideBot)
     private def insideNU = new UnaryUpdateManager(this, data.inside.insideNUKernels, insideTop, insideBot)
@@ -405,10 +404,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def totalLength = lengthTotals.last
     def numSentences = sentences.length
     val maxLength = sentences.map(_.length).max
-    if(needsOutside)
-      assert(insideCellOffsets.last * 2 <= devCharts.cols)
-    else
-      assert(insideCellOffsets.last <= devCharts.cols)
+    assert(insideCellOffsets.last * 2 <= devCharts.cols)
 
     def isAllowedSpan(sent: Int, begin: Int, end: Int) = maskFor(sent, begin, end).forall(_.any)
 
@@ -429,7 +425,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       chart
     }
 
-    lazy val outsideCharts = if(!needsOutside) None else Some{
+    lazy val outsideCharts = {
       for(i <- 0 until numSentences) yield {
 
         val numCells = (insideCellOffsets(i+1)-insideCellOffsets(i))/2
@@ -453,16 +449,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     var currentCellTotal = 0
     for( (s, i) <- sentences.zipWithIndex) {
       currentLengthTotal += s.length
-      currentCellTotal += TriangularArray.arraySize(s.length) * 2
-      if(needsOutside)
-        currentCellTotal += TriangularArray.arraySize(s.length) * 2
+      currentCellTotal += TriangularArray.arraySize(s.length) * 4
       if(currentLengthTotal > numGPUCells || currentCellTotal > numGPUChartCells) {
         assert(current.nonEmpty)
         result += createBatch(current)
         currentLengthTotal = s.length
-        currentCellTotal = TriangularArray.arraySize(s.length) * 2
-        if(needsOutside)
-          currentCellTotal += TriangularArray.arraySize(s.length) * 2
+        currentCellTotal = TriangularArray.arraySize(s.length) * 4
         current = ArrayBuffer()
       }
       current += s
@@ -475,8 +467,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private def createBatch(sentences: IndexedSeq[IndexedSeq[W]]): Batch = {
     val lengthTotals = sentences.scanLeft(0)((acc, sent) => acc + sent.length)
     val cellTotals = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2)
-    if(needsOutside)
-      assert(cellTotals.last * 2 <= devCharts.cols, cellTotals.last * 2 + " " +  devCharts.cols)
+    assert(cellTotals.last * 2 <= devCharts.cols, cellTotals.last * 2 + " " +  devCharts.cols)
     Batch(lengthTotals.toArray, cellTotals.toArray, sentences, None)
   }
 
@@ -819,7 +810,7 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
                                  semiring: RuleSemiring,
                                  ruleScores: Array[Float],
                                  inside: CLInsideKernels,
-                                 outside: Option[CLOutsideKernels],
+                                 outside: CLOutsideKernels,
                                  util: CLParserUtils,
                                  isViterbi: Boolean) {
 
@@ -830,7 +821,7 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     ZipUtil.serializedEntry(zout, "structure", structure)
     ZipUtil.serializedEntry(zout, "semiring", semiring)
     inside.write(zout)
-    outside.foreach(_.write(zout))
+    outside.write(zout)
     util.write(zout)
     ZipUtil.serializedEntry(zout, "scores", ruleScores)
     zout.close()
@@ -842,7 +833,7 @@ object CLParserData {
     implicit val viterbi = ViterbiRuleSemiring
     val structure = new RuleStructure(grammar.refinements, grammar.refinedGrammar)
     val inside = CLInsideKernels.make(structure)
-    val outside =  Some(CLOutsideKernels.make(structure)) //if(!gen.isViterbi) Some(CLOutsideKernels.make(gen)) else None
+    val outside =  CLOutsideKernels.make(structure)
     val util = CLParserUtils.make(structure)
 
     val ruleScores: Array[Float] = Array.tabulate(grammar.refinedGrammar.index.size){r =>
@@ -857,7 +848,7 @@ object CLParserData {
     val structure = ZipUtil.deserializeEntry[RuleStructure[C, L]](file.getInputStream(file.getEntry("structure")))
     val semiring = ZipUtil.deserializeEntry[RuleSemiring](file.getInputStream(file.getEntry("semiring")))
     val inside = CLInsideKernels.read(file)
-    val outside = CLOutsideKernels.tryRead(file)
+    val outside = CLOutsideKernels.read(file)
     val util = CLParserUtils.read(file)
     val scores = ZipUtil.deserializeEntry[Array[Float]](file.getInputStream(file.getEntry("scores")))
 

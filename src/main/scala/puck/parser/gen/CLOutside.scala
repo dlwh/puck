@@ -36,13 +36,6 @@ case class CLOutsideKernels(outside_L_NNKernels: IndexedSeq[CLKernel],
 
 object CLOutsideKernels {
 
-  def tryRead(in: ZipFile)(implicit context: CLContext) = {
-    if(ZipUtil.hasKernelSet(in, "outside_L_NN"))
-      Some(read(in))
-    else
-      None
-  }
-
   def read(in: ZipFile)(implicit context: CLContext) = {
     val outside_L_NN = ZipUtil.readKernelSet(in, "outside_L_NN")
     val outside_R_NN = ZipUtil.readKernelSet(in, "outside_R_NN")
