@@ -573,7 +573,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val out = System.currentTimeMillis()
         println(s"Sorting $span took " + (out - in)/1000.0)
 //        println(ordered.mkString("{\t","\n\t","\n}"))
-        allSpans
+        ordered
       } else {
          for {
           sent <- 0 until batch.numSentences
@@ -583,7 +583,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       for {
         (sent, start, end, _) <- allSpans
-        if batch.isAllowedSpan(sent,start,start+span)
+      //  if batch.isAllowedSpan(sent,start,start+span)
         split <- ranger(start, start + span, batch.sentences(sent).length)
         if split >= 0 && split <= batch.sentences(sent).length
       } {
