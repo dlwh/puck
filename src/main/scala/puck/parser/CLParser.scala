@@ -29,12 +29,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         maxSentencesPerBatch: Long = 400,
                         profile: Boolean = true)(implicit val context: CLContext) extends Logging {
 
-  def grammar = data.head.grammar
-
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[L]] = synchronized {
     getBatches(sentences).iterator.flatMap{ batch =>
-      val finalBatch = parsers.take(data.length-1).foldLeft(batch){(b, parser) =>
+      val finalBatch = parsers.take(data.length - 1).foldLeft(batch){(b, parser) =>
         var ev = parser.inside(batch)
         ev = parser.outside(batch, ev)
         parser.addMasksToBatches(b)
@@ -49,7 +47,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   def partitions(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[Float] = synchronized {
     getBatches(sentences).iterator.flatMap{ batch =>
-      val finalBatch = parsers.take(data.length-1).foldLeft(batch){(b, parser) =>
+      val finalBatch = parsers.take(data.length - 1).foldLeft(batch){(b, parser) =>
         var ev = parser.inside(batch)
         ev = parser.outside(batch, ev)
         parser.addMasksToBatches(b)
@@ -57,12 +55,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       val ev = parsers.last.inside(finalBatch)
       ev.waitFor()
-      for( i <- 0 until batch.numSentences) yield
+      for ( i <- 0 until batch.numSentences) yield
         batch.insideCharts(i).top(0,batch.insideCharts(i).length, data.head.structure.root)
     }.toIndexedSeq
   }
 
-  private implicit val queue = if(profile) context.createDefaultProfilingQueue() else context.createDefaultQueue()
+  private implicit val queue = if (profile) context.createDefaultProfilingQueue() else context.createDefaultQueue()
 
   def isViterbi = data.last.isViterbi
 
@@ -129,7 +127,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   // transposed
   private val devCharts = new CLMatrix[Float](cellSize, numGPUChartCells)
 
-  // (dest, leftSource, rightSource) (right Source if applicable)
+  // (dest, leftSource, rightSource) (right Source if binary rules)
   val pArray, lArray, rArray = new Array[Int](numGPUCells)
   val splitPointOffsets = new Array[Int](numGPUCells+1)
 
@@ -156,13 +154,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       var ev = insideTU.doUpdates(batch, 1, init)
 
-      for(span <- 2 to batch.maxLength) {
+      for (span <- 2 to batch.maxLength) {
         println(span)
         ev = insideBinaryPass(batch, span, ev)
         ev = insideNU.doUpdates(batch, span, ev)
       }
 
-      if(profile) {
+      if (profile) {
         queue.finish()
         allProfilers.foreach(_.tock())
         allProfilers.foreach(p => println(s"Inside $p"))
@@ -181,10 +179,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       ev = outsideNU.doUpdates(batch, batch.maxLength, ev)
 
-      for(span <- (batch.maxLength-1) to 1 by -1) {
+      for (span <- (batch.maxLength - 1) to 1 by -1) {
         println(span)
         ev = outsideBinaryPass(batch, span, ev)
-        if(span == 1) {
+        if (span == 1) {
           ev = outsideTU.doUpdates(batch, span, ev)
         } else {
           ev = outsideNU.doUpdates(batch, span, ev)
@@ -196,7 +194,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev = outsideTN_L.doUpdates(batch, 1, ev)
       ev = outsideTT_R.doUpdates(batch, 1, ev)
 
-      if(profile) {
+      if (profile) {
         queue.finish()
         allProfilers.foreach(_.tock())
         Thread.sleep(15)
@@ -210,12 +208,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       computeMasks(batch, -1E-3f, "viterbi", events:_*)
     }
 
-
     def initializeTagScores(batch: Batch, events: CLEvent*) = {
       import batch._
       val dm = DenseMatrix.zeros[Float](totalLength, cellSize)
       dm := _zero
-      for(i <- 0 until numSentences par) {
+      for (i <- 0 until numSentences par) {
         tagScoresFor(batch, dm, i)
         val parent = insideCharts(i).bot.spanRangeSlice(1)
         parent.copyToArray(pArray, _workArrayOffsetsForSpan(1)(i) )
@@ -233,7 +230,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val tags = dm(workArrayOffsetsForSpan(i, 1), ::)
       val anch = data.grammar.tagScorer.anchor(sent)
       val lexAnch = data.grammar.lexicon.anchor(sent)
-      for(pos <- 0 until sent.length; t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
+      for (pos <- 0 until sent.length; t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
         val index = ref
         val score = anch.scoreTag(pos, data.grammar.refinedGrammar.labelIndex.get(index))
         val gpuIndex = data.structure.labelIndexToTerminal(index)
@@ -249,7 +246,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         devCharts(::, 0 until batch.insideCellOffsets.last),
         devCharts(::, batch.insideCellOffsets.last until batch.insideCellOffsets.last * 2),
         batch.outsideCharts.head.bot.globalRowOffset, batch.insideCellOffsets, structure.root, threshold, events:_*) profileIn prof
-      if(profile) {
+      if (profile) {
         queue.finish()
         prof.tock()
         println(s"Masks $prof")
@@ -260,7 +257,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     private def insideBinaryPass(batch: Batch, span: Int, events: CLEvent*) = {
       var ev = events
-      if(span == 2) {
+      if (span == 2) {
         ev = Seq(insideTT.doUpdates(batch, span, ev :_*))
       }
 
@@ -322,9 +319,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def extractParses(batch: Batch, masks: CLMatrix[Int], events: CLEvent*) = {
       events.foreach(_.waitFor())
-      val in = if(profile) System.currentTimeMillis() else 0L
+      val in = if (profile) System.currentTimeMillis() else 0L
       val dmMasks:DenseMatrix[Int] = masks.toDense
-      val trees = for(s <- 0 until batch.numSentences par) yield {
+      val trees = for (s <- 0 until batch.numSentences par) yield {
         import batch.insideCellOffsets
         val length = batch.sentences(s).length
         val numCells = (insideCellOffsets(s+1)-insideCellOffsets(s))/2
@@ -339,7 +336,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         def recTop(begin: Int, end: Int):BinarizedTree[L] = {
           val column:DenseVector[Int] = top(::, ChartHalf.chartIndex(begin, end, length))
           val x = firstSetBit(column:DenseVector[Int])
-          if(x == -1) {
+          if (x == -1) {
             assert(begin == end - 1, column.toString + " " + x + " " + (begin,end) + " " + s + " " + batch.numSentences)
             recBot(begin, end)
           } else {
@@ -353,22 +350,22 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         def recBot(begin: Int, end: Int):BinarizedTree[L] = {
           val column:DenseVector[Int] = bot(::, ChartHalf.chartIndex(begin, end, length))
           val x = firstSetBit(column:DenseVector[Int])
-          if(begin == end-1) {
+          if (begin == end - 1) {
             val label = structure.termIndex.get(x)
             NullaryTree(label, Span(begin, end))
           } else {
             val label = structure.nontermIndex.get(x)
-            for(split <- (begin+1) until end) {
-              val left = (if(begin == split - 1) bot else top)(::, ChartHalf.chartIndex(begin, split, length))
-              val right = (if(end == split + 1) bot else top)(::, ChartHalf.chartIndex(split, end, length))
-              if(left.any && right.any) {
+            for (split <- (begin+1) until end) {
+              val left = (if (begin == split - 1) bot else top)(::, ChartHalf.chartIndex(begin, split, length))
+              val right = (if (end == split + 1) bot else top)(::, ChartHalf.chartIndex(split, end, length))
+              if (left.any && right.any) {
                 return BinaryTree[L](label, recTop(begin, split), recTop(split, end), Span(begin, end))
               }
             }
             error("nothing here!" + " "+ (begin, end) +
-              {for(split <- (begin+1) until end) yield {
-                val left = (if(begin == split - 1) bot else top)(::, ChartHalf.chartIndex(begin, split, length))
-                val right = (if(end == split + 1) bot else top)(::, ChartHalf.chartIndex(split, end, length))
+              {for (split <- (begin+1) until end) yield {
+                val left = (if (begin == split - 1) bot else top)(::, ChartHalf.chartIndex(begin, split, length))
+                val right = (if (end == split + 1) bot else top)(::, ChartHalf.chartIndex(split, end, length))
                 (ChartHalf.chartIndex(begin, split, length), ChartHalf.chartIndex(split, end, length), split, left,right)
 
               }})
@@ -378,9 +375,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         recTop(0, length)
 
       }
-      val out = if(profile) System.currentTimeMillis() else 0L
+      val out = if (profile) System.currentTimeMillis() else 0L
       masks.data.waitUnmap()
-      if(profile) {
+      if (profile) {
         println(s"Parse extraction took:  ${(out - in)/1000.0}s")
       }
       trees
@@ -408,7 +405,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def totalLengthForSpan(span: Int) = _workArrayOffsetsForSpan(span).last
 
-    lazy val insideCharts = for(i <- 0 until numSentences) yield {
+    lazy val insideCharts = for (i <- 0 until numSentences) yield {
       val numCells = (insideCellOffsets(i+1)-insideCellOffsets(i))/2
       assert(numCells == TriangularArray.arraySize(sentences(i).length))
       val chart = new ParseChart(sentences(i).length, devCharts(::, insideCellOffsets(i) until (insideCellOffsets(i) + numCells)), devCharts(::, insideCellOffsets(i) + numCells until insideCellOffsets(i+1)))
@@ -416,7 +413,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     }
 
     lazy val outsideCharts = {
-      for(i <- 0 until numSentences) yield {
+      for (i <- 0 until numSentences) yield {
 
         val numCells = (insideCellOffsets(i+1)-insideCellOffsets(i))/2
         assert(numCells == TriangularArray.arraySize(sentences(i).length))
@@ -437,10 +434,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     var current = ArrayBuffer[IndexedSeq[W]]()
     var currentLengthTotal = 0
     var currentCellTotal = 0
-    for( (s, i) <- sentences.zipWithIndex) {
+    for ( (s, i) <- sentences.zipWithIndex) {
       currentLengthTotal += s.length
       currentCellTotal += TriangularArray.arraySize(s.length) * 4
-      if(currentLengthTotal > numGPUCells || currentCellTotal > numGPUChartCells) {
+      if (currentLengthTotal > numGPUCells || currentCellTotal > numGPUChartCells) {
         assert(current.nonEmpty)
         result += createBatch(current)
         currentLengthTotal = s.length
@@ -450,7 +447,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       current += s
     }
 
-    if(current.nonEmpty) result += createBatch(current)
+    if (current.nonEmpty) result += createBatch(current)
     result
   }
 
@@ -476,10 +473,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     // TODO: ugh, state
     var lastParent = -1
 
-    var ev = Seq.empty[CLEvent]
-
-    private def enqueue(span: Int, parent: Int, left: Int, right: Int) {
-      if(parentOffset == 0 || lastParent != parent) {
+    private def enqueue(span: Int, parent: Int, left: Int, right: Int, events: Seq[CLEvent]): Seq[CLEvent] = {
+      if (parentOffset == 0 || lastParent != parent) {
         splitPointOffsets(parentOffset) = offset
         pArray(parentOffset) = parent
         parentOffset += 1
@@ -488,14 +483,16 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       lArray(offset) = left
       rArray(offset) = right
       offset += 1
-      if(offset >= numGPUCells)  {
+      if (offset >= numGPUCells)  {
         println(s"flush!")
-        flushQueue(span)
+        flushQueue(span, events)
+      } else {
+        events
       }
     }
 
-    private def flushQueue(span: Int) {
-      if(offset != 0) {
+    private def flushQueue(span: Int, ev: Seq[CLEvent]): Seq[CLEvent] = {
+      if (offset != 0) {
         splitPointOffsets(parentOffset) = offset
 
         // copy ptrs to opencl
@@ -513,7 +510,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
         val zeroParent = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
 //        val zeroParent = zmk.fillMemory(devParent.data.safeBuffer, parser._zero, ev:_*) profileIn memFillEvents
-        ev = kernels.map{ kernel =>
+        val kEvents: IndexedSeq[CLEvent] = kernels.map{ kernel =>
           kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, parser.devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
           kernel.enqueueNDRange(queue, Array(offset), evTransLeft, evTransRight, zeroParent) profileIn binaryEvents
         }
@@ -523,25 +520,25 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           devCharts,
           devParentPtrs, parentOffset,
           devSplitPointOffsets,
-          32 / span max 1, evWriteDevParent, evWriteDevSplitPoint) profileIn sumEvents
+          32 / span max 1, Seq(evWriteDevParent, evWriteDevSplitPoint) ++ kEvents:_*) profileIn sumEvents
 
 
-        ev = IndexedSeq(sumEv)
         queue.finish()
         offset = 0
         parentOffset = 0
+        IndexedSeq(sumEv)
+      } else {
+        ev
       }
     }
 
-
-
     def doUpdates(batch: Batch, span: Int, events: CLEvent*) = {
 
-      ev = events
+      var ev = events
       parentOffset = 0
       lastParent = -1
 
-      val allSpans = if(batch.hasMasks) {
+      val allSpans = if (batch.hasMasks) {
         val in = System.currentTimeMillis()
         import BitHacks.OrderBitVectors.OrderingBitVectors
         val allSpans = for {
@@ -570,19 +567,19 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       } {
         val end = start + span
         val parentTi = parentChart(batch, sent).cellOffset(start,end)
-        val leftChildAllowed = if(split < start) batch.isAllowedSpan(sent,split, start) else batch.isAllowedSpan(sent, start, split)
-        val rightChildAllowed = if(split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
+        val leftChildAllowed = if (split < start) batch.isAllowedSpan(sent,split, start) else batch.isAllowedSpan(sent, start, split)
+        val rightChildAllowed = if (split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
 
-        if(leftChildAllowed && rightChildAllowed) {
-          val leftChild = if(split < start) leftChart(batch, sent).cellOffset(split,start) else leftChart(batch, sent).cellOffset(start, split)
-          val rightChild = if(split < end) rightChart(batch, sent).cellOffset(split,end) else rightChart(batch, sent).cellOffset(end, split)
-          enqueue(span, parentTi, leftChild, rightChild)
+        if (leftChildAllowed && rightChildAllowed) {
+          val leftChild = if (split < start) leftChart(batch, sent).cellOffset(split,start) else leftChart(batch, sent).cellOffset(start, split)
+          val rightChild = if (split < end) rightChart(batch, sent).cellOffset(split,end) else rightChart(batch, sent).cellOffset(end, split)
+          ev = enqueue(span, parentTi, leftChild, rightChild, ev)
         }
 
       }
 
-      if(offset > 0) {
-        flushQueue(span)
+      if (offset > 0) {
+        ev = flushQueue(span, ev)
       }
 
       assert(ev.length == 1)
@@ -602,7 +599,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       lArray(offset) = left
       pArray(offset) = parent
       offset += 1
-      if(offset >= numGPUCells)  {
+      if (offset >= numGPUCells)  {
         println(s"flush!")
         flushQueue(span, events)
       } else {
@@ -611,7 +608,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     }
 
     private def flushQueue(span: Int, ev: Seq[CLEvent]) = {
-      if(offset != 0) {
+      if (offset != 0) {
         val zz = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
 
         val wevl = devLeftPtrs.writeArray(queue, lArray, offset, ev:_*) profileIn hdTransferEvents
@@ -651,7 +648,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         ev = enqueue(span, parentTi, child, ev)
       }
 
-      if(offset > 0) {
+      if (offset > 0) {
         flushQueue(span, ev)
       }
 
@@ -685,13 +682,13 @@ object CLParser extends Logging {
       GenerativeParser.extractGrammar(AnnotatedLabel.TOP, transformed)
     }
 
-    val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = if(textGrammarPrefix == null) {
+    val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = if (textGrammarPrefix == null) {
       genGrammar
     } else {
       SimpleRefinedGrammar.parseBerkeleyText(textGrammarPrefix, -10)
     }
 
-    implicit val context = if(useGPU) {
+    implicit val context = if (useGPU) {
       val gpu = JavaCL.listPlatforms.flatMap(_.listGPUDevices(true)).head
       JavaCL.createContext(new java.util.HashMap(), gpu)
     } else {
@@ -702,22 +699,22 @@ object CLParser extends Logging {
     }
     println(context)
 
-    var parserData:CLParserData[AnnotatedLabel, AnnotatedLabel, String] = if(codeCache != null && codeCache.exists()) {
+    var parserData:CLParserData[AnnotatedLabel, AnnotatedLabel, String] = if (codeCache != null && codeCache.exists()) {
       CLParserData.read(new ZipFile(codeCache))
     } else {
       null
     }
 
-    if(parserData == null || parserData.grammar.signature != grammar.signature) {
+    if (parserData == null || parserData.grammar.signature != grammar.signature) {
       println("Regenerating parser data")
       parserData = CLParserData.make(grammar)
-      if(codeCache != null) {
+      if (codeCache != null) {
         parserData.write(new BufferedOutputStream(new FileOutputStream(codeCache)))
       }
     }
 
-    val kern = if(prune) {
-      val genData = if(grammar eq genGrammar) parserData else CLParserData.make(genGrammar)
+    val kern = if (prune) {
+      val genData = if (grammar eq genGrammar) parserData else CLParserData.make(genGrammar)
       fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](IndexedSeq(genData, parserData), profile)
     } else {
       fromParserData[AnnotatedLabel, AnnotatedLabel, String](parserData, profile)
@@ -725,11 +722,10 @@ object CLParser extends Logging {
 
     val train =  params.treebank.trainTrees.take(numToParse).map(_.words)
 
-
-    if(checkPartitions) {
+    if (checkPartitions) {
       val partsX = kern.partitions(train)
       println(partsX)
-      val parser = SimpleChartParser(AugmentedGrammar.fromRefined(grammar), if(kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
+      val parser = SimpleChartParser(AugmentedGrammar.fromRefined(grammar), if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
       val parts2 = train.par.map(parser.charts(_).logPartition)
       println(parts2)
       println("max difference: " + (DenseVector(partsX.map(_.toDouble):_*) - DenseVector(parts2.seq:_*)).norm(Double.PositiveInfinity))
@@ -740,15 +736,15 @@ object CLParser extends Logging {
     var timeOut = System.currentTimeMillis()
     println(parts zip train map {case (k,v) => k render v})
     println(s"CL Parsing took: ${(timeOut-timeIn)/1000.0}")
-    if(parseTwice) {
+    if (parseTwice) {
       timeIn = System.currentTimeMillis()
       val parts2 = kern.parse(train)
       timeOut = System.currentTimeMillis()
       println(parts2 zip train map {case (k,v) => k render v})
       println(s"CL Parsing took x2: ${(timeOut-timeIn)/1000.0}")
     }
-    if(jvmParse) {
-      val parser = SimpleChartParser(AugmentedGrammar.fromRefined(grammar), if(kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
+    if (jvmParse) {
+      val parser = SimpleChartParser(AugmentedGrammar.fromRefined(grammar), if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
       timeIn = System.currentTimeMillis()
       val margs = train.map { w =>
         val m = parser.apply(w)
