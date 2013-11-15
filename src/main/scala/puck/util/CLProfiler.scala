@@ -38,12 +38,19 @@ class CLProfiler(name: String) {
     event
   }
 
-
-
   def clear() {
     startingWallTime = -1L
     totalWallTime = -1L
     events.clear()
+  }
+
+  def processingTime = {
+    val badEvents = events.filter(_ ne null).filter(_.getCommandExecutionStatus != CommandExecutionStatus.Complete)
+    if(badEvents.nonEmpty) {
+      println(s"Bunch of bad events! ${badEvents.map{x => x -> x.getCommandExecutionStatus}}")
+    }
+    val eventTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandEnd - e.getProfilingCommandStart)/1E9).sum
+    eventTimes
   }
 
   override def toString() = {
