@@ -31,9 +31,11 @@ class GenRuleMultiply(implicit semiring: RuleSemiring, cl: CLContext) {
     val sb = new StringBuilder()
     for ((lc, rr) <- rulePartition.groupBy(_._1.left)) {
       sb ++= s"        float leftChild_$lc = left[numRows * $lc + row];\n"
+//      sb ++= s"        if (leftChild_$lc > 0) printf("+'"' + s"LC WTF $lc %s %f" +"\\n\"" + s", __FUNCTION__, leftChild_$lc);\n"
       sb ++= s"        {\n"
       for ((rc, rrr) <- rr.groupBy(_._1.right)) {
         sb ++= s"            float rightChild_$rc = right[numRows * $rc + row];\n"
+//        sb ++= s"            if (rightChild_$rc > 0) printf("+'"' + s"RC WTF $rc %s %f" +"\\n\"" + s", __FUNCTION__, rightChild_$rc);\n"
         val jointName = s"joint_${lc}_${rc}"
         sb ++= s"            float $jointName = ${semiring.times(s"leftChild_$lc", s"rightChild_$rc")};\n"
         for ((r, id) <- rrr) {
