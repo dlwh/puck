@@ -1,5 +1,7 @@
 package puck.parser.gen
 
+import puck.roundUpToMultipleOf
+
 import com.nativelibs4java.opencl._
 import java.util.zip.{ZipFile, ZipOutputStream}
 import puck.util.ZipUtil
@@ -18,7 +20,6 @@ case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKer
   }
 
   def sumSplitPoints(parent: CLMatrix[Float], chart: CLMatrix[Float], chartIndices: CLBuffer[Integer], numChartIndices: Int, splitPointIndicesIntoWorkArray: CLBuffer[Integer], chartIndicesPerGroup: Int, events: CLEvent*)(implicit queue: CLQueue) = {
-//    require(numChartIndices == splitPointIndicesIntoWorkArray.length - 1)
     val parentStride = parent.rows
     val numSyms = parent.cols
 
@@ -26,7 +27,7 @@ case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKer
       Integer.valueOf(parentStride), Integer.valueOf(numChartIndices), Integer.valueOf(chartIndicesPerGroup),
       Integer.valueOf(numSyms))
 
-    val numGroups = (numChartIndices + chartIndicesPerGroup - 1)/chartIndicesPerGroup * chartIndicesPerGroup
+    val numGroups = roundUpToMultipleOf(numChartIndices, chartIndicesPerGroup)
     val rowBlocks = (numSyms + splitPointsBlockSize - 1)/splitPointsBlockSize
 
     sumSplitPointsKernel.enqueueNDRange(queue, Array(numGroups * groupSize, rowBlocks), Array(groupSize, 1), events :_*)

@@ -82,13 +82,25 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     devRightPtrs.release()
   }
 
-  val cellSize = data.map(d => ((d.structure.numNonTerms max d.structure.numTerms)+31)/32 * 32).max
+  /**
+   * The layout of a cell is:
+   * typedef struct { int mask[MASK_SIZE]; float scores[NUM_SYMS]; }
+   * aligned to 32 * 4 bytes,
+   * where NUM_SYMS is the max size of all grammars,
+   * and MASK_SIZE is roundUpToMultipleOf(NUM_SYMS,32)/32 (i.e. a bitfield)
+   */
+  val cellSize:Int = data.map{d =>
+    val myCellSize = d.structure.nontermIndex.size max d.structure.termIndex.size
+    val myMaskSize = roundUpToMultipleOf(myCellSize, 32) / 32
+    val fullCellSize = roundUpToMultipleOf(myCellSize + myMaskSize, 32)
+    fullCellSize
+  }.max
 
   val (numGPUCells:Int, numGPUChartCells: Int) = {
     val sizeOfFloat = 4
     val fractionOfMemoryToUse = 0.8 // slack!
     val amountOfMemory = ((context.getMaxMemAllocSize min maxAllocSize) * fractionOfMemoryToUse).toInt - data.map(_.ruleScores.length).sum * sizeOfFloat - maxSentencesPerBatch * 3 * 4;
-    val maxPossibleNumberOfCells = (amountOfMemory/sizeOfFloat) / (cellSize + 4) toInt // + 1 for offsets
+    val maxPossibleNumberOfCells = ((amountOfMemory / sizeOfFloat) / (cellSize + 4)).toInt // + 1 for offsets
     // We want numGPUCells and numGPUChartCells to be divisible by 16, so that we get aligned strided access:
     //       On devices of compute capability 1.0 or 1.1, the k-th thread in a half warp must access the
     //       k-th word in a segment aligned to 16 times the size of the elements being accessed; however,

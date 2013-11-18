@@ -111,6 +111,6 @@ package object puck {
     def profileIn(group: puck.util.CLProfiler) = group.prof(event)
   }
 
-  def roundToMultipleOf(num: Int, divisor: Int) = (num + divisor - 1)/divisor * divisor
+  def roundUpToMultipleOf(num: Int, divisor: Int) = (num + divisor - 1)/divisor * divisor
 
 }
