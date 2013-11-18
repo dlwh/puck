@@ -9,14 +9,13 @@ import puck.linalg.CLMatrix
 import org.bridj.Pointer
 import puck.parser.{RuleSemiring, RuleStructure}
 
-case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKernel, setRootScoresKernel: CLKernel, getMasksKernel: CLKernel,
-                               splitPointsBlockSize: Int, groupSize: Int, fieldSize: Int) {
+case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKernel, setRootScoresKernel: CLKernel,
+                               splitPointsBlockSize: Int, groupSize: Int) {
   def write(out: ZipOutputStream) {
     ZipUtil.addKernel(out, "sumGrammarKernel", sumGrammarKernel)
     ZipUtil.addKernel(out, "sumSplitPointsKernel", sumSplitPointsKernel)
     ZipUtil.addKernel(out, "setRootScoresKernel", setRootScoresKernel)
-    ZipUtil.addKernel(out, "getMasksKernel", getMasksKernel)
-    ZipUtil.serializedEntry(out, "ints", Array(splitPointsBlockSize, groupSize, fieldSize))
+    ZipUtil.serializedEntry(out, "ints", Array(splitPointsBlockSize, groupSize))
   }
 
   def sumSplitPoints(parent: CLMatrix[Float], chart: CLMatrix[Float], chartIndices: CLBuffer[Integer], numChartIndices: Int, splitPointIndicesIntoWorkArray: CLBuffer[Integer], chartIndicesPerGroup: Int, events: CLEvent*)(implicit queue: CLQueue) = {
@@ -46,39 +45,6 @@ case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKer
     setRootScoresKernel.enqueueNDRange(queue, Array(numChartIndices), events:_*)
   }
 
-  def getMasks(masks: CLMatrix[Int],
-               inside: CLMatrix[Float],
-               outside: CLMatrix[Float],
-               firstOutside: Int,
-               chartIndices: Array[Int],
-               root: Int, threshold: Float,
-               events: CLEvent*)(implicit queue: CLQueue):CLEvent = {
-    require(masks.rows == fieldSize)
-    require(masks.cols == inside.cols)
-    require(masks.cols == outside.cols)
-    queue.finish()
-
-    val ptrCI = Pointer.pointerToArray[java.lang.Integer](chartIndices)
-    val intBufferCI = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, chartIndices.length)
-    val evCI = intBufferCI.write(queue, 0, chartIndices.length, ptrCI, false, events:_*)
-
-    println(chartIndices.toIndexedSeq)
-
-    getMasksKernel.setArgs(masks.data.safeBuffer,
-      inside.data.safeBuffer, outside.data.safeBuffer, Integer.valueOf(outside.offset), intBufferCI,
-      Integer.valueOf(chartIndices(chartIndices.length-1)), Integer.valueOf(inside.rows),
-      Integer.valueOf(root), java.lang.Float.valueOf(threshold))
-      //, LocalSize.ofIntArray(fieldSize * groupSize * 5))
-
-    val ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices.length-1, 1), Array(1, 1), evCI)
-
-    ev.invokeUponCompletion(new Runnable() {
-      def run() = { ptrCI.release(); intBufferCI.release();}
-    })
-    ev
-  }
-
-
 }
 
 object CLParserUtils {
@@ -87,8 +53,7 @@ object CLParserUtils {
     CLParserUtils(ZipUtil.readKernel(zf, "sumGrammarKernel"),
       ZipUtil.readKernel(zf, "sumSplitPointsKernel"),
       ZipUtil.readKernel(zf, "setRootScoresKernel"),
-      ZipUtil.readKernel(zf, "getMasksKernel"),
-      ints(0), ints(1), ints(2)
+      ints(0), ints(1)
     )
   }
 
@@ -109,7 +74,7 @@ object CLParserUtils {
 
 
     val blockSize = 32
-    val groupSize = if(true && context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel") && context.getDevices.head.toString.contains("Core")) {
+    val groupSize = if(context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel") && context.getDevices.head.toString.contains("Core")) {
       1
     } else {
       val x = context.getDevices.head.getMaxWorkItemSizes
@@ -117,19 +82,15 @@ object CLParserUtils {
       math.min(size0, blockSize).toInt
     }
 
-    val numSyms = structure.termIndex.size.max(structure.nontermIndex.size)
-    val numSymsRounded = (numSyms + 31)/32 * 32
-
-    val prog = context.createProgram(splitPointSumKernel(blockSize, numSymsRounded, numSyms))
+    val prog = context.createProgram(splitPointSumKernel(blockSize, structure))
 
     CLParserUtils(sumCellsKernel,
       prog.createKernel("splitPointSum"),
       prog.createKernel("setRootScores"),
-      prog.createKernel("computeMasks"),
-      blockSize, groupSize, numSymsRounded/32)
+      blockSize, groupSize)
   }
 
-  def splitPointSumKernel(blockSize: Int, numSymsRounded: Int, numSyms: Int) = {
+  def splitPointSumKernel[C, L](blockSize: Int, structure: RuleStructure[C, L]) = {
     """#define BLOCK_SIZE """ + blockSize + """
 
    float sumUp(__local float* scores, float _acc, int first, int last) {
@@ -233,8 +194,8 @@ __kernel void setRootScores(__global float* charts, __global int* indices, int n
 }
 
 
-#define NUM_SYMS """ + numSyms + """
-#define NUM_FIELDS """ + ( (numSyms + 31)/32) + """
+#define NUM_SYMS """ + (structure.numNonTerms max structure.numTerms) + """
+#define NUM_FIELDS """ + structure.maskSize + """
 typedef struct { int fields[NUM_FIELDS]; } mask_t;
 
 inline void set_bit(int* field, int bit, int shouldSet) {

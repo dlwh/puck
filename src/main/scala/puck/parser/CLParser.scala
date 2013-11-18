@@ -38,13 +38,15 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       var ev = parsers.last.inside(finalBatch)
       ev = parsers.last.outside(finalBatch, ev)
-      val (vimasks, ev3) = parsers.last.computeViterbiMasks(finalBatch, ev)
-      parsers.last.extractParses(batch, vimasks, ev3)
+      val ev3 = parsers.last.computeViterbiMasks(finalBatch, ev)
+      parsers.last.extractParses(batch, maskCharts, ev3)
     }.toIndexedSeq
   }
 
   def partitions(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[Float] = synchronized {
     getBatches(sentences).iterator.flatMap{ batch =>
+      // allow all spans
+      zmk.fillMemory(maskCharts.data.asCLFloatBuffer(), java.lang.Float.intBitsToFloat(-1))
       val finalBatch = parsers.take(data.length - 1).foldLeft(batch){(b, parser) =>
         parser.addMasksToBatches(b)
       }
@@ -68,7 +70,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val unaryEvents  = new CLProfiler("Unary")
   private val sumToChartsEvents  = new CLProfiler("SumToCharts")
   private val sumEvents  = new CLProfiler("Sum")
-  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, sumToChartsEvents, sumEvents, initMemFillEvents, memFillEvents, hdTransferEvents)
+  private val masksEvents  = new CLProfiler("Masks")
+  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, sumToChartsEvents, sumEvents, initMemFillEvents, memFillEvents, hdTransferEvents, masksEvents)
 
   def release() {
     devParent.release()
@@ -80,27 +83,26 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     devParentPtrs.release()
     devLeftPtrs.release()
     devRightPtrs.release()
+
+    maskParent.release()
+    maskCharts.release()
+    maskLeft.release()
+    maskRight.release()
   }
 
-  /**
-   * The layout of a cell is:
-   * typedef struct { int mask[MASK_SIZE]; float scores[NUM_SYMS]; }
-   * aligned to 32 * 4 bytes,
-   * where NUM_SYMS is the max size of all grammars,
-   * and MASK_SIZE is roundUpToMultipleOf(NUM_SYMS,32)/32 (i.e. a bitfield)
-   */
-  val cellSize:Int = data.map{d =>
-    val myCellSize = d.structure.nontermIndex.size max d.structure.termIndex.size
-    val myMaskSize = roundUpToMultipleOf(myCellSize, 32) / 32
-    val fullCellSize = roundUpToMultipleOf(myCellSize + myMaskSize, 32)
-    fullCellSize
-  }.max
+  // size in floats, just the number of symbols
+  val cellSize:Int = data.map(_.numSyms).max
+  // number of coarse symbols / 32 rounded up.
+  val maskSize:Int = {
+    assert(data.forall(_.maskSize == data.head.maskSize))
+    data.head.maskSize
+  }
 
-  val (numGPUCells:Int, numGPUChartCells: Int) = {
+  val (numWorkCells:Int, numChartCells: Int) = {
     val sizeOfFloat = 4
     val fractionOfMemoryToUse = 0.8 // slack!
     val amountOfMemory = ((context.getMaxMemAllocSize min maxAllocSize) * fractionOfMemoryToUse).toInt - data.map(_.ruleScores.length).sum * sizeOfFloat - maxSentencesPerBatch * 3 * 4;
-    val maxPossibleNumberOfCells = ((amountOfMemory / sizeOfFloat) / (cellSize + 4)).toInt // + 1 for offsets
+    val maxPossibleNumberOfCells = ((amountOfMemory / sizeOfFloat) / (cellSize + 4 + maskSize)).toInt // + 4 for each kind of offset
     // We want numGPUCells and numGPUChartCells to be divisible by 16, so that we get aligned strided access:
     //       On devices of compute capability 1.0 or 1.1, the k-th thread in a half warp must access the
     //       k-th word in a segment aligned to 16 times the size of the elements being accessed; however,
@@ -127,17 +129,18 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   // One is where we calculate P = L * R * rules, for fixed spans and split points (the "bot")
   // One is the L part of the above
   // Another is the R part.
-  // finally, we have the array of parse charts, which is insanely large. It's also where
-  // we do rescaling, etc.
-  private val devParent, devLeft, devRight = new CLMatrix[Float](numGPUCells, cellSize)
-  private val devParentPtrs, devLeftPtrs, devRightPtrs = context.createIntBuffer(CLMem.Usage.Input, numGPUCells)
-  private val devSplitPointOffsets = context.createIntBuffer(CLMem.Usage.Input, numGPUCells + 1)
+  // finally, we have the array of parse charts
+  private val devParent, devLeft, devRight = new CLMatrix[Float](numWorkCells, cellSize)
+  private val maskParent, maskLeft, maskRight = new CLMatrix[Int](numWorkCells, maskSize)
+  private val devParentPtrs, devLeftPtrs, devRightPtrs = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
+  private val devSplitPointOffsets = context.createIntBuffer(CLMem.Usage.Input, numWorkCells + 1)
   // transposed
-  private val devCharts = new CLMatrix[Float](cellSize, numGPUChartCells)
+  private val devCharts = new CLMatrix[Float](cellSize, numChartCells)
+  private val maskCharts = new CLMatrix[Int](maskSize, numChartCells)
 
   // (dest, leftSource, rightSource) (right Source if binary rules)
-  val pArray, lArray, rArray = new Array[Int](numGPUCells)
-  val splitPointOffsets = new Array[Int](numGPUCells+1)
+  val pArray, lArray, rArray = new Array[Int](numWorkCells)
+  val splitPointOffsets = new Array[Int](numWorkCells+1)
 
   // other stuff
   private val zmk = ZeroMemoryKernel()
@@ -214,13 +217,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev
     }
 
-    def computeViterbiMasks(batch: Batch, events: CLEvent*):(CLMatrix[Int], CLEvent) = synchronized {
+    def computeViterbiMasks(batch: Batch, events: CLEvent*):CLEvent = synchronized {
       computeMasks(batch, -1E-3f, "viterbi", events:_*)
     }
 
     def initializeTagScores(batch: Batch, events: CLEvent*) = {
       import batch._
-      val dm = DenseMatrix.zeros[Float](totalLength, cellSize)
+      val dm = DenseMatrix.zeros[Float](totalLength, CLParser.this.cellSize)
       dm := _zero
       for (i <- 0 until numSentences par) {
         tagScoresFor(batch, dm, i)
@@ -248,21 +251,35 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
     }
 
-    private def computeMasks(batch: Batch, threshold: Float, name: String, events: CLEvent*):(CLMatrix[Int], CLEvent) = synchronized {
-      val masks = new CLMatrix[Int](cellSize/32, devParent.size / (cellSize/32), devParent.data.asCLIntBuffer)
-      val prof = new CLProfiler(name)
-      prof.tick()
-      val ev = data.util.getMasks(masks(::, 0 until batch.insideCellOffsets.last),
-        devCharts(::, 0 until batch.insideCellOffsets.last),
-        devCharts(::, batch.insideCellOffsets.last until batch.insideCellOffsets.last * 2),
-        batch.outsideCharts.head.bot.globalRowOffset, batch.insideCellOffsets, structure.root, threshold, events:_*) profileIn prof
-      if (profile) {
-        queue.finish()
-        prof.tock()
-        println(s"Masks $prof")
+    private def markTerminalsInMasks(batch: Batch, events: CLEvent*) = {
+      import batch._
+      val set0 = maskCharts.assignAsync(0, events:_*)
+      for (i <- 0 until numSentences par) {
+        val parent = insideCharts(i).bot.spanRangeSlice(1)
+        parent.copyToArray(pArray, _workArrayOffsetsForSpan(1)(i) )
       }
 
-      masks -> ev
+      val ev2 = devParentPtrs.writeArray(queue, pArray, totalLengthForSpan(1), events:_*) profileIn hdTransferEvents
+      val ev = maskParent(0 until totalLength, ::).assignAsync(-1, set0) profileIn memFillEvents
+      transposeCopy.permuteTransposeCopyOut(maskCharts.asInstanceOf[CLMatrix[Float]],  devParentPtrs, totalLengthForSpan(1), maskParent(0 until totalLength, ::).asInstanceOf[CLMatrix[Float]], ev, ev2, set0) profileIn sumToChartsEvents
+    }
+
+    private def computeMasks(batch: Batch, threshold: Float, name: String, events: CLEvent*):CLEvent = synchronized {
+      allProfilers.foreach(_.tick())
+
+      val ev =  markTerminalsInMasks(batch, events:_*)
+
+      val evr = data.masks.getMasks(maskCharts(::, 0 until batch.insideCellOffsets.last),
+        devCharts(::, 0 until batch.insideCellOffsets.last),
+        devCharts(::, batch.insideCellOffsets.last until batch.insideCellOffsets.last * 2),
+        batch.outsideCharts.head.bot.globalRowOffset, batch.insideCellOffsets, structure.root, threshold, ev) profileIn masksEvents
+      if (profile) {
+        queue.finish()
+        allProfilers.foreach(_.tock())
+        allProfilers.foreach(p => println(s"Masks $p"))
+      }
+
+      evr
     }
 
     private def insideBinaryPass(batch: Batch, span: Int, events: CLEvent*) = {
@@ -320,10 +337,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def addMasksToBatches(batch: Batch, ev: CLEvent*): Batch = {
       val insideEvents = inside(batch, ev:_*)
       val outsideEvents = outside(batch, insideEvents)
-      val (masks, ev2) = computeMasks(batch, -7, "masks", outsideEvents)
+      val ev2 = computeMasks(batch, -7, "masks", outsideEvents)
       ev2.waitFor()
-      val denseMasks = masks.toDense
-      masks.data.waitUnmap()
+      val denseMasks = maskCharts.toDense
+      maskCharts.data.waitUnmap()
       batch.copy(masks = Some(denseMasks))
     }
 
@@ -351,7 +368,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
             recBot(begin, end)
           } else {
             assert(column.valuesIterator.exists(_ != 0), (begin, end))
-            val label = structure.nontermIndex.get(x)
+//            val label = structure.nontermIndex.get(x)
+            val label = structure.grammar.labelIndex.get(x)
             val t = recBot(begin, end)
             new UnaryTree[L](label, t, IndexedSeq.empty, Span(begin, end))
           }
@@ -361,10 +379,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           val column:DenseVector[Int] = bot(::, ChartHalf.chartIndex(begin, end, length))
           val x = firstSetBit(column:DenseVector[Int])
           if (begin == end - 1) {
-            val label = structure.termIndex.get(x)
+//            val label = structure.termIndex.get(x)
+            val label = structure.grammar.labelIndex.get(x)
             NullaryTree(label, Span(begin, end))
           } else {
-            val label = structure.nontermIndex.get(x)
+//            val label = structure.nontermIndex.get(x)
+            val label = structure.grammar.labelIndex.get(x)
             for (split <- (begin+1) until end) {
               val left = (if (begin == split - 1) bot else top)(::, ChartHalf.chartIndex(begin, split, length))
               val right = (if (end == split + 1) bot else top)(::, ChartHalf.chartIndex(split, end, length))
@@ -447,7 +467,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     for ( (s, i) <- sentences.zipWithIndex) {
       currentLengthTotal += s.length
       currentCellTotal += TriangularArray.arraySize(s.length) * 4
-      if (currentLengthTotal > numGPUCells || currentCellTotal > numGPUChartCells) {
+      if (currentLengthTotal > numWorkCells || currentCellTotal > numChartCells) {
         assert(current.nonEmpty)
         result += createBatch(current)
         currentLengthTotal = s.length
@@ -493,7 +513,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       lArray(offset) = left
       rArray(offset) = right
       offset += 1
-      if (offset >= numGPUCells)  {
+      if (offset >= numWorkCells)  {
         println(s"flush!")
         flushQueue(span, events)
       } else {
@@ -524,7 +544,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val zeroParent = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
 //        val zeroParent = zmk.fillMemory(devParent.data.safeBuffer, parser._zero, ev:_*) profileIn memFillEvents
         val kEvents: IndexedSeq[CLEvent] = kernels.map{ kernel =>
-          kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, parser.devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
+          kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, parser.devRules, Integer.valueOf(numWorkCells), Integer.valueOf(offset))
           kernel.enqueueNDRange(queue, Array(offset), evTransLeft, evTransRight, zeroParent) profileIn binaryEvents
         }
 //        queue.finish()
@@ -612,7 +632,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       lArray(offset) = left
       pArray(offset) = parent
       offset += 1
-      if (offset >= numGPUCells)  {
+      if (offset >= numWorkCells)  {
         println(s"flush!")
         flushQueue(span, events)
       } else {
@@ -631,7 +651,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 //        queue.finish()
 
         val endEvents = kernels.map{ kernel  =>
-          kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, parser.devRules, Integer.valueOf(numGPUCells), Integer.valueOf(offset))
+          kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, parser.devRules, Integer.valueOf(numWorkCells), Integer.valueOf(offset))
           kernel.enqueueNDRange(queue, Array(offset), wl, zz) profileIn unaryEvents
         }
 //        queue.finish()
@@ -808,9 +828,12 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
                                  ruleScores: Array[Float],
                                  inside: CLInsideKernels,
                                  outside: CLOutsideKernels,
+                                 masks: CLMaskKernels,
                                  util: CLParserUtils,
                                  isViterbi: Boolean) {
 
+  def numSyms = structure.nontermIndex.size max structure.termIndex.size
+  def maskSize = structure.maskSize
 
   def write(out: OutputStream) {
     val zout = new ZipOutputStream(out)
@@ -820,6 +843,7 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     inside.write(zout)
     outside.write(zout)
     util.write(zout)
+    masks.write(zout)
     ZipUtil.serializedEntry(zout, "scores", ruleScores)
     zout.close()
   }
@@ -832,12 +856,13 @@ object CLParserData {
     val inside = CLInsideKernels.make(structure)
     val outside =  CLOutsideKernels.make(structure)
     val util = CLParserUtils.make(structure)
+    val masks = CLMaskKernels.make(structure)
 
     val ruleScores: Array[Float] = Array.tabulate(grammar.refinedGrammar.index.size){r =>
       val score = grammar.ruleScoreArray(grammar.refinements.rules.project(r))(grammar.refinements.rules.localize(r))
       viterbi.fromLogSpace(score.toFloat)
     }
-    new CLParserData(grammar, structure, viterbi, ruleScores, inside, outside, util, viterbi.plusIsIdempotent)
+    new CLParserData(grammar, structure, viterbi, ruleScores, inside, outside, masks, util, viterbi.plusIsIdempotent)
   }
 
   def read[C, L, W](file: ZipFile)(implicit context: CLContext) = {
@@ -847,9 +872,10 @@ object CLParserData {
     val inside = CLInsideKernels.read(file)
     val outside = CLOutsideKernels.read(file)
     val util = CLParserUtils.read(file)
+    val masks = CLMaskKernels.read(file)
     val scores = ZipUtil.deserializeEntry[Array[Float]](file.getInputStream(file.getEntry("scores")))
 
-    CLParserData(gr, structure, semiring, scores, inside, outside, util, semiring.plusIsIdempotent)
+    CLParserData(gr, structure, semiring, scores, inside, outside, masks, util, semiring.plusIsIdempotent)
   }
 }
 

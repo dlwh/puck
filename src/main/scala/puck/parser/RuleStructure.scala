@@ -15,6 +15,8 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   def numSyms = grammar.labelIndex.size
   def numCoarseSyms = refinements.labels.coarseIndex.size
 
+  def maskSize = puck.roundUpToMultipleOf(numCoarseSyms, 32) / 32
+
   val (symIndex,
   nontermIndex,
   termIndex,

@@ -164,6 +164,16 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
 
   }
 
+  def assignAsync(b: V, events: CLEvent*)(implicit cast: CanRepresentAsFloatBytes[V]): CLEvent = {
+    val zmk = ZeroMemoryKernel()(this.queue.getContext)
+    // nicely shaped matrix
+    if( (!this.isTranspose && this.majorStride == this.rows)  || (this.isTranspose && this.majorStride == this.cols)) {
+      zmk.fillMemory(this.data.asCLFloatBuffer(), cast.asFloat(b), this.offset, this.rows * this.cols, events:_*)
+    } else {
+      zmk.shapedFill(this.asInstanceOf[CLMatrix[Float]], cast.asFloat(b), events:_*)
+    }
+  }
+
   private implicit def ctx = queue.getContext
 
   /** Forcibly releases the buffer. Note that other slices will be invalidated! */
@@ -609,6 +619,20 @@ trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
         ev.waitFor()
       } else {
         zmk.shapedFill(a, b).waitFor()
+      }
+    }
+  }
+
+  implicit object SetMSIntOp extends BinaryUpdateOp[CLMatrix[Int], Int, OpSet] {
+    def apply(a: CLMatrix[Int], b: Int) {
+      val zmk = ZeroMemoryKernel()(a.queue.getContext)
+      import a.queue
+      // nicely shaped matrix
+      if( (!a.isTranspose && a.majorStride == a.rows)  ||(a.isTranspose && a.majorStride == a.cols)) {
+        val ev = zmk.fillMemory(a.data.asCLFloatBuffer(), java.lang.Float.intBitsToFloat(b), a.offset, a.rows * a.cols)
+        ev.waitFor()
+      } else {
+        zmk.shapedFill(a.asInstanceOf[CLMatrix[Float]], java.lang.Float.intBitsToFloat(b)).waitFor()
       }
     }
   }
