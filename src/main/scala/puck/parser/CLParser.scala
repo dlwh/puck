@@ -147,6 +147,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val transposeCopy = CLMatrixTransposeCopy()
 
   private val parsers = data.map(new ActualParser(_))
+  var pruned = 0
+  var total = 0
 
   private class ActualParser(val data: CLParserData[C, L, W]) {
     import data._
@@ -159,6 +161,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def inside(batch: Batch, events: CLEvent*):CLEvent = synchronized {
       allProfilers.foreach(_.clear())
       allProfilers.foreach(_.tick())
+      pruned = 0
+      total = 0
 
       val evZeroCharts = zmk.fillMemory(devCharts.data, _zero, events:_*) profileIn initMemFillEvents
       val init = initializeTagScores(batch, evZeroCharts)
@@ -177,6 +181,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         allProfilers.foreach(p => println(s"Inside $p"))
         println(f"Time accounted for: ${allProfilers.map(_.processingTime).sum}%.3f")
       }
+      println(s"Pruned $pruned/$total")
 
       ev
     }
@@ -185,6 +190,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       var ev = event
       allProfilers.foreach(_.clear())
       allProfilers.foreach(_.tick())
+      pruned  = 0
+      total = 0
 
       ev = devParentPtrs.writeArray(queue, batch.outsideCharts.map(_.top.rootIndex).toArray, batch.outsideCharts.length, ev) profileIn hdTransferEvents
       ev = data.util.setRootScores(devCharts, devParentPtrs, batch.outsideCharts.length, structure.root, data.semiring.one, ev) profileIn memFillEvents
@@ -213,12 +220,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         allProfilers.foreach(p => println(s"Outside $p"))
         println(f"Time accounted for: ${allProfilers.map(_.processingTime).sum}%.3f")
       }
+      println(s"Pruned $pruned/$total")
 
       ev
     }
 
     def computeViterbiMasks(batch: Batch, events: CLEvent*):CLEvent = synchronized {
-      computeMasks(batch, -1E-3f, "viterbi", events:_*)
+      computeMasks(batch, -1E-3f, events:_*)
     }
 
     def initializeTagScores(batch: Batch, events: CLEvent*) = {
@@ -264,8 +272,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       transposeCopy.permuteTransposeCopyOut(maskCharts.asInstanceOf[CLMatrix[Float]],  devParentPtrs, totalLengthForSpan(1), maskParent(0 until totalLength, ::).asInstanceOf[CLMatrix[Float]], ev, ev2, set0) profileIn sumToChartsEvents
     }
 
-    private def computeMasks(batch: Batch, threshold: Float, name: String, events: CLEvent*):CLEvent = synchronized {
-      allProfilers.foreach(_.tick())
+    private def computeMasks(batch: Batch, threshold: Float, events: CLEvent*):CLEvent = synchronized {
+      if(profile) {
+        allProfilers.foreach(_.clear())
+        allProfilers.foreach(_.tick())
+      }
 
       val ev =  markTerminalsInMasks(batch, events:_*)
 
@@ -337,7 +348,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def addMasksToBatches(batch: Batch, ev: CLEvent*): Batch = {
       val insideEvents = inside(batch, ev:_*)
       val outsideEvents = outside(batch, insideEvents)
-      val ev2 = computeMasks(batch, -7, "masks", outsideEvents)
+      val ev2 = computeMasks(batch, -7, outsideEvents)
       ev2.waitFor()
       val denseMasks = maskCharts.toDense
       maskCharts.data.waitUnmap()
@@ -571,14 +582,16 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       parentOffset = 0
       lastParent = -1
 
+
       val allSpans = if (batch.hasMasks) {
         val in = System.currentTimeMillis()
         import BitHacks.OrderBitVectors.OrderingBitVectors
         val allSpans = for {
           sent <- 0 until batch.numSentences
           start <- 0 to batch.sentences(sent).length - span
+          _ = total += 1
           mask <-  batch.maskFor(sent, start, start + span)
-          if mask.any
+          if {val x = mask.any; if(!x) pruned += 1; x }
         } yield (sent, start, start+span, mask)
         val ordered = allSpans.sortBy(_._4)
         val out = System.currentTimeMillis()
