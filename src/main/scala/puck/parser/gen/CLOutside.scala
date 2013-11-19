@@ -67,7 +67,7 @@ object CLOutsideKernels {
   }
 
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
-    val parserGen = new GenRuleMultiply()
+    val parserGen = new LHSGenRuleMultiply()
     val outside_L_NNKernels = structure.partitionsLeftChild.zipWithIndex.map { case(partition, i) =>
       parserGen.binaryRuleApplication(partition.map(rotateLeftToParent), "outside_L_nn_binaries"+i)
     }
