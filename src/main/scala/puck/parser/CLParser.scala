@@ -514,7 +514,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     // TODO: ugh, state
     var lastParent = -1
 
-    private def enqueue(span: Int, parent: Int, left: Int, right: Int, events: Seq[CLEvent]): Seq[CLEvent] = {
+    private def enqueue(batch: Batch, span: Int, parent: Int, left: Int, right: Int, events: Seq[CLEvent]): Seq[CLEvent] = {
       if (parentOffset == 0 || lastParent != parent) {
         splitPointOffsets(parentOffset) = offset
         pArray(parentOffset) = parent
@@ -526,13 +526,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       offset += 1
       if (offset >= numWorkCells)  {
         println(s"flush!")
-        flushQueue(span, events)
+        flushQueue(batch, span, events)
       } else {
         events
       }
     }
 
-    private def flushQueue(span: Int, ev: Seq[CLEvent]): Seq[CLEvent] = {
+    private def flushQueue(batch: Batch, span: Int, ev: Seq[CLEvent]): Seq[CLEvent] = {
       if (offset != 0) {
         splitPointOffsets(parentOffset) = offset
 
@@ -552,11 +552,17 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val evWriteDevSplitPoint = devSplitPointOffsets.writeArray(queue, splitPointOffsets, parentOffset + 1, ev:_*) profileIn hdTransferEvents
 //        queue.finish()
 
+        val maskEv = if(batch.hasMasks) {
+          transposeCopy.permuteTransposeCopy(maskParent(0 until offset, ::).asInstanceOf[CLMatrix[Float]], maskCharts.asInstanceOf[CLMatrix[Float]], devParentPtrs, offset, evWriteDevParent) profileIn transferEvents
+        } else {
+          null
+        }
+
         val zeroParent = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
 //        val zeroParent = zmk.fillMemory(devParent.data.safeBuffer, parser._zero, ev:_*) profileIn memFillEvents
         val kEvents: IndexedSeq[CLEvent] = kernels.map{ kernel =>
-          kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, parser.devRules, Integer.valueOf(numWorkCells), Integer.valueOf(offset))
-          kernel.enqueueNDRange(queue, Array(offset), evTransLeft, evTransRight, zeroParent) profileIn binaryEvents
+          kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, parser.devRules, maskParent.data.safeBuffer, Integer.valueOf(numWorkCells), Integer.valueOf(offset))
+          kernel.enqueueNDRange(queue, Array(offset), evTransLeft, evTransRight, zeroParent, maskEv) profileIn binaryEvents
         }
 //        queue.finish()
 
@@ -619,13 +625,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         if (leftChildAllowed && rightChildAllowed) {
           val leftChild = if (split < start) leftChart(batch, sent).cellOffset(split,start) else leftChart(batch, sent).cellOffset(start, split)
           val rightChild = if (split < end) rightChart(batch, sent).cellOffset(split,end) else rightChart(batch, sent).cellOffset(end, split)
-          ev = enqueue(span, parentTi, leftChild, rightChild, ev)
+          ev = enqueue(batch, span, parentTi, leftChild, rightChild, ev)
         }
 
       }
 
       if (offset > 0) {
-        ev = flushQueue(span, ev)
+        ev = flushQueue(batch, span, ev)
       }
 
       assert(ev.length == 1)

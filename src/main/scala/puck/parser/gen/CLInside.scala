@@ -37,7 +37,7 @@ object CLInsideKernels {
 
 
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
-    val parserGen = new LHSGenRuleMultiply()
+    val parserGen = new LHSGenRuleMultiply[C, L](structure)
     val insideNNKernels = structure.partitionsParent.zipWithIndex.map { case(partition, i) =>
       parserGen.binaryRuleApplication(partition, "inside_nn_binaries_"+i)
     }

@@ -72,16 +72,10 @@ object CLMaskKernels {
 
 
   def programText[L, C](cellSize: Int, structure: RuleStructure[C, L]): String = {
-    """
-#define NUM_SYMS """ + cellSize + """
-#define NUM_FIELDS """ + structure.maskSize + """
 
-typedef struct { int fields[NUM_FIELDS]; } mask_t;
 
-inline void set_bit(int* field, int bit, int shouldSet) {
-    *(field) = *(field) | (shouldSet<<(bit));
-}
-
+    structure.maskHeader ++ """
+      #define NUM_SYMS """ + cellSize + """
 
       """ + structure.terminalMap.padTo(cellSize, 0).mkString("__constant int terminalProjections[] = {", ", ", "};") +
       """
@@ -131,7 +125,7 @@ __kernel void computeMasks(__global mask_t* masksOut,
       int keep = score >= cutoff;
       int field = projections[sym];
 
-      set_bit(myMask.fields + (field/32), field%32, keep);
+      set_bit(&myMask, field, keep);
     }
     masksOut[cell] = myMask;
   }

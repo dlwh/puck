@@ -9,17 +9,31 @@ import puck.parser.{RuleStructure, SymId, RuleSemiring}
  *
  * @author dlwh
  **/
-class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring: RuleSemiring) extends GenRuleMultiply[C, L] {
+class ParentGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring: RuleSemiring) extends GenRuleMultiply[C, L] {
   def binaryRuleApplication(rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLKernel = {
-    val parents = rulePartition.map(_._1.parent).toSet
-    val accumulator = semiring.accumulator(parents.map(_.gpu))
-    val text = structure.maskHeader + s"""
+
+    val byCoarseParents = rulePartition.groupBy(r => structure.refinements.labels.project(r._1.parent.system))
+
+    var text = structure.maskHeader + s"""
     __kernel void $name(__global float* parents, __global float* left, __global float* right, __global float* ruleScores, __global const mask_t* masks, int numRows, int cellsToDo) {
         int row = get_global_id(0);
         if(row < cellsToDo) {
-          ${accumulator.declare}
-          ${coreRuleLoop(rulePartition, accumulator)}
-          ${accumulator.output((id: Int) => s"parents[numRows * $id + row]")}
+        mask_t mask = masks[row];
+    """
+    for((coarseParent, rulePartition) <- byCoarseParents) {
+      val parents = rulePartition.map(_._1.parent).toSet
+      val accumulator = semiring.accumulator(parents.map(_.gpu))
+      // TODO: don't copy/paste
+      text +=  s"""
+          if(is_set(&mask, $coarseParent) {
+              ${accumulator.declare}
+              ${coreRuleLoop(rulePartition, accumulator)}
+              ${accumulator.output((id: Int) => s"parents[numRows * $id + row]")}
+           }
+       """
+    }
+
+      text += """
         }
     }
 
