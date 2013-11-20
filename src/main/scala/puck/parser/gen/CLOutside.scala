@@ -4,7 +4,7 @@ import puck.util._
 import com.nativelibs4java.opencl._
 import java.util.zip._
 import epic.trees._
-import puck.parser.{RuleSemiring, RuleStructure}
+import puck.parser.{SymId, RuleSemiring, RuleStructure}
 import java.io.{PrintStream, FileOutputStream}
 
 // These kernels assume that the parent and the child named (L or R) are swapped
@@ -54,15 +54,15 @@ object CLOutsideKernels {
       outsideNU, outsideTU)
   }
 
-  def rotateLeftToParent(r: (BinaryRule[Int], Int)) = {
+  def rotateLeftToParent[C, L](r: (BinaryRule[SymId[C, L]], Int)) = {
     BinaryRule(r._1.left, r._1.parent, r._1.right) -> r._2
   }
 
-  def rotateRightToParent(r: (BinaryRule[Int], Int)) = {
+  def rotateRightToParent[C, L](r: (BinaryRule[SymId[C, L]], Int)) = {
     BinaryRule(r._1.right, r._1.left, r._1.parent) -> r._2
   }
 
-  def rotateChildToParent(r: (UnaryRule[Int], Int)) = {
+  def rotateChildToParent[C, L](r: (UnaryRule[SymId[C, L]], Int)) = {
     UnaryRule(r._1.child, r._1.parent, r._1.chain) -> r._2
   }
 

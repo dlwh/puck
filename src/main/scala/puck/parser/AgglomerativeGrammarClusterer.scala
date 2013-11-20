@@ -9,13 +9,13 @@ import GrammarClusterer._
 class AgglomerativeGrammarClusterer(numRestarts: Int = 100, maxPartitionLabelSize: Int = 128) extends GrammarClusterer {
 
 
-  def partition(rules: IndexedSeq[(BinaryRule[Int], Int)],
-                targetLabel: TargetLabel = Parent): IndexedSeq[immutable.IndexedSeq[(BinaryRule[Int], Int)]] = {
+  def partition[C, L](rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)],
+                targetLabel: TargetLabel = Parent): IndexedSeq[immutable.IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = {
 
 
-    var clusters_x = rules.groupBy(r => targetLabel.target(r._1))
+    val clusters_x = rules.groupBy(r => targetLabel.target(r._1))
 
-    val initialClusters = clusters_x.map { case (p:Int, r: IndexedSeq[(BinaryRule[Int], Int)]) =>
+    val initialClusters = clusters_x.map { case (p:Int, r: IndexedSeq[(BinaryRule[SymId[C, L]], Int)]) =>
       val (g1, g2) = r.map(rr => targetLabel.clusterPieces(rr._1)).unzip
       p -> Partition(BitSet(p), g1.reduce( _ ++ _), g2.reduce(_ ++ _))
     }

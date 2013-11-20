@@ -2,6 +2,7 @@ package puck.parser.gen
 
 import epic.trees.{UnaryRule, BinaryRule}
 import com.nativelibs4java.opencl.{CLContext, CLKernel}
+import puck.parser.SymId
 
 /**
  * TODO
@@ -9,6 +10,6 @@ import com.nativelibs4java.opencl.{CLContext, CLKernel}
  * @author dlwh
  **/
 trait GenRuleMultiply {
-  def binaryRuleApplication(rulePartition: IndexedSeq[(BinaryRule[Int], Int)], name: String)(implicit cl: CLContext): CLKernel
-  def unaryRuleApplication(rulePartition: IndexedSeq[(UnaryRule[Int], Int)], name: String)(implicit cl: CLContext): CLKernel
+  def binaryRuleApplication[C, L](rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLKernel
+  def unaryRuleApplication[C, L](rulePartition: IndexedSeq[(UnaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLKernel
 }

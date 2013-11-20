@@ -27,7 +27,7 @@ class ILPGrammarClusterer(maxNumPartitions: Int = 32, partitionBadnessThreshold:
    * @return
    **/
 
-  def partition(rules: IndexedSeq[(BinaryRule[Int], Int)], targetLabel: TargetLabel): IndexedSeq[immutable.IndexedSeq[(BinaryRule[Int], Int)]] = {
+  def partition[C, L](rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], targetLabel: TargetLabel): IndexedSeq[immutable.IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = {
     val dsl = new LinearProgram
     import dsl._
     val constraints = new ArrayBuffer[Constraint]()
