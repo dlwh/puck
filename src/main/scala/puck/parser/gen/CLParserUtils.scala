@@ -93,7 +93,7 @@ object CLParserUtils {
   def splitPointSumKernel[C, L](blockSize: Int, structure: RuleStructure[C, L]) = {
     """#define BLOCK_SIZE """ + blockSize + """
 
-   float sumUp(__local float* scores, float _acc, int first, int last) {
+   inline float sumUp(__local float* scores, float _acc, int first, int last) {
      float m = _acc;
      for(int i = first; i < last; i += 1) {
         m = max(m, scores[i]);
@@ -196,60 +196,6 @@ __kernel void setRootScores(__global float* charts, __global int* indices, int n
       charts[numSyms * indices[id] + root] = value;
 }
 
-
-#define NUM_SYMS """ + (structure.numNonTerms max structure.numTerms) + """
-#define NUM_FIELDS """ + structure.maskSize + """
-typedef struct { int fields[NUM_FIELDS]; } mask_t;
-
-inline void set_bit(int* field, int bit, int shouldSet) {
-    *field = (*field & ~(1 << (bit))) | (shouldSet<<(bit));
-}
-
-// each global_id(0) corresponds to a single sentence.
-// we have some number of workers for each sentence, global_size(1)
-// for each cell in the sentence, each worker in parallel reads a sym from a cell, thresholds it, and then sets
-// the mask if the threshold is exceeded. Each worker has its own mask for its share of the cells. At the
-// end, the masks are or'd together and written out.
-// the masks are then
-// indices(i) is the first cell in the i'th sentence
-// indices(i+1)-1 is the last cell in the i'th sentence
-// the last cell has the root score.
-//
-__kernel void computeMasks(__global mask_t* masksOut,
-                           __global const float* inside,
-                           __global const float* _outside,
-                           const int _outsideOff,
-                           __global const int* indices,
-                           const int numIndices,
-                           int numSyms,
-                           int root,
-                           float thresh) {
-  const int sentence = get_global_id(0);
-  const int firstCell = indices[sentence];
-  const int lastCell = indices[sentence + 1];
-  __global const float* outside = _outside + _outsideOff;
-  const float root_score = inside[(lastCell-1) * numSyms + root];
-
-  float cutoff = root_score + thresh;
-
-  for(int cell = firstCell; cell < lastCell; cell++) {
-    __global const float* in = inside + (cell * numSyms);
-    __global const float* out = outside + (cell * numSyms);
-    mask_t myMask;
-    for(int i = 0; i < NUM_FIELDS; ++i) {
-      myMask.fields[i] = 0;
-    }
-
-    for(int sym = 0; sym < NUM_SYMS; ++sym) {
-      float score = (in[sym] + out[sym]);
-      int keep = score >= cutoff;
-
-      set_bit(myMask.fields + (sym/32), sym%32, keep);
-    }
-    masksOut[cell] = myMask;
-  }
-
-}
                                                 """
 
 
