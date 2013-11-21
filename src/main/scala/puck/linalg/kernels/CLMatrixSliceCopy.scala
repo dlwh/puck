@@ -77,7 +77,7 @@ class CLMatrixSliceCopy private(blockSize: Int, kernel: CLKernel, kernelOut: CLK
       Integer.valueOf(src.cols))
     val adjustedSrcCols = puck.roundUpToMultipleOf(src.cols, blockSize)
     //val res = kernelOut.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), (ev +: events):_*)
-    kernelOut.enqueueNDRange(queue, Array(adjustedSrcCols, /*puck.roundUpToMultipleOf(src.rows, blockSize)/blockSize, 1)*/1, 1), Array(blockSize, 1, 1), events:_*)
+    kernelOut.enqueueNDRange(queue, Array(adjustedSrcCols, puck.roundUpToMultipleOf(src.rows, blockSize), 1), Array(1, blockSize, 1), events:_*)
   }
 
 
@@ -120,6 +120,7 @@ __kernel void slice_copy(__global T* _dst, int dstOff, int dstMajorStride,
   __global const T* src = _src + srcOff;
 
   int dstCol = get_global_id(0);
+  if(dstCol >= srcCols) return;
   int threadid = get_local_id(0);
 
   int srcCol = srcPtrs[dstCol];
@@ -130,7 +131,7 @@ __kernel void slice_copy(__global T* _dst, int dstOff, int dstMajorStride,
 
 
   for(int i = firstRow + threadid; i < lastRow; i += local_size) {
-    dst[dstCol * srcRows + i] = src[srcCol * srcRows + i];
+    dst[dstCol * dstMajorStride + i] = src[srcCol * srcMajorStride + i];
   }
 
 }
@@ -144,6 +145,7 @@ __kernel void slice_copy_out(
     __global const T* src = _src + srcOff;
 
     int srcCol = get_global_id(0);
+    if(srcCol >= srcCols) return;
     int threadid = get_local_id(0);
 
     int dstCol = dstPtrs[srcCol];
@@ -154,7 +156,7 @@ __kernel void slice_copy_out(
 
 
     for(int i = firstRow + threadid; i < lastRow; i += local_size) {
-      dst[dstCol * srcRows + i] = src[srcCol * srcRows + i];
+      dst[dstCol * dstMajorStride + i] = src[srcCol * srcMajorStride + i];
     }
 
 

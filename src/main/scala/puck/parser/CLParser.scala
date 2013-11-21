@@ -29,6 +29,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         maxSentencesPerBatch: Long = 400,
                         profile: Boolean = true)(implicit val context: CLContext) extends Logging {
 
+  println(data.head.structure.termIndex.zipWithIndex)
+  println(data.head.structure.nontermIndex.zipWithIndex)
+
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[L]] = synchronized {
     var ev =  maskParent.assignAsync(-1)
@@ -53,9 +56,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
 
       ev = parsers.last.inside(finalBatch, ev)
+      ev = parsers.last.outside(finalBatch, ev)
       ev.waitFor()
-      for ( i <- 0 until batch.numSentences) yield
-        batch.insideCharts(i).top(0,batch.insideCharts(i).length, data.head.structure.root)
+      for ( i <- 0 until batch.numSentences) yield {
+        (batch.insideCharts(i).bot(2, 3)
+        + batch.outsideCharts(i).bot(2,3)).max
+      }
     }.toIndexedSeq
   }
 

@@ -15,6 +15,11 @@ class ChartHalf(val length: Int, val matrix: CLMatrix[Float], isBot: Boolean) {
     matrix(label, ChartHalf.chartIndex(begin, end, length))
   }
 
+
+  def apply(begin: Int, end: Int) = {
+    matrix(::, ChartHalf.chartIndex(begin, end, length)).toDense
+  }
+
   def spanRangeSlice(spanLength: Int, firstPos: Int = 0, end: Int = length): Array[Int] = {
     assert(spanLength > 0)
     val firstIndex: Int = ChartHalf.chartIndex(firstPos, firstPos + spanLength, length)
