@@ -47,12 +47,13 @@ __kernel void shaped_fill(__global float* data, int beginOffset, int rows, int c
     val c = if(data.isTranspose) data.rows else data.cols
     shapedKernel.setArgs(data.data.safeBuffer, Integer.valueOf(data.offset), Integer.valueOf(r), Integer.valueOf(c), Integer.valueOf(data.majorStride), java.lang.Float.valueOf(f))
 
-    shapedKernel.enqueueNDRange(queue, Array((r+groupSize-1)/groupSize * groupSize, c), Array(groupSize, 1), eventsToWaitFor:_*)
+    shapedKernel.enqueueNDRange(queue, Array(roundUpToMultipleOf(r, groupSize), c), Array(groupSize, 1), eventsToWaitFor:_*)
   }
 
   def fillMemory(data: CLBuffer[java.lang.Float], f: Float, events: CLEvent*)(implicit queue: CLQueue): CLEvent = synchronized {
     fillMemory(data, f, 0, -1, events:_*)
   }
+
   def fillMemory(data: CLBuffer[java.lang.Float],  f: Float, offset: Int, len: Int, eventsToWaitFor: CLEvent*)(implicit queue: CLQueue): CLEvent = synchronized {
     val ll = if(len < 0) data.getElementCount - offset else len
     kernel.setArgs(data, java.lang.Integer.valueOf(offset), java.lang.Float.valueOf(f), java.lang.Integer.valueOf(ll.toInt))

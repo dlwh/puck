@@ -13,10 +13,23 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
   def binaryRuleApplication(rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLKernel = {
     val parents = rulePartition.map(_._1.parent).toSet
     val accumulator = semiring.accumulator(parents.map(_.gpu))
-    val text = structure.maskHeader + s"""
+    // set up the mask
+    val maskStrings = for {
+//      field <- 0 to 3
+      (field, parentsInField) <- parents
+                                .map(s => structure.refinements.labels.project(s.system))
+                                .groupBy(_ / 32)
+    } yield parentsInField.map(p => s"(1<<($p%32))").mkString(s"mask.fields[$field] & (","|",")")
+    val checkMaskString = maskStrings.mkString("if (!((", ") | (", ")) ) return;")
+//    val checkMaskString = "if ( !any(( (__global int4*)masks)[row] )) return;"
+//      val checkMaskString = "if ( !any( *( (int4*)&mask) )) return;"
+      val text = structure.maskHeader + s"""
     __kernel void $name(__global float* parents, __global float* left, __global float* right, __global float* ruleScores, __global const mask_t* masks, int numRows, int cellsToDo) {
         int row = get_global_id(0);
         if(row < cellsToDo) {
+          const mask_t mask = masks[get_global_id(0)];
+//          printf("%d %d %d %d qq %d${"\\n"}", mask.fields[0], mask.fields[1], mask.fields[2], mask.fields[3], row);
+          $checkMaskString
           ${accumulator.declare}
           ${coreRuleLoop(rulePartition, accumulator)}
           ${accumulator.output((id: Int) => s"parents[numRows * $id + row]")}
@@ -24,7 +37,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     }
 
     """
-    cl.createProgram(text).build().createKernels().head
+      cl.createProgram(text).build().createKernels().head
   }
 
   private def coreRuleLoop(rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], accumulator: semiring.Accumulator)(implicit cl: CLContext) = {

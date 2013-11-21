@@ -246,7 +246,7 @@ object CLMatrix extends LowPriorityNativeMatrix {
         if(rows.isEmpty) new CLMatrix(0, 0, m.data, 0, 0)
         else if(!m.isTranspose) {
           assert(rows.head >= 0)
-          assert(rows.last < m.rows)
+          assert(rows.last < m.rows, s"last row ${rows.last} is bigger than rows ${m.rows}")
           require(rows.step == 1, "Sorry, we can't support row ranges with step sizes other than 1")
           val first = rows.head
           new CLMatrix(rows.length, m.cols, m.data, m.offset + first, m.majorStride)

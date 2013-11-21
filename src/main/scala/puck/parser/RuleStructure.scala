@@ -99,7 +99,7 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   def labelIndexToTerminal(label: Int) = reverseIndex(label)
   def labelIndexToNonterminal(label: Int) = reverseIndex(label)
 
-  def clusterer:GrammarClusterer = new AgglomerativeGrammarClusterer(100, 55)//new ILPGrammarClusterer(12, 55)
+  def clusterer:GrammarClusterer = new AgglomerativeGrammarClusterer(100, 1)//55)//new ILPGrammarClusterer(12, 55)
 
   lazy val partitionsParent  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(nontermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
   lazy val partitionsLeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(nontermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
@@ -130,11 +130,15 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
     mask->fields[field] = mask->fields[field] | (shouldSet<<(modulus));
   }
 
-  int is_set(const mask_t* mask, int bit) {
+  /* Intel gets sad from this one?
+  inline int is_set(mask_t* mask, int bit) {
     int field = (bit/32);
     int modulus = bit%32;
     return mask->fields[field] & (1<<(modulus));
   }
+  */
+
+   #define is_set(mask, bit)  ((mask)->fields[(bit)/32] & (1<<((bit)%32)))
 
                                                            """
 }
