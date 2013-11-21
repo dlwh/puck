@@ -59,8 +59,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev = parsers.last.outside(finalBatch, ev)
       ev.waitFor()
       for ( i <- 0 until batch.numSentences) yield {
-        (batch.insideCharts(i).bot(2, 3)
-        + batch.outsideCharts(i).bot(2,3)).max
+        (batch.insideCharts(i).top(0, batch.sentences(i).length, data.head.structure.root))
+//        (batch.insideCharts(i).bot(2, 3)
+//        + batch.outsideCharts(i).bot(2,3)).max
       }
     }.toIndexedSeq
   }
@@ -562,19 +563,21 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
 
         val maskEv = if(batch.hasMasks) {
-          sliceCopy.sliceCopy(maskParent(::, 0 until offset).asInstanceOf[CLMatrix[Float]], maskCharts.asInstanceOf[CLMatrix[Float]], devParentPtrs, offset, evWriteDevParent) profileIn transferEvents
-//          ev
+          val ev = sliceCopy.sliceCopy(maskParent(::, 0 until offset).asInstanceOf[CLMatrix[Float]], maskCharts.asInstanceOf[CLMatrix[Float]], devParentPtrs, offset, evWriteDevParent) profileIn transferEvents
+          ev.waitFor
+          println("msks " + maskParent(::, 0 until offset).toDense + "\n" + devParentPtrs.read(queue).toArray.take(offset).toIndexedSeq)
+          ev
+//          null
         } else {
           null
         }
 
         val zeroParent = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
-//        val zeroParent = zmk.fillMemory(devParent.data.safeBuffer, parser._zero, ev:_*) profileIn memFillEvents
         val kEvents: IndexedSeq[CLEvent] = kernels.map{ kernel =>
           kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, parser.devRules, maskParent.data.safeBuffer, Integer.valueOf(numWorkCells), Integer.valueOf(offset))
           kernel.enqueueNDRange(queue, Array(offset), evTransLeft, evTransRight, zeroParent, maskEv) profileIn binaryEvents
         }
-//        queue.finish()
+        queue.finish()
 
 
         val sumEv = parser.data.util.sumSplitPoints(devParent,
@@ -612,7 +615,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val out = System.currentTimeMillis()
         println(s"Sorting $span took " + (out - in)/1000.0)
 //        println(ordered.mkString("{\t","\n\t","\n}"))
-        ordered
+//        ordered
+        allSpans
       } else {
          for {
           sent <- 0 until batch.numSentences
@@ -729,6 +733,7 @@ object CLParser extends Logging {
                     prune: Boolean = false,
                     useGPU: Boolean = true, profile: Boolean = false,
                     numToParse: Int = 1000, codeCache: File = new File("grammar.grz"),
+                    maxParseLength: Int = 10000,
                     jvmParse: Boolean = false, parseTwice: Boolean = false,
                     textGrammarPrefix: String = null, checkPartitions: Boolean = false)
 
@@ -784,7 +789,7 @@ object CLParser extends Logging {
       fromParserData[AnnotatedLabel, AnnotatedLabel, String](parserData, profile)
     }
 
-    val train =  params.treebank.trainTrees.take(numToParse).map(_.words)
+    val train =  params.treebank.trainTrees.filter(_.words.length <= maxParseLength).take(numToParse).map(_.words)
 
     if (checkPartitions) {
       val partsX = kern.partitions(train)

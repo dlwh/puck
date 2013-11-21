@@ -30,6 +30,7 @@ class CLMatrixSliceCopy private(blockSize: Int, kernel: CLKernel, kernelOut: CLK
     synchronized {
       require(dst.cols == numCols, dst.cols + " " + numCols)
       require(dst.isTranspose == src.isTranspose)
+      require(dst.rows == src.rows)
 
       kernel.setArgs(
         dst.data.safeBuffer, Integer.valueOf(dst.offset), Integer.valueOf(dst.majorStride),
@@ -37,9 +38,8 @@ class CLMatrixSliceCopy private(blockSize: Int, kernel: CLKernel, kernelOut: CLK
         srcColumnPointers,
         Integer.valueOf(src.rows),
         Integer.valueOf(src.cols))
-      val adjustedSrcCols = ((numCols + blockSize - 1) / blockSize) * blockSize
-      val adjustedSrcRowBlocks = ((src.rows + blockSize - 1) / blockSize) * blockSize
-      kernel.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(1, blockSize, 1), (events): _*)
+      val adjustedSrcRowBlocks = puck.roundUpToMultipleOf(src.rows, blockSize)
+      kernel.enqueueNDRange(queue, Array(numCols, 1, 1), Array(1, 1, 1), (events): _*)
     }
   }
 
@@ -121,13 +121,13 @@ __kernel void slice_copy(__global T* _dst, int dstOff, int dstMajorStride,
 
   int dstCol = get_global_id(0);
   if(dstCol >= srcCols) return;
-  int threadid = get_local_id(0);
+  int threadid = 0;//get_local_id(1);
+  int local_size = 1;//get_local_size(1);
 
   int srcCol = srcPtrs[dstCol];
 
-  int local_size = get_local_size(1);
-  int firstRow = get_group_id(1) * BLOCK_SIZE;
-  int lastRow = min(BLOCK_SIZE, srcRows - firstRow);
+  int firstRow = 0;////get_group_id(1) * BLOCK_SIZE;
+  int lastRow = srcRows;//min(BLOCK_SIZE, srcRows - firstRow);
 
 
   for(int i = firstRow + threadid; i < lastRow; i += local_size) {
@@ -146,11 +146,11 @@ __kernel void slice_copy_out(
 
     int srcCol = get_global_id(0);
     if(srcCol >= srcCols) return;
-    int threadid = get_local_id(0);
+    int threadid = get_local_id(1);
+    int local_size = get_local_size(1);
 
     int dstCol = dstPtrs[srcCol];
 
-    int local_size = get_local_size(1);
     int firstRow = 0;//get_group_id(1) * BLOCK_SIZE;
     int lastRow = srcRows;//min(BLOCK_SIZE, srcRows - firstRow);
 
