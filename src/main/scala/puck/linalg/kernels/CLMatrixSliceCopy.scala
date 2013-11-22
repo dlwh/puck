@@ -47,9 +47,8 @@ class CLMatrixSliceCopy private(blockSize: Int, kernel: CLKernel, kernelOut: CLK
     dstColPointers: Array[Int], numCols: Int,
     src: CLMatrix[Float],
     events: CLEvent*)(implicit queue: CLQueue):CLEvent = synchronized {
-    require(src.rows == numCols, src.rows +" " + numCols)
-    assert(dstColPointers.slice(0,numCols).forall(_ < dst.cols), dstColPointers.toIndexedSeq.filter(_ != 0).map(x => x -> (x < dst.cols)) -> dst.cols)
-    require(dst.rows == src.cols)
+    require(src.cols == numCols, src.cols +" " + numCols)
+    require(dst.cols == src.cols)
     require(dst.isTranspose == src.isTranspose)
     val ptr = Pointer.pointerToArray[java.lang.Integer](dstColPointers)
     val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, numCols)

@@ -127,6 +127,8 @@ __kernel void computeMasks(__global mask_t* masksOut,
 
       set_bit(&myMask, field, keep);
     }
+
+
     masksOut[cell] = myMask;
     masksOut[cell + _outsideOff/numSyms] = myMask;
 //    printf("%d %d\n", cell, cell + _outsideOff/numSyms);

@@ -29,10 +29,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         maxSentencesPerBatch: Long = 400,
                         profile: Boolean = true)(implicit val context: CLContext) extends Logging {
 
-  println(data.head.structure.termIndex.zipWithIndex)
-  println(data.head.structure.nontermIndex.zipWithIndex)
-
-
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[L]] = synchronized {
     var ev =  maskParent.assignAsync(-1)
     getBatches(sentences).iterator.flatMap{ batch =>
@@ -176,10 +172,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val evZeroCharts = zmk.fillMemory(devCharts.data, _zero, events:_*) profileIn initMemFillEvents
       val init = initializeTagScores(batch, evZeroCharts)
 
+//      maskCharts.assignAsync(-1, evZeroCharts).waitFor
       var ev = insideTU.doUpdates(batch, 1, init)
 
       for (span <- 2 to batch.maxLength) {
-        println(span)
+        print(s"$span ")
         ev = insideBinaryPass(batch, span, ev)
         ev = insideNU.doUpdates(batch, span, ev)
       }
@@ -208,7 +205,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev = outsideNU.doUpdates(batch, batch.maxLength, ev)
 
       for (span <- (batch.maxLength - 1) to 1 by -1) {
-        println(span)
+        print(s"$span ")
         ev = outsideBinaryPass(batch, span, ev)
         if (span == 1) {
           ev = outsideTU.doUpdates(batch, span, ev)
@@ -565,7 +562,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val maskEv = if(batch.hasMasks) {
           val ev = sliceCopy.sliceCopy(maskParent(::, 0 until offset).asInstanceOf[CLMatrix[Float]], maskCharts.asInstanceOf[CLMatrix[Float]], devParentPtrs, offset, evWriteDevParent) profileIn transferEvents
           ev.waitFor
-          println("msks " + maskParent(::, 0 until offset).toDense + "\n" + devParentPtrs.read(queue).toArray.take(offset).toIndexedSeq)
+//          println("msks " + maskParent(::, 0 until offset).toDense + "\n" + devParentPtrs.read(queue).toArray.take(offset).toIndexedSeq)
           ev
 //          null
         } else {
@@ -602,7 +599,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       lastParent = -1
 
       val allSpans = if (batch.hasMasks) {
-        val in = System.currentTimeMillis()
         import BitHacks.OrderBitVectors.OrderingBitVectors
         val allSpans = for {
           sent <- 0 until batch.numSentences
@@ -612,11 +608,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           if {val x = mask.any; if(!x) pruned += 1; x }
         } yield (sent, start, start+span, mask)
         val ordered = allSpans.sortBy(_._4)
-        val out = System.currentTimeMillis()
-        println(s"Sorting $span took " + (out - in)/1000.0)
+//        println(s"Sorting $span took " + (out - in)/1000.0)
 //        println(ordered.mkString("{\t","\n\t","\n}"))
-//        ordered
-        allSpans
+        ordered
+//        allSpans
       } else {
          for {
           sent <- 0 until batch.numSentences
@@ -665,7 +660,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       pArray(offset) = parent
       offset += 1
       if (offset >= numWorkCells)  {
-        println(s"flush!")
+        logger.debug(s"flush unaries!")
         flushQueue(span, events)
       } else {
         events

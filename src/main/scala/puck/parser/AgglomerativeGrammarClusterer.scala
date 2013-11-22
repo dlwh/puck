@@ -5,8 +5,9 @@ import collection.immutable.BitSet
 import epic.trees.BinaryRule
 
 import GrammarClusterer._
+import com.typesafe.scalalogging.log4j.Logging
 
-class AgglomerativeGrammarClusterer(numRestarts: Int = 100, maxPartitionLabelSize: Int = 128) extends GrammarClusterer {
+class AgglomerativeGrammarClusterer(numRestarts: Int = 100, maxPartitionLabelSize: Int = 128) extends GrammarClusterer with Logging {
 
 
   def partition[C, L](rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)],
@@ -20,20 +21,22 @@ class AgglomerativeGrammarClusterer(numRestarts: Int = 100, maxPartitionLabelSiz
       p -> Partition(BitSet(p), g1.reduce( _ ++ _), g2.reduce(_ ++ _))
     }
 
-    val clusters = ((0 until numRestarts).par.aggregate(restart(initialClusters, maxPartitionLabelSize, 1.0))({ (c1, seed) =>
-      val r = new java.util.Random(seed)
-      val c2 = restart(initialClusters, maxPartitionLabelSize, .3 + .7 * r.nextDouble)
-      if(c1.values.map(_.badness).sum < c2.values.map(_.badness).sum) c1 else c2
-    }, {(c1, c2) => if(c1.values.map(_.badness).sum < c2.values.map(_.badness).sum) c1 else c2}))
+    val clusters = (0 until numRestarts).par.aggregate(restart(initialClusters, maxPartitionLabelSize, 1.0))({ (c1, seed) =>
+        val r = new java.util.Random(seed)
+        val c2 = restart(initialClusters, maxPartitionLabelSize,.3 +.7 * r.nextDouble)
+        if (c1.values.map(_.badness).sum < c2.values.map(_.badness).sum) c1 else c2
+    }, {
+      (c1, c2) => if (c1.values.map(_.badness).sum < c2.values.map(_.badness).sum) c1 else c2
+    })
 
-    println("Best badness: " + targetLabel  + " " + clusters.values.iterator.map(_.badness).sum)
+    logger.debug("Best badness: " + targetLabel  + " " + clusters.values.iterator.map(_.badness).sum)
 
     var p = 0
     for( Partition(targets, g1, g2, _) <- clusters.values.iterator) {
-      println("Partition " + p)
-      println("G1: " + g1.size + " " + g1)
-      println("G2: " + g2.size + " "  + g2)
-      println("targets: " + targets)
+      logger.debug("Partition " + p)
+      logger.debug("G1: " + g1.size + " " + g1)
+      logger.debug("G2: " + g2.size + " "  + g2)
+      logger.debug("targets: " + targets)
       p += 1
     }
 
