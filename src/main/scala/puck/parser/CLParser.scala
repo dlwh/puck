@@ -31,6 +31,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[L]] = synchronized {
     var ev =  maskParent.assignAsync(-1)
+    ev = maskCharts.assignAsync(-1, ev)
     getBatches(sentences).iterator.flatMap{ batch =>
       val finalBatch = parsers.take(data.length - 1).foldLeft(batch){(b, parser) =>
         parser.addMasksToBatches(b, ev)
@@ -45,6 +46,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   def partitions(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[Float] = synchronized {
     var ev =  maskParent.assignAsync(-1)
+    ev = maskCharts.assignAsync(-1, ev)
     getBatches(sentences).iterator.flatMap{ batch =>
       // allow all spans
       val finalBatch = parsers.take(data.length - 1).foldLeft(batch){(b, parser) =>
@@ -268,6 +270,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def markTerminalsInMasks(batch: Batch, events: CLEvent*) = {
       import batch._
       val set0 = maskCharts.assignAsync(0, events:_*)
+      set0.waitFor()
       for (i <- 0 until numSentences par) {
         val parent = insideCharts(i).bot.spanRangeSlice(1)
         parent.copyToArray(pArray, _workArrayOffsetsForSpan(1)(i) )
@@ -571,8 +574,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
         val zeroParent = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
         val kEvents: IndexedSeq[CLEvent] = kernels.map{ kernel =>
-          kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, devRight.data.safeBuffer, parser.devRules, maskParent.data.safeBuffer, Integer.valueOf(numWorkCells), Integer.valueOf(offset))
-          kernel.enqueueNDRange(queue, Array(offset), evTransLeft, evTransRight, zeroParent, maskEv) profileIn binaryEvents
+          kernel.setArgs(devParent.data.safeBuffer, devParentPtrs, devLeft.data.safeBuffer, devRight.data.safeBuffer, parser.devRules, maskCharts.data.safeBuffer, Integer.valueOf(numWorkCells), Integer.valueOf(offset))
+          kernel.enqueueNDRange(queue, Array(offset), evTransLeft, evTransRight, zeroParent, maskEv, evWriteDevParent) profileIn binaryEvents
         }
         queue.finish()
 
