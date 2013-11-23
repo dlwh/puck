@@ -27,8 +27,9 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     __kernel void $name(__global float* parents, __global int* parentIndex, __global float* left, __global float* right, __global float* ruleScores, __global const mask_t* masks, int numRows, int cellsToDo) {
         int row = get_global_id(0);
         if(row < cellsToDo) {
-          const mask_t mask = masks[parentIndex[get_group_id(0)]];
-//          printf("%d %d %d %d qq %d${"\\n"}", mask.fields[0], mask.fields[1], mask.fields[2], mask.fields[3], row);
+          const mask_t mask = masks[parentIndex[row]];
+//          if( mask.fields[0] != -1 || mask.fields[1] != -1 || mask.fields[2] != -1)
+//            printf("%s %d %d %d qq %d %d${"\\n"}", __FUNCTION__, mask.fields[0], mask.fields[1], mask.fields[2], row, get_group_id(0));
           $checkMaskString
           ${accumulator.declare}
           ${coreRuleLoop(rulePartition, accumulator)}
