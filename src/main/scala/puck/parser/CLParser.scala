@@ -9,7 +9,7 @@ import puck.linalg.CLMatrix
 import java.nio.FloatBuffer
 import puck.linalg.kernels.{CLMatrixSliceCopy, CLMatrixTransposeCopy}
 import breeze.collection.mutable.TriangularArray
-import breeze.linalg.{DenseVector, DenseMatrix}
+import breeze.linalg.{Counter2, DenseVector, DenseMatrix}
 import epic.trees.annotations.{Xbarize, TreeAnnotator}
 import epic.parser._
 import breeze.config.CommandLineParser
@@ -27,6 +27,7 @@ import epic.trees.annotations.Xbarize
 import epic.trees.Span
 import epic.parser.SimpleRefinedGrammar.CloseUnaries
 import epic.parser.projections.{ParserChartConstraintsFactory, ConstraintCoreGrammarAdaptor}
+import epic.lexicon.SimpleLexicon
 
 /**
  * TODO
@@ -66,7 +67,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev = parsers.last.outside(finalBatch, ev)
       ev.waitFor()
       for ( i <- 0 until batch.numSentences) yield {
-        (batch.insideCharts(i).top(0, batch.sentences(i).length, data.head.structure.root))
+        (batch.insideCharts(i).top(0, batch.sentences(i).length, data.last.structure.root))
 //        (batch.insideCharts(i).bot(2, 3)
 //        + batch.outsideCharts(i).bot(2,3)).max
       }
@@ -754,18 +755,16 @@ object CLParser extends Logging {
     println("Training Parser...")
     println(params)
     val transformed = params.treebank.copy(binarization="left").trainTrees.par
-       .map { ti => StripUnaries() apply ti }
-       .map { ti => annotator(ti) }.seq.toIndexedSeq
-
-    lazy val genGrammar = {
-      GenerativeParser.extractGrammar(AnnotatedLabel.TOP, transformed)
-    }
+       .map { ti => StripUnaries() apply ti }.seq.toIndexedSeq
 
     val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = if (textGrammarPrefix == null) {
-      genGrammar
+      GenerativeParser.annotated(annotator, transformed)
     } else {
       SimpleRefinedGrammar.parseBerkeleyText(textGrammarPrefix, -12, CloseUnaries.None)
     }
+
+    lazy val xbarGrammar = GenerativeParser.annotated(grammar.grammar, grammar.lexicon, Xbarize(), transformed)
+
 
     grammar.prettyPrint(new FileWriter("grammar.out"))
 
@@ -779,7 +778,6 @@ object CLParser extends Logging {
       cpuPlatform.createContext(new java.util.HashMap(), cpuPlatform.listCPUDevices(true):_*)
     }
     println(context)
-    val genGrammar2 = GenerativeParser.annotated(grammar.grammar, grammar.lexicon, Xbarize(), transformed)
 
     var parserData:CLParserData[AnnotatedLabel, AnnotatedLabel, String] = if (codeCache != null && codeCache.exists()) {
       CLParserData.read(new ZipFile(codeCache))
@@ -796,11 +794,7 @@ object CLParser extends Logging {
     }
 
     val kern = if (prune) {
-      val genData = if (grammar eq genGrammar) {
-        parserData
-      } else {
-        CLParserData.make(genGrammar2)
-      }
+      val genData = CLParserData.make(xbarGrammar)
 
       fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](IndexedSeq(genData, parserData), profile)
     } else {
