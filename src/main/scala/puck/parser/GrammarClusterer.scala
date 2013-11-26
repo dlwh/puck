@@ -1,6 +1,6 @@
 package puck.parser
 
-import epic.trees.BinaryRule
+import epic.trees.{UnaryRule, BinaryRule}
 import scala.collection.immutable.BitSet
 import puck.parser.GrammarClusterer._
 import scala.collection.immutable
@@ -13,6 +13,15 @@ import scala.collection.immutable
 trait GrammarClusterer extends Serializable {
   def partition[C, L](rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)],
                 targetLabel: TargetLabel = Parent): IndexedSeq[immutable.IndexedSeq[(BinaryRule[SymId[C, L]], Int)]]
+
+  def partitionUnaries[C, L](rules: IndexedSeq[(UnaryRule[SymId[C, L]], Int)],
+                      targetLabel: TargetLabel = Parent): IndexedSeq[immutable.IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = {
+    val partitions = partition(rules.map { case (rule, id) => BinaryRule(rule.parent, rule.child, rule.child) -> id}, targetLabel)
+
+    val ided = rules.map(_.swap).toMap
+
+    for( part <- partitions) yield for ( (r, id) <- part) yield ided(id) -> id
+  }
 }
 
 object GrammarClusterer {

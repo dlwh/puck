@@ -101,11 +101,11 @@ object CLOutsideKernels {
       parserGen.binaryRuleApplication(partition.map(rotateRightToParent), "outside_R_tt_binaries"+i)
     }
 
-    val outsideNUKernels = IndexedSeq(structure.unaryRules).zipWithIndex.map { case (partition, i) =>
+    val outsideNUKernels = structure.nontermUnariesChild.zipWithIndex.map { case (partition, i) =>
       parserGen.unaryRuleApplication(partition.map(rotateChildToParent), "outside_nn_unaries"+i)
     }
 
-    val outsideTUKernels = IndexedSeq(structure.unaryTermRules).zipWithIndex.map { case (partition, i) =>
+    val outsideTUKernels = structure.termUnariesChild.zipWithIndex.map { case (partition, i) =>
       parserGen.unaryRuleApplication(partition.map(rotateChildToParent), "outside_nt_unaries"+i)
     }
 

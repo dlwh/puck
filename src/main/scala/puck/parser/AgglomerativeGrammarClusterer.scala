@@ -29,14 +29,14 @@ class AgglomerativeGrammarClusterer(numRestarts: Int = 100, maxPartitionLabelSiz
       (c1, c2) => if (c1.values.map(_.badness).sum < c2.values.map(_.badness).sum) c1 else c2
     })
 
-    logger.debug("Best badness: " + targetLabel  + " " + clusters.values.iterator.map(_.badness).sum)
+    println("Best badness: " + targetLabel  + " " + clusters.values.iterator.map(_.badness).sum)
 
     var p = 0
     for( Partition(targets, g1, g2, _) <- clusters.values.iterator) {
-      logger.debug("Partition " + p)
-      logger.debug("G1: " + g1.size + " " + g1)
-      logger.debug("G2: " + g2.size + " "  + g2)
-      logger.debug("targets: " + targets)
+      println("Partition " + p)
+      println("G1: " + g1.size + " " + g1)
+      println("G2: " + g2.size + " "  + g2)
+      println("targets: " + targets)
       p += 1
     }
 

@@ -55,11 +55,11 @@ object CLInsideKernels {
       parserGen.binaryRuleApplication(partition, "inside_tt_binaries_"+i)
     }
 
-    val insideNUKernels = IndexedSeq(structure.unaryRules).zipWithIndex.map { case (partition, i) =>
+    val insideNUKernels = structure.nontermUnariesParent.zipWithIndex.map { case (partition, i) =>
       parserGen.unaryRuleApplication(partition, "inside_n_unaries"+i)
     }
 
-    val insideTUKernels = IndexedSeq(structure.unaryTermRules).zipWithIndex.map { case (partition, i) =>
+    val insideTUKernels = structure.termUnariesParent.zipWithIndex.map { case (partition, i) =>
       parserGen.unaryRuleApplication(partition, "inside_t_unaries"+i)
     }
 
