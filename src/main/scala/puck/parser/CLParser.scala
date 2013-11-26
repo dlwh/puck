@@ -14,10 +14,19 @@ import epic.trees.annotations.{Xbarize, TreeAnnotator}
 import epic.parser._
 import breeze.config.CommandLineParser
 import epic.trees._
-import java.io.{BufferedOutputStream, FileOutputStream, File, OutputStream}
+import java.io._
 import java.util.zip.{ZipFile, ZipOutputStream}
 import scala.collection.mutable.ArrayBuffer
 import BitHacks._
+import epic.trees.UnaryTree
+import scala.Some
+import epic.parser.ViterbiDecoder
+import epic.trees.NullaryTree
+import epic.trees.BinaryTree
+import epic.trees.annotations.Xbarize
+import epic.trees.Span
+import epic.parser.SimpleRefinedGrammar.CloseUnaries
+import epic.parser.projections.{ParserChartConstraintsFactory, ConstraintCoreGrammarAdaptor}
 
 /**
  * TODO
@@ -716,6 +725,16 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   }
 }
 
+case class StripUnaries() extends TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] {
+  def apply(tree: BinarizedTree[AnnotatedLabel], words: Seq[String]):BinarizedTree[AnnotatedLabel] = tree match {
+    case UnaryTree(a, b, _, span) => UnaryTree(a, apply(b, words), IndexedSeq.empty, span)
+    case BinaryTree(a, b, c, span) => BinaryTree(a, apply(b, words), apply(c, words), span)
+    case x => x
+  }
+
+
+}
+
 object CLParser extends Logging {
 
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = Xbarize(),
@@ -734,17 +753,21 @@ object CLParser extends Logging {
     import myParams._
     println("Training Parser...")
     println(params)
+    val transformed = params.treebank.copy(binarization="left").trainTrees.par
+       .map { ti => StripUnaries() apply ti }
+       .map { ti => annotator(ti) }.seq.toIndexedSeq
 
     lazy val genGrammar = {
-      val transformed = params.treebank.trainTrees.par.map { ti => annotator(ti) }.seq.toIndexedSeq
       GenerativeParser.extractGrammar(AnnotatedLabel.TOP, transformed)
     }
 
     val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = if (textGrammarPrefix == null) {
       genGrammar
     } else {
-      SimpleRefinedGrammar.parseBerkeleyText(textGrammarPrefix, -10)
+      SimpleRefinedGrammar.parseBerkeleyText(textGrammarPrefix, -12, CloseUnaries.None)
     }
+
+    grammar.prettyPrint(new FileWriter("grammar.out"))
 
     implicit val context = if (useGPU) {
       val gpu = JavaCL.listPlatforms.flatMap(_.listGPUDevices(true)).head
@@ -756,6 +779,7 @@ object CLParser extends Logging {
       cpuPlatform.createContext(new java.util.HashMap(), cpuPlatform.listCPUDevices(true):_*)
     }
     println(context)
+    val genGrammar2 = GenerativeParser.annotated(grammar.grammar, grammar.lexicon, Xbarize(), transformed)
 
     var parserData:CLParserData[AnnotatedLabel, AnnotatedLabel, String] = if (codeCache != null && codeCache.exists()) {
       CLParserData.read(new ZipFile(codeCache))
@@ -772,7 +796,12 @@ object CLParser extends Logging {
     }
 
     val kern = if (prune) {
-      val genData = if (grammar eq genGrammar) parserData else CLParserData.make(genGrammar)
+      val genData = if (grammar eq genGrammar) {
+        parserData
+      } else {
+        CLParserData.make(genGrammar2)
+      }
+
       fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](IndexedSeq(genData, parserData), profile)
     } else {
       fromParserData[AnnotatedLabel, AnnotatedLabel, String](parserData, profile)
