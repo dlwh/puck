@@ -28,6 +28,7 @@ import epic.trees.Span
 import epic.parser.SimpleRefinedGrammar.CloseUnaries
 import epic.parser.projections.{ParserChartConstraintsFactory, ConstraintCoreGrammarAdaptor}
 import epic.lexicon.SimpleLexicon
+import scala.collection.parallel.immutable.ParSeq
 
 /**
  * TODO
@@ -39,7 +40,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         maxSentencesPerBatch: Long = 400,
                         profile: Boolean = true)(implicit val context: CLContext) extends Logging {
 
-  def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[L]] = synchronized {
+  def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
     getBatches(sentences).iterator.flatMap{ batch =>
       var ev =  maskParent.assignAsync(-1)
       ev = maskCharts.assignAsync(-1, ev)
@@ -367,14 +368,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def addMasksToBatches(batch: Batch, ev: CLEvent*): Batch = {
       val insideEvents = inside(batch, ev:_*)
       val outsideEvents = outside(batch, insideEvents)
-      val ev2 = computeMasks(batch, -7, outsideEvents)
+      val ev2 = computeMasks(batch, -50, outsideEvents)
       ev2.waitFor()
       val denseMasks = maskCharts.toDense
       maskCharts.data.waitUnmap()
       batch.copy(masks = Some(denseMasks))
     }
 
-    def extractParses(batch: Batch, masks: CLMatrix[Int], events: CLEvent*) = {
+    def extractParses(batch: Batch, masks: CLMatrix[Int], events: CLEvent*): ParSeq[BinarizedTree[C]] = {
       events.foreach(_.waitFor())
       val in = if (profile) System.currentTimeMillis() else 0L
       val dmMasks:DenseMatrix[Int] = masks.toDense
@@ -390,39 +391,39 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val bot = dmMasks(::, botBegin until botEnd)
         val top = dmMasks(::, topBegin until topEnd)
 
-        def recTop(begin: Int, end: Int):BinarizedTree[L] = {
+        def recTop(begin: Int, end: Int):BinarizedTree[C] = {
           val column:DenseVector[Int] = top(::, ChartHalf.chartIndex(begin, end, length))
           val x = firstSetBit(column:DenseVector[Int])
           if (x == -1) {
-            assert(begin == end - 1, column.toString + " " + x + " " + (begin,end) + " " + s + " " + batch.numSentences)
+            assert(begin == end - 1, s"$column ($begin, $end) $length $s ${batch.numSentences}")
             recBot(begin, end)
           } else {
             assert(column.valuesIterator.exists(_ != 0), (begin, end))
 //            val label = structure.nontermIndex.get(x)
-            val label = structure.grammar.labelIndex.get(x)
+            val label = structure.refinements.labels.coarseIndex.get(x)
             val t = recBot(begin, end)
-            new UnaryTree[L](label, t, IndexedSeq.empty, Span(begin, end))
+            new UnaryTree[C](label, t, IndexedSeq.empty, Span(begin, end))
           }
         }
 
-        def recBot(begin: Int, end: Int):BinarizedTree[L] = {
+        def recBot(begin: Int, end: Int):BinarizedTree[C] = {
           val column:DenseVector[Int] = bot(::, ChartHalf.chartIndex(begin, end, length))
           val x = firstSetBit(column:DenseVector[Int])
           if (begin == end - 1) {
 //            val label = structure.termIndex.get(x)
-            val label = structure.grammar.labelIndex.get(x)
+            val label = structure.refinements.labels.coarseIndex.get(x)
             NullaryTree(label, Span(begin, end))
           } else {
 //            val label = structure.nontermIndex.get(x)
-            val label = structure.grammar.labelIndex.get(x)
+            val label = structure.refinements.labels.coarseIndex.get(x)
             for (split <- (begin+1) until end) {
               val left = (if (begin == split - 1) bot else top)(::, ChartHalf.chartIndex(begin, split, length))
               val right = (if (end == split + 1) bot else top)(::, ChartHalf.chartIndex(split, end, length))
               if (left.any && right.any) {
-                return BinaryTree[L](label, recTop(begin, split), recTop(split, end), Span(begin, end))
+                return BinaryTree[C](label, recTop(begin, split), recTop(split, end), Span(begin, end))
               }
             }
-            error("nothing here!" + " "+ (begin, end) +
+            error(s"nothing here $length!" + " "+ (begin, end) +
               {for (split <- (begin+1) until end) yield {
                 val left = (if (begin == split - 1) bot else top)(::, ChartHalf.chartIndex(begin, split, length))
                 val right = (if (end == split + 1) bot else top)(::, ChartHalf.chartIndex(split, end, length))
@@ -544,7 +545,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       rArray(offset) = right
       offset += 1
       if (offset >= numWorkCells)  {
-        println(s"flush!")
+        println(s"flush ${this.kernels.head.getFunctionName}!")
         flushQueue(batch, span, events)
       } else {
         events

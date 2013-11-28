@@ -85,9 +85,13 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   def numTerms = termIndex.size
   def numNonTerms = nontermIndex.size
 
-  /** Maps an indexed terminal symbol back to the grammar's index*/
+  /** Maps an indexed terminal symbol back to the grammar's *refined* index*/
+  val projectedTerminalMap = Array.tabulate(numTerms)(i => refinements.labels.project(grammar.labelIndex(termIndex.get(i))))
+  val projectedNonterminalMap = Array.tabulate(numNonTerms)(i => refinements.labels.project(grammar.labelIndex(nontermIndex.get(i))))
+
+  /** Maps an indexed terminal symbol back to the grammar's *refined* index*/
   val terminalMap = Array.tabulate(numTerms)(i => grammar.labelIndex(termIndex.get(i)))
-  /** Maps an indexed nonterminal symbol back to the grammar's index*/
+  /** Maps an indexed nonterminal symbol back to the grammar's *refined* index*/
   val nonterminalMap = Array.tabulate(numNonTerms)(i => grammar.labelIndex(nontermIndex.get(i)))
   val reverseIndex = Array.fill[Int](grammar.labelIndex.size)(-1)
   for(i <- 0 until terminalMap.length) {

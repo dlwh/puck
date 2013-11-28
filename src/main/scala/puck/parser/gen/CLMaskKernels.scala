@@ -77,9 +77,9 @@ object CLMaskKernels {
     structure.maskHeader ++ """
       #define NUM_SYMS """ + cellSize + """
 
-                                        """ + structure.terminalMap.padTo(cellSize, 0).mkString("__constant int terminalProjections[] = {", ", ", "};") +
+                                        """ + structure.projectedTerminalMap.padTo(cellSize, 0).mkString("__constant int terminalProjections[] = {", ", ", "};") +
       """
-      """ + structure.nonterminalMap.padTo(cellSize, 0).mkString("__constant int nonterminalProjections[] = {", ", ", "};") +
+      """ + structure.projectedNonterminalMap.padTo(cellSize, 0).mkString("__constant int nonterminalProjections[] = {", ", ", "};") +
       """
 
 // each global_id(0) corresponds to a single sentence.
@@ -124,6 +124,9 @@ __kernel void computeMasks(__global mask_t* masksOut,
       float score = (in[sym] + out[sym]);
       int keep = score >= cutoff;
       int field = projections[sym];
+
+      //if(cell == lastCell - 1 && score != -INFINITY)
+      //  printf("%d %d %d %f %f\n", lastCell, sym, field, score, cutoff);
 
       set_bit(&myMask, field, keep);
     }
