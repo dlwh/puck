@@ -368,7 +368,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def addMasksToBatches(batch: Batch, ev: CLEvent*): Batch = {
       val insideEvents = inside(batch, ev:_*)
       val outsideEvents = outside(batch, insideEvents)
-      val ev2 = computeMasks(batch, -50, outsideEvents)
+      val ev2 = computeMasks(batch, -10, outsideEvents)
       ev2.waitFor()
       val denseMasks = maskCharts.toDense
       maskCharts.data.waitUnmap()
@@ -379,7 +379,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       events.foreach(_.waitFor())
       val in = if (profile) System.currentTimeMillis() else 0L
       val dmMasks:DenseMatrix[Int] = masks.toDense
-      val trees = for (s <- 0 until batch.numSentences par) yield {
+      val trees = for (s <- 0 until batch.numSentences par) yield try {
         import batch.insideCellOffsets
         val length = batch.sentences(s).length
         val numCells = (insideCellOffsets(s+1)-insideCellOffsets(s))/2
@@ -435,6 +435,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
         recTop(0, length)
 
+      } catch {
+        case ex: Throwable => ex.printStackTrace(); null
       }
       val out = if (profile) System.currentTimeMillis() else 0L
       masks.data.waitUnmap()
