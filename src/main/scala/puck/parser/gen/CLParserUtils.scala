@@ -7,7 +7,7 @@ import java.util.zip.{ZipFile, ZipOutputStream}
 import puck.util.ZipUtil
 import puck.linalg.CLMatrix
 import org.bridj.Pointer
-import puck.parser.{RuleSemiring, RuleStructure}
+import puck.parser.{ViterbiRuleSemiring, RuleSemiring, RuleStructure}
 
 case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKernel, setRootScoresKernel: CLKernel,
                                splitPointsBlockSize: Int, groupSize: Int) {
@@ -18,16 +18,17 @@ case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKer
     ZipUtil.serializedEntry(out, "ints", Array(splitPointsBlockSize, groupSize))
   }
 
-  def sumSplitPoints(parent: CLMatrix[Float], chart: CLMatrix[Float], chartIndices: CLBuffer[Integer], numUniqueParents: Int, splitPointIndicesIntoWorkArray: CLBuffer[Integer], uniqueIndicesPerGroup: Int, events: CLEvent*)(implicit queue: CLQueue) = {
+  def sumSplitPoints(parent: CLMatrix[Float], chart: CLMatrix[Float], chartIndices: CLBuffer[Integer], numUniqueParents: Int, splitPointIndicesIntoWorkArray: CLBuffer[Integer], uniqueIndicesPerGroup: Int, numSymsToDo: Int, events: CLEvent*)(implicit queue: CLQueue) = {
     val parentStride = parent.rows
-    val numSyms = parent.cols
+    val majorStride = parent.cols
 
     sumSplitPointsKernel.setArgs(parent.data.safeBuffer, chart.data.safeBuffer, chartIndices, splitPointIndicesIntoWorkArray,
-      Integer.valueOf(parentStride), Integer.valueOf(numUniqueParents), Integer.valueOf(uniqueIndicesPerGroup),
-      Integer.valueOf(numSyms))
+      Integer.valueOf(parentStride), Integer.valueOf(numUniqueParents), Integer.valueOf(groupSize),//Integer.valueOf(uniqueIndicesPerGroup),
+     Integer.valueOf(numSymsToDo),   Integer.valueOf(majorStride))
 
-    val numGroups = roundUpToMultipleOf(numUniqueParents, uniqueIndicesPerGroup)
-    val rowBlocks = (numSyms + splitPointsBlockSize - 1)/splitPointsBlockSize
+    val numGroups = roundUpToMultipleOf(numUniqueParents, 32)/groupSize//uniqueIndicesPerGroup)
+    val rowBlocks = (numSymsToDo + splitPointsBlockSize - 1)/splitPointsBlockSize
+
 
     sumSplitPointsKernel.enqueueNDRange(queue, Array(numGroups * groupSize, rowBlocks), Array(groupSize, 1), events :_*)
   }
@@ -49,12 +50,15 @@ case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKer
 
 object CLParserUtils {
   def read(zf: ZipFile)(implicit ctxt: CLContext) = {
-    val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("ints")))
-    CLParserUtils(ZipUtil.readKernel(zf, "sumGrammarKernel"),
-      ZipUtil.readKernel(zf, "sumSplitPointsKernel"),
-      ZipUtil.readKernel(zf, "setRootScoresKernel"),
-      ints(0), ints(1)
-    )
+    val structure = ZipUtil.deserializeEntry[RuleStructure[_, _]](zf.getInputStream(zf.getEntry("structure")))
+    implicit val semi = ViterbiRuleSemiring
+    make(structure)
+//    val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("ints")))
+//    CLParserUtils(ZipUtil.readKernel(zf, "sumGrammarKernel"),
+//      ZipUtil.readKernel(zf, "sumSplitPointsKernel"),
+//      ZipUtil.readKernel(zf, "setRootScoresKernel"),
+//      ints(0), ints(1)
+//    )
   }
 
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
@@ -118,7 +122,7 @@ object CLParserUtils {
 // splitPointIndex tells us where each one begins and ends. splitPointIndex is of length numUniqueParents+1
 __kernel void splitPointSum(__global float* parent, __global float* chart,
                         __global int* chartIndex, __global int* splitPointIndex,
-                        int parentStride, int numUniqueParents, int uniqueIndicesPerGroup, int numSyms) {
+                        int parentStride, int numUniqueParents, int uniqueIndicesPerGroup, int numSyms, int majorStride) {
 
   int groupid = get_group_id(0);
   int tid = get_local_id(0);
@@ -155,6 +159,9 @@ __kernel void splitPointSum(__global float* parent, __global float* chart,
         event_t event = async_work_group_copy(scores[localSym], parent + parentStride * sym + rowOffset + firstRow, todo, 0);
         // TODO: should be able to batch these up... but stupid intel is stupid
         wait_group_events(1, &event);
+//          for(int row = tid; row < todo; row += numThreads) {
+//            scores[localSym][row] = parent[parentStride * sym + rowOffset + firstRow + row];
+//          }
       }
 
       // at this point, todo columns of scores are read in.
@@ -166,7 +173,7 @@ __kernel void splitPointSum(__global float* parent, __global float* chart,
       // whatever.
       int row = 0;
       while(currentParent < parentsToDo && row < todo) {
-        __global float* chartCell = chart + numSyms * chartIndex[rowOffset + firstRow + row];
+        __global float* chartCell = chart + majorStride * chartIndex[rowOffset + firstRow + row];
         int lastRowForThisChartCell = min(mySplitPointIndices[currentParent+1] - mySplitPointIndices[0] - firstRow, todo);
         // for each symbol, sum over all rows (split points) for this chart index
         // then flush the score back to the right place for this chart symbol.
@@ -196,7 +203,7 @@ __kernel void setRootScores(__global float* charts, __global int* indices, int n
       charts[numSyms * indices[id] + root] = value;
 }
 
-                                                """
+                                            """
 
 
 

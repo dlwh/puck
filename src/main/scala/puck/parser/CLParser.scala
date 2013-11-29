@@ -108,7 +108,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   }
 
   // size in floats, just the number of symbols
-  val cellSize:Int = data.map(_.numSyms).max
+  val cellSize:Int = roundUpToMultipleOf(data.map(_.numSyms).max, 32)
   // number of coarse symbols / 32 rounded up.
   val maskSize:Int = {
     assert(data.forall(_.maskSize == data.head.maskSize))
@@ -171,6 +171,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private class ActualParser(val data: CLParserData[C, L, W]) {
     import data._
     val devRules = context.createFloatBuffer(CLMem.Usage.Input, FloatBuffer.wrap(ruleScores), true)
+
 
     def release() { devRules.release() }
 
@@ -593,7 +594,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           devCharts,
           devParentPtrs, splitPointOffset,
           devSplitPointOffsets,
-          32 / span max 1, Seq(evWriteDevParent, evWriteDevSplitPoint) ++ kEvents:_*) profileIn sumEvents
+          32 / span max 1, parser.data.numSyms, Seq(evWriteDevParent, evWriteDevSplitPoint) ++ kEvents:_*) profileIn sumEvents
 
         offset = 0
         splitPointOffset = 0
