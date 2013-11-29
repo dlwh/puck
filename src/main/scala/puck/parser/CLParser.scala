@@ -572,21 +572,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         // corresponding splits
         val evWriteDevSplitPoint = devSplitPointOffsets.writeArray(queue, splitPointOffsets, splitPointOffset + 1, ev:_*) profileIn hdTransferEvents
 
-
-        val maskEv = if(batch.hasMasks) {
-          val ev = sliceCopy.sliceCopy(maskParent(::, 0 until offset).asInstanceOf[CLMatrix[Float]], maskCharts.asInstanceOf[CLMatrix[Float]], devParentPtrs, offset, evWriteDevParent) profileIn transferEvents
-          ev.waitFor
-//          println("msks " + maskParent(::, 0 until offset).toDense + "\n" + devParentPtrs.read(queue).toArray.take(offset).toIndexedSeq)
-          ev
-//          null
-        } else {
-          null
-        }
-
         val zeroParent = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
         val kEvents: IndexedSeq[CLEvent] = kernels.map{ kernel =>
           kernel.setArgs(devParent.data.safeBuffer, devParentPtrs, devLeft.data.safeBuffer, devRight.data.safeBuffer, parser.devRules, maskCharts.data.safeBuffer, Integer.valueOf(numWorkCells), Integer.valueOf(offset))
-          kernel.enqueueNDRange(queue, Array(offset), evTransLeft, evTransRight, zeroParent, maskEv, evWriteDevParent) profileIn binaryEvents
+          kernel.enqueueNDRange(queue, Array(offset), evTransLeft, evTransRight, zeroParent, evWriteDevParent) profileIn binaryEvents
         }
 
 

@@ -142,7 +142,7 @@ __kernel void transpose_copy(__global T* _dst, int dstOff, int dstMajorStride,
       nRowsToDo, 0); 
     
     // TODO: why is this necessary? the wait_group_events below doesn't work.
-    wait_group_events(1, copyInEvents +i);
+  //  wait_group_events(1, copyInEvents +i);
   }
 
   wait_group_events(nColsToDo, copyInEvents);
