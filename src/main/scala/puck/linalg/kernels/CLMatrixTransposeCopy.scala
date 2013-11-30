@@ -7,7 +7,7 @@ import java.nio._
 import java.util
 
 // TODO... i bet kernel has a context, so this leaks the context...
-class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut: CLKernel) {
+class CLMatrixTransposeCopy private(wgSize: Array[Int], kernel: CLKernel, kernelOut: CLKernel) {
 
   def permuteTransposeCopy(dst: CLMatrix[Float],
                            src: CLMatrix[Float],
@@ -39,9 +39,7 @@ class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut:
         srcColumnPointers,
         Integer.valueOf(src.rows),
         Integer.valueOf(numCols))
-      val adjustedSrcCols = ((numCols + blockSize - 1) / blockSize) * blockSize
-      val adjustedSrcRowBlocks = ((src.rows + blockSize - 1) / blockSize)
-      kernel.enqueueNDRange(queue, Array(32 * 40, 4 * 5, 1), Array(32, 4, 1), (events): _*)
+      kernel.enqueueNDRange(queue, Array(wgSize(0) * 40, wgSize(0) * 10, 1), wgSize, (events): _*)
     }
   }
 
@@ -77,6 +75,7 @@ class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut:
       src.data.safeBuffer, Integer.valueOf(src.offset), Integer.valueOf(src.majorStride), 
       Integer.valueOf(numCols),
       Integer.valueOf(src.cols))
+    val blockSize = wgSize(0)
     val adjustedSrcCols = ((src.cols + blockSize - 1)/blockSize)*blockSize
     val adjustedSrcRowBlocks = ((numCols + blockSize - 1)/blockSize)
     //val res = kernelOut.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), (ev +: events):_*)
@@ -90,33 +89,38 @@ class CLMatrixTransposeCopy private(blockSize: Int, kernel: CLKernel, kernelOut:
 
 
 object CLMatrixTransposeCopy {
-  def apply(preferredBlockSize: Int = 32)(implicit context: CLContext) = map.synchronized {
-    import scala.collection.JavaConverters._
-    // TODO ??!?!??!
-    // not sure what's going on, but Apple's Intel reports 1024/1/1, but can't handle more than 1/1/1...
-    val blockSize = if( context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel")) {
-     32
-    } else {
-      val x = context.getDevices.head.getMaxWorkItemSizes
-      val size0 = x(0)
-      math.min(size0, preferredBlockSize).toInt
+  def apply(preferredBlockSize: Int = 32)(implicit context: CLContext) = {
+    map.synchronized {
+      import scala.collection.JavaConverters._
+      // TODO ??!?!??!
+      // not sure what's going on, but Apple's Intel reports 1024/1/1, but can't handle more than 1/1/1...
+      val blockSize = 32
+
+      val wgSize = if (context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel Core")) {
+        Array(1, 1, 1)
+      } else {
+        val wgSizes = context.getDevices.head.getMaxWorkItemSizes
+        val x = wgSizes(0) min blockSize
+        val maxProduct = context.getDevices.head.getMaxWorkGroupSize
+        Array(x toInt, (maxProduct / x toInt) min 4, 1)
+      }
+      val prog = context.createProgram(permuteTransposeCopy(blockSize, wgSize))
+      val kernel = prog.createKernel("transpose_copy")
+      val kernel2 = prog.createKernel("transpose_copy_out")
+
+      map.asScala.getOrElseUpdate(context, new CLMatrixTransposeCopy(wgSize, kernel, kernel2))
     }
-    val prog = context.createProgram(permuteTransposeCopy(blockSize))
-    val kernel = prog.createKernel("transpose_copy")
-    val kernel2 = prog.createKernel("transpose_copy_out")
-    
-    map.asScala.getOrElseUpdate(context, new CLMatrixTransposeCopy(blockSize, kernel, kernel2))
   }
 
   private val map = new util.WeakHashMap[CLContext, CLMatrixTransposeCopy]
 
 /** Transposes src into dst, permuting the columns as it goes. Matrices are column major.*/
-   def permuteTransposeCopy(blockSize: Int) = {
+   def permuteTransposeCopy(blockSize: Int, wgSize: Array[Int]) = {
   """
 #define T float
 #define BLOCK_SIZE """ + blockSize + """
 
-__attribute__((reqd_work_group_size(32, 4, 1)))
+__attribute__((reqd_work_group_size(""" + wgSize.mkString(", ") + """)))
 __kernel void transpose_copy(__global T* _dst, int dstOff, int dstMajorStride, 
                              __global T* _src, int srcOff, int srcMajorStride, __global int* srcPtrs,
                              int srcRows, int srcCols) {
