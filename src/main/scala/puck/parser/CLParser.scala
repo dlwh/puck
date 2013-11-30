@@ -808,13 +808,13 @@ object CLParser extends Logging {
     var timeIn = System.currentTimeMillis()
     val parts = kern.parse(train)
     var timeOut = System.currentTimeMillis()
-    println(parts zip train map {case (k,v) => k render v})
+    //println(parts zip train map {case (k,v) => k render v})
     println(s"CL Parsing took: ${(timeOut-timeIn)/1000.0}")
     if (parseTwice) {
       timeIn = System.currentTimeMillis()
       val parts2 = kern.parse(train)
       timeOut = System.currentTimeMillis()
-      println(parts2 zip train map {case (k,v) => k render v})
+      //println(parts2 zip train map {case (k,v) => k render v})
       println(s"CL Parsing took x2: ${(timeOut-timeIn)/1000.0}")
     }
     if (jvmParse) {

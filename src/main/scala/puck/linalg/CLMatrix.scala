@@ -146,10 +146,10 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
     } else {
       // TODO: currently assumes elements are 4 bytes long!!!!
       val tc = CLMatrixTransposeCopy()(queue.getContext)
-      val ptr = Pointer.pointerToArray[java.lang.Integer](Array.range(0, rows))
-      val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, rows)
-      val ev = intBuffer.write(queue, 0, rows, ptr, false, events:_*)
-      val res = tc.permuteTransposeCopyOut(this.t.asInstanceOf[CLMatrix[Float]], intBuffer.asInstanceOf[CLBuffer[Int]], rows, b.asInstanceOf[CLMatrix[Float]], ev)
+      val ptr = Pointer.pointerToArray[java.lang.Integer](Array.range(0, cols))
+      val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, cols)
+      val ev = intBuffer.write(queue, 0, cols, ptr, false, events:_*)
+      val res = tc.permuteTransposeCopy(this.t.asInstanceOf[CLMatrix[Float]], b.asInstanceOf[CLMatrix[Float]], intBuffer.asInstanceOf[CLBuffer[Int]], cols, ev)
       res.invokeUponCompletion(new Runnable() {
         def run() = { ptr.release(); intBuffer.release() }
       })

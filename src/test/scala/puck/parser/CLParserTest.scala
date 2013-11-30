@@ -11,6 +11,7 @@ import org.scalatest.FunSuite
  **/
 class CLParserTest extends FunSuite {
 
+  /*
   test("simple test") {
     implicit val clcontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.GPU)
     val grammar = ParserTestHarness.simpleParser.augmentedGrammar.refined.asInstanceOf[SimpleRefinedGrammar[String, String, String]]
@@ -29,4 +30,5 @@ class CLParserTest extends FunSuite {
     assert(!parts.exists(_.isInfinite) && !parts.exists(_.isNaN), parts)
   }
 
+*/
 }
