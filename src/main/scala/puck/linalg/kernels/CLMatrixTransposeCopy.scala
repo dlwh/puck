@@ -141,13 +141,17 @@ __kernel void transpose_copy(__global T* _dst, int dstOff, int dstMajorStride,
     for (int xb = firstBlockX; xb < srcRows; xb += numGroupsX) {
       int ylim = min(srcCols, yb + BLOCK_SIZE);
       int xlim = min(srcRows, xb + BLOCK_SIZE);
+      #pragma unroll
       for (int y = threadidy + yb; y < ylim; y += get_local_size(1)) {
+       #pragma unroll
         for(int x = threadid + xb; x < xlim; x += get_local_size(0)) {
           tile[x-xb][y-yb] = src[srcPtrs[y]*srcMajorStride + x];
         }
       }
       barrier(CLK_LOCAL_MEM_FENCE);
+      #pragma unroll
       for (int x = threadidy + xb; x < xlim; x += get_local_size(1)) {
+       #pragma unroll
         for(int y = yb + threadid; y < ylim; y += get_local_size(0)) {
           dst[y + x*dstMajorStride] = tile[x-xb][y-yb];
         }
@@ -206,7 +210,7 @@ __kernel void transpose_copy_out(
 }
 
 
-                                     """
+                                                                  """
   }
 
 
