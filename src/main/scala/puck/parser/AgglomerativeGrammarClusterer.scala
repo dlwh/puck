@@ -7,14 +7,14 @@ import epic.trees.BinaryRule
 import GrammarClusterer._
 import com.typesafe.scalalogging.log4j.Logging
 
-class AgglomerativeGrammarClusterer(numRestarts: Int = 100, maxPartitionLabelSize: Int = 128) extends GrammarClusterer with Logging {
+class AgglomerativeGrammarClusterer[C, L](grouper: Int=>Int = identity, numRestarts: Int = 100, maxPartitionLabelSize: Int = 128) extends GrammarClusterer[C, L] with Logging {
 
 
-  def partition[C, L](rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)],
+  def partition(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)],
                 targetLabel: TargetLabel = Parent): IndexedSeq[immutable.IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = {
 
 
-    val clusters_x = rules.groupBy(r => targetLabel.target(r._1))
+    val clusters_x: Map[Int, IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = rules.groupBy(r => grouper(targetLabel.target(r._1)))
 
     val initialClusters = clusters_x.map { case (p:Int, r: IndexedSeq[(BinaryRule[SymId[C, L]], Int)]) =>
       val (g1, g2) = r.map(rr => targetLabel.clusterPieces(rr._1)).unzip

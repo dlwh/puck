@@ -10,11 +10,11 @@ import scala.collection.immutable
  *
  * @author dlwh
  **/
-trait GrammarClusterer extends Serializable {
-  def partition[C, L](rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)],
+trait GrammarClusterer[C, L] extends Serializable {
+  def partition(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)],
                 targetLabel: TargetLabel = Parent): IndexedSeq[immutable.IndexedSeq[(BinaryRule[SymId[C, L]], Int)]]
 
-  def partitionUnaries[C, L](rules: IndexedSeq[(UnaryRule[SymId[C, L]], Int)],
+  def partitionUnaries(rules: IndexedSeq[(UnaryRule[SymId[C, L]], Int)],
                       targetLabel: TargetLabel = Parent): IndexedSeq[immutable.IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = {
     val partitions = partition(rules.map { case (rule, id) => BinaryRule(rule.parent, rule.child, rule.child) -> id}, targetLabel)
 
