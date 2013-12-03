@@ -3,7 +3,7 @@ package parser
 
 import gen._
 import com.nativelibs4java.opencl._
-import com.typesafe.scalalogging.log4j.Logging
+import com.typesafe.scalalogging.slf4j.Logging
 import puck.util.{ZipUtil, BitHacks, ZeroMemoryKernel, CLProfiler}
 import puck.linalg.CLMatrix
 import java.nio.FloatBuffer

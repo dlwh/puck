@@ -5,7 +5,7 @@ import collection.immutable.BitSet
 import epic.trees.BinaryRule
 
 import GrammarClusterer._
-import com.typesafe.scalalogging.log4j.Logging
+import com.typesafe.scalalogging.slf4j.Logging
 
 class AgglomerativeGrammarClusterer[C, L](grouper: Int=>Int = identity, numRestarts: Int = 100, maxPartitionLabelSize: Int = 128) extends GrammarClusterer[C, L] with Logging {
 
