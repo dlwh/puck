@@ -39,7 +39,10 @@ object ViterbiRuleSemiring extends RuleSemiring {
   def accumulator(ids: Set[Int]): ViterbiRuleSemiring.Accumulator = {
     val _ids = ids
     new Accumulator {
-      def mad(id: Int, arg1: String, arg2: String): String = s"parent_$id = max(parent_$id, $arg1 + $arg2)"
+      def mad(id: Int, arg1: String, arg2: String): String = {
+//        s"float parent_${id}_pre_${arg1}_$x = parent_$id; parent_$id = max(parent_$id, $arg1 + $arg2); if(parent_$id > 0 &&  parent_${id}_pre_${arg1}_$x < 0) printf(${'"'}Rule ?!?!?! $id $arg1 $arg2 %f %f %f %f${"\\n"}${'"'}, parent_$id,  parent_${id}_pre_${arg1}_$x, $arg1, $arg2)"
+        s" parent_$id = max(parent_$id, $arg1 + $arg2);"
+      }
 
       def ids: Set[Int] = _ids
 
@@ -47,6 +50,7 @@ object ViterbiRuleSemiring extends RuleSemiring {
 
       def output(idSink: (Int) => String): String = {
         for(id <- ids) yield {
+//          s"${idSink(id)} = parent_$id; if(parent_$id > 0) printf(" + '"' + s"WTF: $id %s %f\\n" +'"' + s", __FUNCTION__, parent_$id);"
           s"${idSink(id)} = parent_$id;"
         }
       }.mkString(" ")

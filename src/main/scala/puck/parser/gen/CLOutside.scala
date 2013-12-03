@@ -4,7 +4,7 @@ import puck.util._
 import com.nativelibs4java.opencl._
 import java.util.zip._
 import epic.trees._
-import puck.parser.{RuleSemiring, RuleStructure}
+import puck.parser.{SymId, RuleSemiring, RuleStructure}
 import java.io.{PrintStream, FileOutputStream}
 
 // These kernels assume that the parent and the child named (L or R) are swapped
@@ -36,13 +36,6 @@ case class CLOutsideKernels(outside_L_NNKernels: IndexedSeq[CLKernel],
 
 object CLOutsideKernels {
 
-  def tryRead(in: ZipFile)(implicit context: CLContext) = {
-    if(ZipUtil.hasKernelSet(in, "outside_L_NN"))
-      Some(read(in))
-    else
-      None
-  }
-
   def read(in: ZipFile)(implicit context: CLContext) = {
     val outside_L_NN = ZipUtil.readKernelSet(in, "outside_L_NN")
     val outside_R_NN = ZipUtil.readKernelSet(in, "outside_R_NN")
@@ -61,20 +54,21 @@ object CLOutsideKernels {
       outsideNU, outsideTU)
   }
 
-  def rotateLeftToParent(r: (BinaryRule[Int], Int)) = {
+  def rotateLeftToParent[C, L](r: (BinaryRule[SymId[C, L]], Int)) = {
     BinaryRule(r._1.left, r._1.parent, r._1.right) -> r._2
   }
 
-  def rotateRightToParent(r: (BinaryRule[Int], Int)) = {
+  def rotateRightToParent[C, L](r: (BinaryRule[SymId[C, L]], Int)) = {
     BinaryRule(r._1.right, r._1.left, r._1.parent) -> r._2
   }
 
-  def rotateChildToParent(r: (UnaryRule[Int], Int)) = {
+  def rotateChildToParent[C, L](r: (UnaryRule[SymId[C, L]], Int)) = {
     UnaryRule(r._1.child, r._1.parent, r._1.chain) -> r._2
   }
 
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
-    val parserGen = new GenRuleMultiply()
+//    val parserGen = new LHSGenRuleMultiply[C, L](structure)
+    val parserGen = new LHSGenRuleMultiply[C, L](structure)
     val outside_L_NNKernels = structure.partitionsLeftChild.zipWithIndex.map { case(partition, i) =>
       parserGen.binaryRuleApplication(partition.map(rotateLeftToParent), "outside_L_nn_binaries"+i)
     }
@@ -107,11 +101,11 @@ object CLOutsideKernels {
       parserGen.binaryRuleApplication(partition.map(rotateRightToParent), "outside_R_tt_binaries"+i)
     }
 
-    val outsideNUKernels = IndexedSeq(structure.unaryRules).zipWithIndex.map { case (partition, i) =>
+    val outsideNUKernels = structure.nontermUnariesChild.zipWithIndex.map { case (partition, i) =>
       parserGen.unaryRuleApplication(partition.map(rotateChildToParent), "outside_nn_unaries"+i)
     }
 
-    val outsideTUKernels = IndexedSeq(structure.unaryTermRules).zipWithIndex.map { case (partition, i) =>
+    val outsideTUKernels = structure.termUnariesChild.zipWithIndex.map { case (partition, i) =>
       parserGen.unaryRuleApplication(partition.map(rotateChildToParent), "outside_nt_unaries"+i)
     }
 

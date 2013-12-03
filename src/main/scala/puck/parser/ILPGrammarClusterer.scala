@@ -11,7 +11,7 @@ import scala.collection.mutable.ArrayBuffer
  *
  * @author dlwh
  **/
-class ILPGrammarClusterer(maxNumPartitions: Int = 32, partitionBadnessThreshold: Int = 55) extends GrammarClusterer {
+class ILPGrammarClusterer[C, L](maxNumPartitions: Int = 32, partitionBadnessThreshold: Int = 55) extends GrammarClusterer[C, L] {
   /**
    * Solve an ILP that basically says:
    *
@@ -27,7 +27,7 @@ class ILPGrammarClusterer(maxNumPartitions: Int = 32, partitionBadnessThreshold:
    * @return
    **/
 
-  def partition(rules: IndexedSeq[(BinaryRule[Int], Int)], targetLabel: TargetLabel): IndexedSeq[immutable.IndexedSeq[(BinaryRule[Int], Int)]] = {
+  def partition(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], targetLabel: TargetLabel): IndexedSeq[immutable.IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = {
     val dsl = new LinearProgram
     import dsl._
     val constraints = new ArrayBuffer[Constraint]()

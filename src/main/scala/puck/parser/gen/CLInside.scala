@@ -37,7 +37,8 @@ object CLInsideKernels {
 
 
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
-    val parserGen = new GenRuleMultiply()
+//    val parserGen = new LHSGenRuleMultiply[C, L](structure)
+    val parserGen = new LHSGenRuleMultiply[C, L](structure)
     val insideNNKernels = structure.partitionsParent.zipWithIndex.map { case(partition, i) =>
       parserGen.binaryRuleApplication(partition, "inside_nn_binaries_"+i)
     }
@@ -54,11 +55,11 @@ object CLInsideKernels {
       parserGen.binaryRuleApplication(partition, "inside_tt_binaries_"+i)
     }
 
-    val insideNUKernels = IndexedSeq(structure.unaryRules).zipWithIndex.map { case (partition, i) =>
+    val insideNUKernels = structure.nontermUnariesParent.zipWithIndex.map { case (partition, i) =>
       parserGen.unaryRuleApplication(partition, "inside_n_unaries"+i)
     }
 
-    val insideTUKernels = IndexedSeq(structure.unaryTermRules).zipWithIndex.map { case (partition, i) =>
+    val insideTUKernels = structure.termUnariesParent.zipWithIndex.map { case (partition, i) =>
       parserGen.unaryRuleApplication(partition, "inside_t_unaries"+i)
     }
 

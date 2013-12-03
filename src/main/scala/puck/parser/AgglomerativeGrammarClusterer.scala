@@ -5,26 +5,29 @@ import collection.immutable.BitSet
 import epic.trees.BinaryRule
 
 import GrammarClusterer._
+import com.typesafe.scalalogging.log4j.Logging
 
-class AgglomerativeGrammarClusterer(numRestarts: Int = 100, maxPartitionLabelSize: Int = 128) extends GrammarClusterer {
-
-
-  def partition(rules: IndexedSeq[(BinaryRule[Int], Int)],
-                targetLabel: TargetLabel = Parent): IndexedSeq[immutable.IndexedSeq[(BinaryRule[Int], Int)]] = {
+class AgglomerativeGrammarClusterer[C, L](grouper: Int=>Int = identity, numRestarts: Int = 100, maxPartitionLabelSize: Int = 128) extends GrammarClusterer[C, L] with Logging {
 
 
-    var clusters_x = rules.groupBy(r => targetLabel.target(r._1))
+  def partition(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)],
+                targetLabel: TargetLabel = Parent): IndexedSeq[immutable.IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = {
 
-    val initialClusters = clusters_x.map { case (p:Int, r: IndexedSeq[(BinaryRule[Int], Int)]) =>
+
+    val clusters_x: Map[Int, IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = rules.groupBy(r => grouper(targetLabel.target(r._1)))
+
+    val initialClusters = clusters_x.map { case (p:Int, r: IndexedSeq[(BinaryRule[SymId[C, L]], Int)]) =>
       val (g1, g2) = r.map(rr => targetLabel.clusterPieces(rr._1)).unzip
       p -> Partition(BitSet(p), g1.reduce( _ ++ _), g2.reduce(_ ++ _))
     }
 
-    val clusters = ((0 until numRestarts).par.aggregate(restart(initialClusters, maxPartitionLabelSize, 1.0))({ (c1, seed) =>
-      val r = new java.util.Random(seed)
-      val c2 = restart(initialClusters, maxPartitionLabelSize, .3 + .7 * r.nextDouble)
-      if(c1.values.map(_.badness).sum < c2.values.map(_.badness).sum) c1 else c2
-    }, {(c1, c2) => if(c1.values.map(_.badness).sum < c2.values.map(_.badness).sum) c1 else c2}))
+    val clusters = (0 until numRestarts).par.aggregate(restart(initialClusters, maxPartitionLabelSize, 1.0))({ (c1, seed) =>
+        val r = new java.util.Random(seed)
+        val c2 = restart(initialClusters, maxPartitionLabelSize,.3 +.7 * r.nextDouble)
+        if (c1.values.map(_.badness).sum < c2.values.map(_.badness).sum) c1 else c2
+    }, {
+      (c1, c2) => if (c1.values.map(_.badness).sum < c2.values.map(_.badness).sum) c1 else c2
+    })
 
     println("Best badness: " + targetLabel  + " " + clusters.values.iterator.map(_.badness).sum)
 

@@ -55,17 +55,17 @@ class CLMatrixTest extends FunSuite {
   }
 
   test("Matrix Transpose") {
-    implicit val context = JavaCL.createBestContext(CLPlatform.DeviceFeature.CPU)
+    implicit val context = JavaCL.createBestContext(CLPlatform.DeviceFeature.GPU)
     implicit val queue = context.createDefaultOutOfOrderQueueIfPossible()
-    val mat2Rows = 10
-    val mat2Cols = 10
+    val mat2Rows = 141
+    val mat2Cols = 266
     val mat1Rows = mat2Cols * 2
     val mat1Cols = mat2Rows
     val mat = CLMatrix.zeros[Float](mat1Rows, mat1Cols)
     val mat2 = CLMatrix.zeros[Float](mat2Rows, mat2Cols)
     mat2 := DenseMatrix.rand(mat2Rows, mat2Cols).values.map(_.toFloat)
-    mat(1 to mat2Cols, ::).t := mat2
-    assert(mat(1 to mat2Cols, ::).t.toString === mat2.toString)
+    mat(5 to mat2Cols/2, 3 to 10).t := mat2(6 to 13, 1 to mat2Cols/2 - 4)
+    assert(mat(5 to mat2Cols/2, 3 to 10).t.toString === mat2(6 to 13, 1 to mat2Cols/2 - 4).toString)
     mat.release()
     mat2.release()
     queue.release()

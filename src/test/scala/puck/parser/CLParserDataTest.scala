@@ -22,7 +22,7 @@ import java.util
 class CLParserDataTest extends FunSuite {
   test("write/read works") {
     implicit val clcontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.GPU)
-    val grammar = ParserTestHarness.simpleParser.augmentedGrammar.refined.asInstanceOf[SimpleRefinedGrammar[String, String, String]]
+    val grammar = ParserTestHarness.grammar.asInstanceOf[SimpleRefinedGrammar[String, String, String]]
     val data = CLParserData.make(grammar)
     val tempFile = File.createTempFile("xxx","parserdata")
     tempFile.deleteOnExit()
@@ -99,9 +99,12 @@ object ParserTestHarness {
       case e:Exception => e.printStackTrace(); throw e
     }
   }
-  val simpleParser: SimpleChartParser[AnnotatedLabel, String] = {
+  val grammar = {
+
     val trees = getTrainTrees()
-    val grammar = GenerativeParser.extractGrammar[AnnotatedLabel, String](trees.head.label.label, trees.map(_.mapLabels(_.baseAnnotatedLabel)))
-    SimpleChartParser(AugmentedGrammar.fromRefined(grammar))
+    GenerativeParser.extractGrammar[AnnotatedLabel, String](trees.head.label.label, trees.map(_.mapLabels(_.baseAnnotatedLabel)))
+  }
+  val simpleParser: Parser[AnnotatedLabel, String] = {
+    Parser(AugmentedGrammar.fromRefined(grammar))
   }
 }

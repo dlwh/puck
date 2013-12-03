@@ -1,6 +1,7 @@
-import org.bridj.Pointer
+import org.bridj.{PointerIO, Pointer}
 import com.nativelibs4java.opencl._
 import java.{lang=>jl}
+import puck.util.CLBufferMappedPointerPair
 import scala.reflect._
 
 /**
@@ -16,6 +17,7 @@ package object puck {
 
 
     def +(off: Long) = pointer.next(off)
+    
   }
 
   implicit class RichFloatPointer(val pointer: Pointer[Float]) extends AnyVal {
@@ -78,7 +80,6 @@ package object puck {
   implicit def bufDoubleTojlDoubleBuffer(buffer: CLBuffer[Double]) = buffer.asInstanceOf[CLBuffer[jl.Double]]
   implicit def bufIntTojlIntBuffer(buffer: CLBuffer[Int]) = buffer.asInstanceOf[CLBuffer[jl.Integer]]
 
-  import util.CLBufferMappedPointerPair
   implicit def bufFloatTojlFloatBuffer(buffer: CLBufferMappedPointerPair[Float]) = CLBufferMappedPointerPair.toBuffer(buffer).asInstanceOf[CLBuffer[jl.Float]]
   implicit def bufDoubleTojlDoubleBuffer(buffer: CLBufferMappedPointerPair[Double]) = CLBufferMappedPointerPair.toBuffer(buffer).asInstanceOf[CLBuffer[jl.Double]]
   implicit def bufIntTojlIntBuffer(buffer: CLBufferMappedPointerPair[Int]) = CLBufferMappedPointerPair.toBuffer(buffer).asInstanceOf[CLBuffer[jl.Integer]]
@@ -86,5 +87,30 @@ package object puck {
   implicit def bufjlFloatToFloatBuffer(buffer: CLBuffer[jl.Float]) = buffer.asInstanceOf[CLBuffer[Float]]
   implicit def bufjlDoubleToDoubleBuffer(buffer: CLBuffer[jl.Double]) = buffer.asInstanceOf[CLBuffer[Double]]
   implicit def bufjlIntToIntBuffer(buffer: CLBuffer[jl.Integer]) = buffer.asInstanceOf[CLBuffer[Int]]
+
+
+  implicit class RichCLIntBuffer(val buffer: CLBuffer[Integer])(implicit tag: scala.reflect.ClassTag[Integer]) {
+
+    def writeArray(queue: CLQueue, arr: Array[Int], lengthOfArray: Int, events: CLEvent*):CLEvent = {
+      require(lengthOfArray <= arr.length)
+      val ptr = if(lengthOfArray == arr.length) {
+        Pointer.pointerToArray[Integer](arr)
+      } else {
+        Pointer.allocateInts(lengthOfArray).setIntsAtOffset(0, arr, 0, lengthOfArray)
+      }
+      val ev = buffer.write(queue, ptr, false, events:_*)
+      ev.invokeUponCompletion(new Runnable {
+        def run() = {ptr.release()}
+      })
+
+      ev
+    }
+  }
+
+  implicit class RichCLEvent(val event: CLEvent) extends AnyVal {
+    def profileIn(group: puck.util.CLProfiler) = group.prof(event)
+  }
+
+  def roundUpToMultipleOf(num: Int, divisor: Int) = (num + divisor - 1)/divisor * divisor
 
 }

@@ -146,10 +146,10 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
     } else {
       // TODO: currently assumes elements are 4 bytes long!!!!
       val tc = CLMatrixTransposeCopy()(queue.getContext)
-      val ptr = Pointer.pointerToArray[java.lang.Integer](Array.range(0, rows))
-      val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, rows)
-      val ev = intBuffer.write(queue, 0, rows, ptr, false, events:_*)
-      val res = tc.permuteTransposeCopyOut(this.t.asInstanceOf[CLMatrix[Float]], intBuffer.asInstanceOf[CLBuffer[Int]], rows, b.asInstanceOf[CLMatrix[Float]], ev)
+      val ptr = Pointer.pointerToArray[java.lang.Integer](Array.range(0, cols))
+      val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, cols)
+      val ev = intBuffer.write(queue, 0, cols, ptr, false, events:_*)
+      val res = tc.permuteTransposeCopy(this.t.asInstanceOf[CLMatrix[Float]], b.asInstanceOf[CLMatrix[Float]], intBuffer.asInstanceOf[CLBuffer[Int]], cols, ev)
       res.invokeUponCompletion(new Runnable() {
         def run() = { ptr.release(); intBuffer.release() }
       })
@@ -162,6 +162,16 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
 
     ev
 
+  }
+
+  def assignAsync(b: V, events: CLEvent*)(implicit cast: CanRepresentAsFloatBytes[V]): CLEvent = {
+    val zmk = ZeroMemoryKernel()(this.queue.getContext)
+    // nicely shaped matrix
+    if( (!this.isTranspose && this.majorStride == this.rows)  || (this.isTranspose && this.majorStride == this.cols)) {
+      zmk.fillMemory(this.data.asCLFloatBuffer(), cast.asFloat(b), this.offset, this.rows * this.cols, events:_*)
+    } else {
+      zmk.shapedFill(this.asInstanceOf[CLMatrix[Float]], cast.asFloat(b), events:_*)
+    }
   }
 
   private implicit def ctx = queue.getContext
@@ -236,7 +246,7 @@ object CLMatrix extends LowPriorityNativeMatrix {
         if(rows.isEmpty) new CLMatrix(0, 0, m.data, 0, 0)
         else if(!m.isTranspose) {
           assert(rows.head >= 0)
-          assert(rows.last < m.rows)
+          assert(rows.last < m.rows, s"last row ${rows.last} is bigger than rows ${m.rows}")
           require(rows.step == 1, "Sorry, we can't support row ranges with step sizes other than 1")
           val first = rows.head
           new CLMatrix(rows.length, m.cols, m.data, m.offset + first, m.majorStride)
@@ -609,6 +619,20 @@ trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
         ev.waitFor()
       } else {
         zmk.shapedFill(a, b).waitFor()
+      }
+    }
+  }
+
+  implicit object SetMSIntOp extends BinaryUpdateOp[CLMatrix[Int], Int, OpSet] {
+    def apply(a: CLMatrix[Int], b: Int) {
+      val zmk = ZeroMemoryKernel()(a.queue.getContext)
+      import a.queue
+      // nicely shaped matrix
+      if( (!a.isTranspose && a.majorStride == a.rows)  ||(a.isTranspose && a.majorStride == a.cols)) {
+        val ev = zmk.fillMemory(a.data.asCLFloatBuffer(), java.lang.Float.intBitsToFloat(b), a.offset, a.rows * a.cols)
+        ev.waitFor()
+      } else {
+        zmk.shapedFill(a.asInstanceOf[CLMatrix[Float]], java.lang.Float.intBitsToFloat(b)).waitFor()
       }
     }
   }

@@ -19,31 +19,38 @@ class CLProfiler(name: String) {
   }
 
   def +=(event: CLEvent):this.type = {
-    if (event ne null) events += event 
+    if (event ne null) events += event
     this
   }
 
   def ++=(event: Traversable[CLEvent]):this.type = {
-    if (event ne null) events ++= event 
+    if (event ne null) events ++= event
     this
   }
 
-  def adding(events: IndexedSeq[CLEvent]):events.type = {
+  def prof(events: Seq[CLEvent]):events.type = {
     this.events ++= events
     events
   }
 
-  def adding(event: CLEvent):event.type = {
+  def prof(event: CLEvent):event.type = {
     this.events += event
     event
   }
-
-
 
   def clear() {
     startingWallTime = -1L
     totalWallTime = -1L
     events.clear()
+  }
+
+  def processingTime = {
+    val badEvents = events.filter(_ ne null).filter(_.getCommandExecutionStatus != CommandExecutionStatus.Complete)
+    if(badEvents.nonEmpty) {
+      println(s"Bunch of bad events! ${badEvents.map{x => x -> x.getCommandExecutionStatus}}")
+    }
+    val eventTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandEnd - e.getProfilingCommandStart)/1E9).sum
+    eventTimes
   }
 
   override def toString() = {

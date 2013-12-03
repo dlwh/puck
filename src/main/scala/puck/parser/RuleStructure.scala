@@ -12,10 +12,11 @@ import breeze.util.Index
 @SerialVersionUID(1L)
 case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: BaseGrammar[L]) {
 
-  def numSyms = grammar.labelIndex.size
   def numCoarseSyms = refinements.labels.coarseIndex.size
 
-  val (symIndex,
+  def maskSize = puck.roundUpToMultipleOf(numCoarseSyms, 32) / 32
+
+  val (
   nontermIndex,
   termIndex,
   leftTermRules,
@@ -28,7 +29,7 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   root: Int) = {
     val rules = grammar.index.zipWithIndex.toIndexedSeq
     // jesus
-    val termIndex, nontermIndex,symIndex = Index[L]()
+    val termIndex, nontermIndex = Index[L]()
     val nonterms = rules.collect {
       case (BinaryRule(p,_,_),_) => p
       case (UnaryRule(p,c, _),_) if p != c => p
@@ -43,34 +44,39 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
 
     val syms = nonterms ++ rhsSyms
 
-    nonterms foreach {nontermIndex.index _}
-    syms -- nonterms foreach {termIndex.index _}
-    nontermIndex foreach {symIndex.index _}
-    termIndex foreach {symIndex.index _}
+    val idedSyms = {
+      for(sym <- syms) yield {
+        val isTerm = !nonterms.contains(sym)
+        if(isTerm) {
+          sym -> SymId(refinements.labels.project(sym), sym, grammar.labelIndex(sym), termIndex.index(sym), isTerm)
+        } else {
+          sym -> SymId(refinements.labels.project(sym), sym, grammar.labelIndex(sym), nontermIndex.index(sym), isTerm)
+        }
+      }
+    }.toMap
 
     val root = grammar.root
 
-    def doIndex(sym: L) = { val nt = nontermIndex(sym); if (nt >= 0) nt -> false else termIndex(sym) -> true }
-    val (binaries, unaries) = rules.map {
-      case (r,i) => (r.map(doIndex(_)), i)
+    val ( _binaries, _unaries) = rules.map {
+      case (r,i) => (r.map(idedSyms), i)
     }.partition(_._1.isInstanceOf[BinaryRule[_]])
 
-    val groupedByTerminess = binaries.asInstanceOf[IndexedSeq[(BinaryRule[(Int, Boolean)], Int)]].groupBy {case (r,i) => r.left._2 -> r.right._2}
+    val binaries = _binaries.asInstanceOf[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]]
+    val unaries = _unaries.asInstanceOf[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]]
+    val groupedByTerminess = binaries.groupBy {case (r,i) => r.left.isTerminal -> r.right.isTerminal}
 
-    def patchRules(pair: (BinaryRule[(Int, Boolean)], Int)): (BinaryRule[Int], Int) = pair._1.map(_._1) -> pair._2
-    val leftTermRules = groupedByTerminess.getOrElse(true -> false, IndexedSeq.empty).map(patchRules _)
-    val rightTermRules = groupedByTerminess.getOrElse(false -> true, IndexedSeq.empty).map(patchRules _)
-    val bothTermRules = groupedByTerminess.getOrElse(true -> true, IndexedSeq.empty).map(patchRules _)
-    val nontermRules = groupedByTerminess.getOrElse(false -> false, IndexedSeq.empty).map(patchRules _)
+    val leftTermRules = groupedByTerminess.getOrElse(true -> false, IndexedSeq.empty)
+    val rightTermRules = groupedByTerminess.getOrElse(false -> true, IndexedSeq.empty)
+    val bothTermRules = groupedByTerminess.getOrElse(true -> true, IndexedSeq.empty)
+    val nontermRules = groupedByTerminess.getOrElse(false -> false, IndexedSeq.empty)
 
     // exclude identity unaries for terminals, which have a terminal parent.
-    val uByTerminess = unaries.asInstanceOf[IndexedSeq[(UnaryRule[(Int, Boolean)], Int)]].filter{case (r,_) => !r.parent._2} groupBy {case (r,i) => r.child._2}
-    def patchU(pair: (UnaryRule[(Int, Boolean)], Int)) = pair._1.map(_._1) -> pair._2
-    val tUnaries = uByTerminess.getOrElse(true, IndexedSeq.empty).map(patchU _)
-    val ntUnaries = uByTerminess.getOrElse(false, IndexedSeq.empty).map(patchU _)
-    val tIdentUnaries = unaries.collect { case pair@(UnaryRule(p, c, _), _) if p == c && p._2 => pair }
+    val uByTerminess = unaries.filter{case (r,_) => !r.parent.isTerminal} groupBy {case (r,i) => r.child.isTerminal}
+    val tUnaries = uByTerminess.getOrElse(true, IndexedSeq.empty)
+    val ntUnaries = uByTerminess.getOrElse(false, IndexedSeq.empty)
+    val tIdentUnaries = unaries.collect { case pair@(UnaryRule(p, c, _), _) if p == c && p.isTerminal => pair }
 
-    (symIndex, nontermIndex, termIndex, leftTermRules,
+    (nontermIndex, termIndex, leftTermRules,
       rightTermRules, nontermRules, bothTermRules, ntUnaries, tUnaries, tIdentUnaries, nontermIndex(root))
   }
 
@@ -78,9 +84,13 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   def numTerms = termIndex.size
   def numNonTerms = nontermIndex.size
 
-  /** Maps an indexed terminal symbol back to the grammar's index*/
+  /** Maps an indexed terminal symbol back to the grammar's *refined* index*/
+  val projectedTerminalMap = Array.tabulate(numTerms)(i => refinements.labels.project(grammar.labelIndex(termIndex.get(i))))
+  val projectedNonterminalMap = Array.tabulate(numNonTerms)(i => refinements.labels.project(grammar.labelIndex(nontermIndex.get(i))))
+
+  /** Maps an indexed terminal symbol back to the grammar's *refined* index*/
   val terminalMap = Array.tabulate(numTerms)(i => grammar.labelIndex(termIndex.get(i)))
-  /** Maps an indexed nonterminal symbol back to the grammar's index*/
+  /** Maps an indexed nonterminal symbol back to the grammar's *refined* index*/
   val nonterminalMap = Array.tabulate(numNonTerms)(i => grammar.labelIndex(nontermIndex.get(i)))
   val reverseIndex = Array.fill[Int](grammar.labelIndex.size)(-1)
   for(i <- 0 until terminalMap.length) {
@@ -92,24 +102,56 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   def labelIndexToTerminal(label: Int) = reverseIndex(label)
   def labelIndexToNonterminal(label: Int) = reverseIndex(label)
 
-  def clusterer:GrammarClusterer = new AgglomerativeGrammarClusterer(100, 55)//new ILPGrammarClusterer(12, 55)
+  def clusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(projectedNonterminalMap, 100, 200)//55)//new ILPGrammarClusterer(12, 55)
+  def unaryClusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(projectedNonterminalMap, 100, 200)//55)//new ILPGrammarClusterer(12, 55)
+  def termParentClusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(projectedTerminalMap, 100, 200)//55)//new ILPGrammarClusterer(12, 55)
 
-  lazy val partitionsParent  : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = clusterer.partition(nontermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
-  lazy val partitionsLeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = clusterer.partition(nontermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
-  lazy val partitionsRightChild : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = clusterer.partition(nontermRules, targetLabel = GrammarClusterer.RightChild).toIndexedSeq
+  lazy val partitionsParent  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(nontermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
+  lazy val partitionsLeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(nontermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
+  lazy val partitionsRightChild : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(nontermRules, targetLabel = GrammarClusterer.RightChild).toIndexedSeq
 
-  lazy val partitionsLeftTermRules            : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = clusterer.partition(leftTermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
-  lazy val partitionsLeftTermRules_LeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = clusterer.partition(leftTermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
-  lazy val partitionsLeftTermRules_RightChild : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = clusterer.partition(leftTermRules, targetLabel = GrammarClusterer.RightChild).toIndexedSeq
+  lazy val partitionsLeftTermRules            : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(leftTermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
+  lazy val partitionsLeftTermRules_LeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = termParentClusterer.partition(leftTermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
+  lazy val partitionsLeftTermRules_RightChild : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(leftTermRules, targetLabel = GrammarClusterer.RightChild).toIndexedSeq
 
-  lazy val partitionsRightTermRules            : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = clusterer.partition(rightTermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
-  lazy val partitionsRightTermRules_LeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = clusterer.partition(rightTermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
-  lazy val partitionsRightTermRules_RightChild : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = clusterer.partition(rightTermRules, targetLabel = GrammarClusterer.RightChild).toIndexedSeq
+  lazy val partitionsRightTermRules            : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(rightTermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
+  lazy val partitionsRightTermRules_LeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(rightTermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
+  lazy val partitionsRightTermRules_RightChild : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = termParentClusterer.partition(rightTermRules, targetLabel = GrammarClusterer.RightChild).toIndexedSeq
 
-  lazy val partitionsBothTermRules             : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = clusterer.partition(bothTermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
-  lazy val partitionsBothTermRules_LeftChild   : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = clusterer.partition(bothTermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
-  lazy val partitionsBothTermRules_RightChild  : IndexedSeq[IndexedSeq[(BinaryRule[Int], Int)]] = clusterer.partition(bothTermRules, targetLabel = GrammarClusterer.RightChild).toIndexedSeq
+  lazy val partitionsBothTermRules             : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(bothTermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
+  lazy val partitionsBothTermRules_LeftChild   : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = termParentClusterer.partition(bothTermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
+  lazy val partitionsBothTermRules_RightChild  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = termParentClusterer.partition(bothTermRules, targetLabel = GrammarClusterer.RightChild).toIndexedSeq
+
+  lazy val nontermUnariesParent : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = clusterer.partitionUnaries(unaryRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
+  lazy val nontermUnariesChild : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = clusterer.partitionUnaries(unaryRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
+
+  lazy val termUnariesParent : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = unaryClusterer.partitionUnaries(unaryTermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
+  lazy val termUnariesChild : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = termParentClusterer.partitionUnaries(unaryTermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
 
   def numRules = grammar.index.size
+
+  // TODO this really shouldn't be here:
+  def maskHeader =  """#define NUM_FIELDS """ + maskSize + """
+
+  typedef struct { int fields[NUM_FIELDS]; } mask_t;
+
+  inline void set_bit(mask_t* mask, int bit, int shouldSet) {
+    int field = (bit/32);
+    int modulus = bit%32;
+    mask->fields[field] = mask->fields[field] | (shouldSet<<(modulus));
+  }
+
+  /* Intel gets sad from this one?
+  inline int is_set(mask_t* mask, int bit) {
+    int field = (bit/32);
+    int modulus = bit%32;
+    return mask->fields[field] & (1<<(modulus));
+  }
+  */
+
+   #define is_set(mask, bit)  ((mask)->fields[(bit)/32] & (1<<((bit)%32)))
+
+                                                           """
 }
 
+final case class SymId[C, L](coarseSym: C, fineSym: L, system: Int, gpu: Int, isTerminal: Boolean)
