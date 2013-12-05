@@ -92,7 +92,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   def release() {
     devParent.release()
-    devCharts.release()
+    devInside.release()
+    devOutside.release()
     devLeft.release()
     devRight.release()
     parsers.foreach(_.release())
@@ -117,7 +118,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   val (numWorkCells:Int, numChartCells: Int) = {
     val sizeOfFloat = 4
     val fractionOfMemoryToUse = 0.8 // slack!
-    val amountOfMemory = ((context.getMaxMemAllocSize min maxAllocSize) * fractionOfMemoryToUse).toInt - data.map(_.ruleScores.length).sum * sizeOfFloat - maxSentencesPerBatch * 3 * 4;
+    val amountOfMemory = ((context.getDevices.head.getGlobalMemSize min maxAllocSize) * fractionOfMemoryToUse).toInt - data.map(_.ruleScores.length).sum * sizeOfFloat - maxSentencesPerBatch * 3 * 4;
     val maxPossibleNumberOfCells = ((amountOfMemory / sizeOfFloat) / (cellSize + 4 + maskSize)).toInt // + 4 for each kind of offset
     // We want numGPUCells and numGPUChartCells to be divisible by 16, so that we get aligned strided access:
     //       On devices of compute capability 1.0 or 1.1, the k-th thread in a half warp must access the
@@ -140,6 +141,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     (plrSize * 16, (baseSize * relativeSizeOfChartsToP + extra) * 16)
   }
 
+  println(numWorkCells, numChartCells, (3 * numWorkCells + numChartCells) * cellSize * 4, context.getMaxMemAllocSize, data.map(_.ruleScores.length))
+
 
   // On the Device side we have 4 Matrices:
   // One is where we calculate P = L * R * rules, for fixed spans and split points (the "bot")
@@ -151,7 +154,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val devParentPtrs, devLeftPtrs, devRightPtrs = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
   private val devSplitPointOffsets = context.createIntBuffer(CLMem.Usage.Input, numWorkCells + 1)
   // transposed
-  private val devCharts = new CLMatrix[Float](cellSize, numChartCells)
+  private val devInside, devOutside = new CLMatrix[Float](cellSize, numChartCells/2)
   private val maskCharts = new CLMatrix[Int](maskSize, numChartCells)
 
   // (dest, leftSource, rightSource) (right Source if binary rules)
@@ -171,7 +174,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     import data._
     val devRules = context.createFloatBuffer(CLMem.Usage.Input, FloatBuffer.wrap(ruleScores), true)
 
-
     def release() { devRules.release() }
 
     def _zero: Float = data.semiring.zero
@@ -182,8 +184,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       pruned = 0
       total = 0
 
-      val evZeroCharts = zmk.fillMemory(devCharts.data, _zero, events:_*) profileIn initMemFillEvents
-      val init = initializeTagScores(batch, evZeroCharts)
+      val evZeroCharts = zmk.fillMemory(devInside.data, _zero, events:_*) profileIn initMemFillEvents
+      val evZeroOutside = zmk.fillMemory(devOutside.data, _zero, events:_*) profileIn initMemFillEvents
+      val init = initializeTagScores(batch, evZeroCharts, evZeroOutside)
 
 //      maskCharts.assignAsync(-1, evZeroCharts).waitFor
       var ev = insideTU.doUpdates(batch, 1, init)
@@ -213,7 +216,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       total = 0
 
       ev = devParentPtrs.writeArray(queue, batch.outsideCharts.map(_.top.rootIndex).toArray, batch.outsideCharts.length, ev) profileIn hdTransferEvents
-      ev = data.util.setRootScores(devCharts, devParentPtrs, batch.outsideCharts.length, structure.root, data.semiring.one, ev) profileIn memFillEvents
+      ev = data.util.setRootScores(devOutside, devParentPtrs, batch.numSentences, structure.root, data.semiring.one, ev) profileIn memFillEvents
 
       ev = outsideNU.doUpdates(batch, batch.maxLength, ev)
 
@@ -225,6 +228,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         } else {
           ev = outsideNU.doUpdates(batch, span, ev)
         }
+
       }
 
       ev = outsideTT_L.doUpdates(batch, 1, ev)
@@ -245,7 +249,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     }
 
     def computeViterbiMasks(batch: Batch, events: CLEvent*):CLEvent = synchronized {
-      computeMasks(batch, -1E-3f, events:_*)
+      computeMasks(batch, -4E-3f, events:_*)
     }
 
     def initializeTagScores(batch: Batch, events: CLEvent*) = {
@@ -260,7 +264,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       val ev2 = devParentPtrs.writeArray(queue, pArray, totalLengthForSpan(1), events:_*) profileIn hdTransferEvents
       val ev = devParent(0 until totalLength, ::).writeFrom(dm, false, ev2) map (_ profileIn  hdTransferEvents)
-      transposeCopy.permuteTransposeCopyOut(devCharts,  devParentPtrs, totalLengthForSpan(1), devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn sumToChartsEvents
+      transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, totalLengthForSpan(1), devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn sumToChartsEvents
     }
 
 
@@ -274,6 +278,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val index = ref
         val score = anch.scoreTag(pos, data.grammar.refinedGrammar.labelIndex.get(index))
         val gpuIndex = data.structure.labelIndexToTerminal(index)
+//        if(pos == 0) println(pos,t,ref,data.grammar.refinements.labels.fineIndex.get(ref), gpuIndex,score)
         tags(pos, gpuIndex) = data.semiring.fromLogSpace(score.toFloat)
       }
     }
@@ -300,10 +305,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       val ev =  markTerminalsInMasks(batch, events:_*)
 
-      val evr = data.masks.getMasks(maskCharts(::, 0 until batch.insideCellOffsets.last),
-        devCharts(::, 0 until batch.insideCellOffsets.last),
-        devCharts(::, batch.insideCellOffsets.last until batch.insideCellOffsets.last * 2),
-        batch.outsideCharts.head.bot.globalRowOffset, batch.insideCellOffsets, structure.root, threshold, ev) profileIn masksEvents
+      val evr = data.masks.getMasks(maskCharts(::, 0 until batch.cellOffsets.last),
+        devInside(::, 0 until batch.cellOffsets.last),
+        devOutside(::, 0 until batch.cellOffsets.last),
+        0, batch.cellOffsets, structure.root, threshold, ev) profileIn masksEvents
       if (profile) {
         queue.finish()
         allProfilers.foreach(_.tock())
@@ -341,34 +346,34 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private val outsideBot = {(b: Batch, s: Int) =>  b.outsideCharts(s).bot}
     private val outsideTop = {(b: Batch, s: Int) =>  b.outsideCharts(s).top}
 
-    private def insideTU = new UnaryUpdateManager(this, data.inside.insideTUKernels, insideTop, insideBot)
-    private def insideNU = new UnaryUpdateManager(this, data.inside.insideNUKernels, insideTop, insideBot)
+    private def insideTU = new UnaryUpdateManager(this, data.inside.insideTUKernels, devInside, insideTop, insideBot)
+    private def insideNU = new UnaryUpdateManager(this, data.inside.insideNUKernels, devInside, insideTop, insideBot)
 
-    private def insideTT = new BinaryUpdateManager(this, data.inside.insideTTKernels, insideBot, insideBot, insideBot, (b, e, l) => (b+1 to b+1))
-    private def insideNT = new BinaryUpdateManager(this, data.inside.insideNTKernels, insideBot, insideTop, insideBot, (b, e, l) => (e-1 to e-1))
-    private def insideTN = new BinaryUpdateManager(this, data.inside.insideTNKernels, insideBot, insideBot, insideTop, (b, e, l) => (b+1 to b+1))
-    private def insideNN = new BinaryUpdateManager(this, data.inside.insideNNKernels, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1))
+    private def insideTT = new BinaryUpdateManager(this, data.inside.insideTTKernels, devInside, devInside, devInside, insideBot, insideBot, insideBot, (b, e, l) => (b+1 to b+1))
+    private def insideNT = new BinaryUpdateManager(this, data.inside.insideNTKernels, devInside, devInside, devInside, insideBot, insideTop, insideBot, (b, e, l) => (e-1 to e-1))
+    private def insideTN = new BinaryUpdateManager(this, data.inside.insideTNKernels, devInside, devInside, devInside, insideBot, insideBot, insideTop, (b, e, l) => (b+1 to b+1))
+    private def insideNN = new BinaryUpdateManager(this, data.inside.insideNNKernels, devInside, devInside, devInside, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1))
 
     // here, "parentChart" is actually the left child, left is the parent, right is the right completion
-    private def outsideTT_L = new BinaryUpdateManager(this, data.outside.outside_L_TTKernels, outsideBot, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
-    private def outsideNT_L = new BinaryUpdateManager(this, data.outside.outside_L_NTKernels, outsideTop, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
-    private def outsideTN_L = new BinaryUpdateManager(this, data.outside.outside_L_TNKernels, outsideBot, outsideBot, insideTop, (b, e, l) => (e+1 to l))
-    private def outsideNN_L = new BinaryUpdateManager(this, data.outside.outside_L_NNKernels, outsideTop, outsideBot, insideTop, (b, e, l) => (e+1 to l))
+    private def outsideTT_L = new BinaryUpdateManager(this, data.outside.outside_L_TTKernels, devOutside, devOutside, devInside, outsideBot, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
+    private def outsideNT_L = new BinaryUpdateManager(this, data.outside.outside_L_NTKernels, devOutside, devOutside, devInside, outsideTop, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
+    private def outsideTN_L = new BinaryUpdateManager(this, data.outside.outside_L_TNKernels, devOutside, devOutside, devInside, outsideBot, outsideBot, insideTop, (b, e, l) => (e+1 to l))
+    private def outsideNN_L = new BinaryUpdateManager(this, data.outside.outside_L_NNKernels, devOutside, devOutside, devInside, outsideTop, outsideBot, insideTop, (b, e, l) => (e+1 to l))
 
     // here, "parentChart" is actually the right child, right is the parent, left is the left completion
-    private def outsideTT_R = new BinaryUpdateManager(this, data.outside.outside_R_TTKernels, outsideBot, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
-    private def outsideNT_R = new BinaryUpdateManager(this, data.outside.outside_R_NTKernels, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
-    private def outsideTN_R = new BinaryUpdateManager(this, data.outside.outside_R_TNKernels, outsideTop, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
-    private def outsideNN_R = new BinaryUpdateManager(this, data.outside.outside_R_NNKernels, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1))
+    private def outsideTT_R = new BinaryUpdateManager(this, data.outside.outside_R_TTKernels, devOutside, devInside, devOutside, outsideBot, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
+    private def outsideNT_R = new BinaryUpdateManager(this, data.outside.outside_R_NTKernels, devOutside, devInside, devOutside, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
+    private def outsideTN_R = new BinaryUpdateManager(this, data.outside.outside_R_TNKernels, devOutside, devInside, devOutside, outsideTop, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
+    private def outsideNN_R = new BinaryUpdateManager(this, data.outside.outside_R_NNKernels, devOutside, devInside, devOutside, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1))
 
-    private def outsideTU = new UnaryUpdateManager(this, data.outside.outsideTUKernels, outsideBot, outsideTop)
-    private def outsideNU = new UnaryUpdateManager(this, data.outside.outsideNUKernels, outsideBot, outsideTop)
+    private def outsideTU = new UnaryUpdateManager(this, data.outside.outsideTUKernels, devOutside, outsideBot, outsideTop)
+    private def outsideNU = new UnaryUpdateManager(this, data.outside.outsideNUKernels, devOutside, outsideBot, outsideTop)
 
 
     def addMasksToBatches(batch: Batch, ev: CLEvent*): Batch = {
       val insideEvents = inside(batch, ev:_*)
       val outsideEvents = outside(batch, insideEvents)
-      val ev2 = computeMasks(batch, -10, outsideEvents)
+      val ev2 = computeMasks(batch, -9, outsideEvents)
       ev2.waitFor()
       val denseMasks = maskCharts.toDense
       maskCharts.data.waitUnmap()
@@ -380,11 +385,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val in = if (profile) System.currentTimeMillis() else 0L
       val dmMasks:DenseMatrix[Int] = masks.toDense
       val trees = for (s <- 0 until batch.numSentences par) yield try {
-        import batch.insideCellOffsets
+        import batch.cellOffsets
         val length = batch.sentences(s).length
-        val numCells = (insideCellOffsets(s+1)-insideCellOffsets(s))/2
+        val numCells = (cellOffsets(s+1)-cellOffsets(s))/2
         assert(numCells == TriangularArray.arraySize(length))
-        val botBegin = insideCellOffsets(s)
+        val botBegin = cellOffsets(s)
         val botEnd = botBegin + numCells
         val topBegin = botEnd
         val topEnd = topBegin + numCells
@@ -423,13 +428,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                 return BinaryTree[C](label, recTop(begin, split), recTop(split, end), Span(begin, end))
               }
             }
+
             error(s"nothing here $length!" + " "+ (begin, end) +
               {for (split <- (begin+1) until end) yield {
                 val left = (if (begin == split - 1) bot else top)(::, ChartHalf.chartIndex(begin, split, length))
                 val right = (if (end == split + 1) bot else top)(::, ChartHalf.chartIndex(split, end, length))
                 (ChartHalf.chartIndex(begin, split, length), ChartHalf.chartIndex(split, end, length), split, left,right)
 
-              }})
+              }} + " " +batch.sentences(s))
           }
         }
 
@@ -449,13 +455,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   }
 
   private case class Batch(lengthTotals: Array[Int],
-                           insideCellOffsets: Array[Int],
+                           cellOffsets: Array[Int],
                            sentences: IndexedSeq[IndexedSeq[W]],
                            masks: Option[DenseMatrix[Int]]) {
     def totalLength = lengthTotals.last
     def numSentences = sentences.length
     val maxLength = sentences.map(_.length).max
-    assert(insideCellOffsets.last * 2 <= devCharts.cols)
+    assert(cellOffsets.last <= devInside.cols)
 
     def isAllowedSpan(sent: Int, begin: Int, end: Int) = maskFor(sent, begin, end).forall(_.any)
 
@@ -469,23 +475,23 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def totalLengthForSpan(span: Int) = _workArrayOffsetsForSpan(span).last
 
     lazy val insideCharts = for (i <- 0 until numSentences) yield {
-      val numCells = (insideCellOffsets(i+1)-insideCellOffsets(i))/2
+      val numCells = (cellOffsets(i+1)-cellOffsets(i))/2
       assert(numCells == TriangularArray.arraySize(sentences(i).length))
-      val chart = new ParseChart(sentences(i).length, devCharts(::, insideCellOffsets(i) until (insideCellOffsets(i) + numCells)), devCharts(::, insideCellOffsets(i) + numCells until insideCellOffsets(i+1)))
+      val chart = new ParseChart(sentences(i).length, devInside(::, cellOffsets(i) until (cellOffsets(i) + numCells)), devInside(::, cellOffsets(i) + numCells until cellOffsets(i+1)))
       chart
     }
 
     lazy val outsideCharts = {
       for (i <- 0 until numSentences) yield {
 
-        val numCells = (insideCellOffsets(i+1)-insideCellOffsets(i))/2
+        val numCells = (cellOffsets(i+1)-cellOffsets(i))/2
         assert(numCells == TriangularArray.arraySize(sentences(i).length))
-        val botBegin = insideCellOffsets.last + insideCellOffsets(i)
+        val botBegin = cellOffsets(i)
         val botEnd = botBegin + numCells
         val topBegin = botEnd
         val topEnd = topBegin + numCells
-        assert(topEnd < devCharts.cols)
-        val chart = new ParseChart(sentences(i).length, devCharts(::, botBegin until botEnd), devCharts(::, topBegin until topEnd))
+        assert(topEnd < devOutside.cols)
+        val chart = new ParseChart(sentences(i).length, devOutside(::, botBegin until botEnd), devOutside(::, topBegin until topEnd))
         chart
       }
     }
@@ -516,13 +522,17 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   private def createBatch(sentences: IndexedSeq[IndexedSeq[W]]): Batch = {
     val lengthTotals = sentences.scanLeft(0)((acc, sent) => acc + sent.length)
+    println(s"Batch size of ${sentences.length}, total length of ${lengthTotals.last}")
     val cellTotals = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2)
-    assert(cellTotals.last * 2 <= devCharts.cols, cellTotals.last * 2 + " " +  devCharts.cols)
+    assert(cellTotals.last <= devInside.cols, cellTotals.last + " " +  devInside.cols)
     Batch(lengthTotals.toArray, cellTotals.toArray, sentences, None)
   }
 
   private class BinaryUpdateManager(parser: ActualParser,
                                     kernels: IndexedSeq[CLKernel],
+                                    parentChartMatrix: CLMatrix[Float],
+                                    leftChartMatrix: CLMatrix[Float],
+                                    rightChartMatrix: CLMatrix[Float],
                                     parentChart: (Batch,Int)=>ChartHalf,
                                     leftChart: (Batch,Int)=>ChartHalf,
                                     rightChart: (Batch,Int)=>ChartHalf,
@@ -563,8 +573,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val evTRightPtrs = devRightPtrs.writeArray(queue, rArray, offset, ev:_*) profileIn hdTransferEvents
 
         // do transpose based on ptrs
-        val evTransLeft  = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPtrs, offset, evTLeftPtrs) profileIn transferEvents
-        val evTransRight = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), devCharts, devRightPtrs, offset, evTRightPtrs) profileIn transferEvents
+        val evTransLeft  = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), leftChartMatrix, devLeftPtrs, offset, evTLeftPtrs) profileIn transferEvents
+        val evTransRight = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), rightChartMatrix, devRightPtrs, offset, evTRightPtrs) profileIn transferEvents
 
         // copy parent pointers
         val evWriteDevParent = devParentPtrs.writeArray(queue, pArray, offset, ev:_*) profileIn hdTransferEvents
@@ -579,7 +589,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
 
         val sumEv = parser.data.util.sumSplitPoints(devParent,
-          devCharts,
+          parentChartMatrix,
           devParentPtrs, splitPointOffset,
           devSplitPointOffsets,
           32 / span max 1, parser.data.numSyms, Seq(evWriteDevParent, evWriteDevSplitPoint) ++ kEvents:_*) profileIn sumEvents
@@ -650,6 +660,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   private class UnaryUpdateManager(parser: ActualParser,
                                    kernels: IndexedSeq[CLKernel],
+                                   scoreMatrix: CLMatrix[Float],
                                    parentChart: (Batch,Int)=>ChartHalf,
                                    childChart: (Batch,Int)=>ChartHalf) {
 
@@ -673,7 +684,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
         val wevl = devLeftPtrs.writeArray(queue, lArray, offset, ev:_*) profileIn hdTransferEvents
 
-        val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), devCharts, devLeftPtrs, offset, wevl) profileIn transferEvents
+        val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), scoreMatrix, devLeftPtrs, offset, wevl) profileIn transferEvents
 
         val endEvents = kernels.map{ kernel  =>
           kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, parser.devRules, Integer.valueOf(numWorkCells), Integer.valueOf(offset))
@@ -683,7 +694,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
         val ev2 = devParentPtrs.writeArray(queue, pArray, offset, ev:_*) profileIn hdTransferEvents
 
-        val _ev = transposeCopy.permuteTransposeCopyOut(devCharts, devParentPtrs, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*) profileIn sumToChartsEvents
+        val _ev = transposeCopy.permuteTransposeCopyOut(scoreMatrix, devParentPtrs, offset, devParent(0 until offset, ::), (ev2 +: endEvents):_*) profileIn sumToChartsEvents
 
         offset = 0
         IndexedSeq(_ev)
@@ -746,8 +757,9 @@ object CLParser extends Logging {
     import myParams._
     println("Training Parser...")
     println(params)
-    val transformed = params.treebank.copy(binarization="left").trainTrees.par
-       .map { ti => StripUnaries() apply ti }.seq.toIndexedSeq
+    val transformed = params.treebank.copy(binarization="left", keepUnaryChainsFromTrain = false).trainTrees
+    val toParse =  params.treebank.trainTrees.filter(_.words.length <= maxParseLength).map(_.words).take(numToParse)
+
 
     val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = if (textGrammarPrefix == null) {
       GenerativeParser.annotated(annotator, transformed)
@@ -759,6 +771,9 @@ object CLParser extends Logging {
 
 
     grammar.prettyPrint(new FileWriter("grammar.out"))
+    val out = new PrintStream(new FileOutputStream("refs.txt"))
+    out.println(xbarGrammar.refinements.rules.toString())
+    out.close()
 
     implicit val context = if (useGPU) {
       val gpu = JavaCL.listPlatforms.flatMap(_.listGPUDevices(true)).head
@@ -793,33 +808,38 @@ object CLParser extends Logging {
       fromParserData[AnnotatedLabel, AnnotatedLabel, String](parserData, profile)
     }
 
-    val train =  params.treebank.trainTrees.filter(_.words.length <= maxParseLength).take(numToParse).map(_.words)
 
     if (checkPartitions) {
-      val partsX = kern.partitions(train)
+      val partsX = kern.partitions(toParse)
       println(partsX)
       val parser = Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
-      val parts2 = train.par.map(parser.marginal(_).logPartition)
+      val parts2 = toParse.par.map(parser.marginal(_).logPartition)
       println(parts2)
       println("max difference: " + (DenseVector(partsX.map(_.toDouble):_*) - DenseVector(parts2.seq:_*)).norm(Double.PositiveInfinity))
       System.exit(0)
     }
     var timeIn = System.currentTimeMillis()
-    val parts = kern.parse(train)
+    val trees = kern.parse(toParse)
     var timeOut = System.currentTimeMillis()
-    //println(parts zip train map {case (k,v) => k render v})
+    println(trees zip toParse map {case (k,v) if k != null => k render v; case (k,v) => ":("})
     println(s"CL Parsing took: ${(timeOut-timeIn)/1000.0}")
     if (parseTwice) {
       timeIn = System.currentTimeMillis()
-      val parts2 = kern.parse(train)
+      val parts2 = kern.parse(toParse)
       timeOut = System.currentTimeMillis()
       //println(parts2 zip train map {case (k,v) => k render v})
       println(s"CL Parsing took x2: ${(timeOut-timeIn)/1000.0}")
     }
     if (jvmParse) {
-      val parser = Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
+      val parser = if(prune) {
+        Parser(new ConstraintCoreGrammarAdaptor(xbarGrammar.grammar, xbarGrammar.lexicon, new ParserChartConstraintsFactory(Parser(xbarGrammar, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate)),
+          grammar,
+          if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
+      } else {
+        Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
+      }
       timeIn = System.currentTimeMillis()
-      val margs = train.map { w =>
+      val margs = toParse.map { w =>
         val m = parser.apply(w)
         /*
         printChart(m, true, false)
