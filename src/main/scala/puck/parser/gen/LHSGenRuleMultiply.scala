@@ -10,9 +10,23 @@ import puck.parser.{RuleStructure, SymId, RuleSemiring}
  * @author dlwh
  **/
 class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring: RuleSemiring) extends GenRuleMultiply[C, L] {
+
+  case class Variable(name: String, descr: String) {
+    def declare = s"float $name = ${floatToString(semiring.zero)}; // $descr"
+
+    def repr = name
+  }
+
+  private def floatToString(x: Float) = x match {
+    case Float.PositiveInfinity => "INFINITY"
+    case Float.NegativeInfinity => "-INFINITY"
+    case x if x.isNaN => "NAN"
+    case x => s"${x}f"
+  }
+
   def binaryRuleApplication(rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLKernel = {
     val parents = rulePartition.map(_._1.parent).toSet
-    val accumulator = semiring.accumulator(parents.map(_.gpu))
+    val parentVariables = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
     // set up the mask
     val maskStrings = for {
 //      field <- 0 to 3
@@ -28,12 +42,10 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
         int row = get_global_id(0);
         if(row < cellsToDo) {
           const mask_t mask = masks[parentIndex[row]];
-//          if( mask.fields[0] != -1 || mask.fields[1] != -1 || mask.fields[2] != -1)
-//            printf("%s %d %d %d qq %d %d${"\\n"}", __FUNCTION__, mask.fields[0], mask.fields[1], mask.fields[2], row, get_group_id(0));
           $checkMaskString
-          ${accumulator.declare}
-          ${coreRuleLoop(rulePartition, accumulator)}
-          ${accumulator.output((id: Int) => s"parents[numRows * $id + row]")}
+          ${parentVariables.values.map(_.declare).mkString("\n        ")}
+          ${coreRuleLoop(rulePartition, parentVariables)}
+          ${{for( (id,v) <- parentVariables) yield s"parents[numRows * $id + row] = ${v.repr};"}.mkString("\n        ")}
         }
     }
 
@@ -41,7 +53,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
       cl.createProgram(text).build().createKernels().head
   }
 
-  private def coreRuleLoop(rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], accumulator: semiring.Accumulator)(implicit cl: CLContext) = {
+  private def coreRuleLoop(rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], accumulator: Map[Int, Variable])(implicit cl: CLContext) = {
     val sb = new StringBuilder()
     for ((_lc, rr) <- rulePartition.groupBy(_._1.left)) {
       val lc = _lc.gpu
@@ -55,7 +67,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
         val jointName = s"joint_${lc}_${rc}"
         sb ++= s"            float $jointName = ${semiring.times(s"leftChild_$lc", s"rightChild_$rc")};\n"
         for ((r, id) <- rrr) {
-          sb ++= s"            ${accumulator.mad(r.parent.gpu, jointName, s"ruleScores[$id]")};\n"
+          sb ++= s"            ${accumulator(r.parent.gpu).repr} = ${semiring.mad(accumulator(r.parent.gpu).repr, jointName, s"ruleScores[$id]")};\n"
         }
       }
       sb ++= "         }\n"
@@ -66,14 +78,14 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
 
   def unaryRuleApplication(rulePartition: IndexedSeq[(UnaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLKernel = {
     val parents = rulePartition.map(_._1.parent).toSet
-    val accumulator = semiring.accumulator(parents.map(_.gpu))
+    val parentVariables = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
     val text = s"""
     __kernel void $name(__global float* parents, __global float* children, __global float* ruleScores, int numRows, int cellsToDo) {
         int row = get_global_id(0);
         if(row < cellsToDo) {
-          ${accumulator.declare}
-          ${coreUnaryRuleLoop(rulePartition, accumulator)}
-          ${accumulator.output((id: Int) => s"parents[numRows * $id + row]")}
+          ${parentVariables.values.map(_.declare).mkString("\n        ")}
+          ${coreUnaryRuleLoop(rulePartition, parentVariables)}
+          ${{for( (id,v) <- parentVariables) yield s"parents[numRows * $id + row] = ${v.repr};"}.mkString("\n        ")}
         }
     }
 
@@ -81,14 +93,14 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     cl.createProgram(text).build().createKernels.head
   }
 
-  private def coreUnaryRuleLoop(rulePartition: IndexedSeq[(UnaryRule[SymId[C, L]], Int)], accumulator: semiring.Accumulator)(implicit cl: CLContext) = {
+  private def coreUnaryRuleLoop(rulePartition: IndexedSeq[(UnaryRule[SymId[C, L]], Int)], accumulator: Map[Int, Variable])(implicit cl: CLContext) = {
     val sb = new StringBuilder()
     for ((_lc, rr) <- rulePartition.groupBy(_._1.child)) {
       val lc = _lc.gpu
       val child = s"child_$lc"
       sb ++= s"        float $child = children[numRows * $lc + row];\n"
       for ((r, id) <- rr) {
-        sb ++= s"          ${accumulator.mad(r.parent.gpu, child, s"ruleScores[$id]")};\n"
+        sb ++= s"            ${accumulator(r.parent.gpu).repr} = ${semiring.mad(accumulator(r.parent.gpu).repr, child, s"ruleScores[$id]")};\n"
       }
     }
     sb.result()
