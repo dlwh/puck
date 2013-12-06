@@ -120,13 +120,13 @@ __kernel void slice_copy(__global T* _dst, int dstOff, int dstMajorStride,
 
   int dstCol = get_global_id(0);
   if(dstCol >= srcCols) return;
-  int threadid = 0;//get_local_id(1);
-  int local_size = 1;//get_local_size(1);
+  int threadid = get_local_id(1);
+  int local_size = get_local_size(1);
 
   int srcCol = srcPtrs[dstCol];
 
-  int firstRow = 0;////get_group_id(1) * BLOCK_SIZE;
-  int lastRow = srcRows;//min(BLOCK_SIZE, srcRows - firstRow);
+  int firstRow = get_group_id(1) * BLOCK_SIZE;
+  int lastRow = min(BLOCK_SIZE, srcRows - firstRow);
 
 
   for(int i = firstRow + threadid; i < lastRow; i += local_size) {
@@ -150,8 +150,8 @@ __kernel void slice_copy_out(
 
     int dstCol = dstPtrs[srcCol];
 
-    int firstRow = 0;//get_group_id(1) * BLOCK_SIZE;
-    int lastRow = srcRows;//min(BLOCK_SIZE, srcRows - firstRow);
+    int firstRow = get_group_id(1) * BLOCK_SIZE;
+    int lastRow = min(BLOCK_SIZE, srcRows - firstRow);
 
 
     for(int i = firstRow + threadid; i < lastRow; i += local_size) {
