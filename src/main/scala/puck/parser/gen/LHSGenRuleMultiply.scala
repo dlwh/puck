@@ -39,7 +39,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     val checkMaskString = maskStrings.mkString("if (!((", ") | (", ")) ) return;")
 
       val text = structure.maskHeader + s"""
-    __kernel void $name(__global float* parents, __global int* parentIndex, __global float* left, __global float* right, __constant float* ruleScores, __global const mask_t* masks, int numRows, int cellsToDo) {
+    __kernel void $name(__global float* parents, __global int* parentIndex, __global float* left, __global float* right, __global float* ruleScores, __global const mask_t* masks, int numRows, int cellsToDo) {
         int row = get_global_id(0);
         if(row < cellsToDo) {
           const mask_t mask = masks[parentIndex[row]];
