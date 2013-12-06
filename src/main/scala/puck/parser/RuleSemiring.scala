@@ -10,6 +10,7 @@ trait RuleSemiring extends Serializable {
 
   def fromLogSpace(float: Float): Float
   def mad(id: String, arg1: String, arg2: String):String
+
 }
 
 
