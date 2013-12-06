@@ -3,13 +3,14 @@ package puck.parser.gen
 import epic.trees.{UnaryRule, BinaryRule}
 import com.nativelibs4java.opencl.{CLKernel, CLContext}
 import puck.parser.{RuleStructure, SymId, RuleSemiring}
+import com.typesafe.scalalogging.slf4j.Logging
 
 /**
  * TODO
  *
  * @author dlwh
  **/
-class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring: RuleSemiring) extends GenRuleMultiply[C, L] {
+class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring: RuleSemiring) extends GenRuleMultiply[C, L] with Logging {
 
   case class Variable(name: String, descr: String) {
 
@@ -39,7 +40,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     val checkMaskString = maskStrings.mkString("if (!((", ") | (", ")) ) return;")
 
       val text = structure.maskHeader + s"""
-    __kernel void $name(__global float* parents, __global int* parentIndex, __global float* left, __global float* right, __constant float* ruleScores, __global const mask_t* masks, int numRows, int cellsToDo) {
+    __kernel void $name(__global float* parents, __global int* parentIndex, __global float* left, __global float* right, __global float* ruleScores, __global const mask_t* masks, int numRows, int cellsToDo) {
         int row = get_global_id(0);
         if(row < cellsToDo) {
           const mask_t mask = masks[parentIndex[row]];
@@ -52,7 +53,10 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
 
     """
     val prog = cl.createProgram(text)
-//    prog.addBuildOption("-cl-nv-verbose")
+    prog.addBuildOption("-cl-nv-verbose")
+
+    logger.info(s"Compiling $name")
+    println(s"Compiling $name")
     prog.build().createKernels().head
   }
 
