@@ -40,7 +40,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     val checkMaskString = maskStrings.mkString("if (!((", ") | (", ")) ) return;")
 
       val text = structure.maskHeader + s"""
-    __kernel void $name(__global float* parents, __global int* parentIndex, __global float* left, __global float* right, __global float* ruleScores, __global const mask_t* masks, int numRows, int cellsToDo) {
+    __kernel void $name(__global float* parents, __global int* parentIndex, __global float* left, __global float* right, __global const mask_t* masks, int numRows, int cellsToDo) {
         int row = get_global_id(0);
         if(row < cellsToDo) {
           const mask_t mask = masks[parentIndex[row]];
@@ -53,7 +53,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
 
     """
     val prog = cl.createProgram(text)
-    prog.addBuildOption("-cl-nv-verbose")
+    //prog.addBuildOption("-cl-nv-verbose")
 
     logger.info(s"Compiling $name")
     println(s"Compiling $name")
@@ -74,7 +74,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
         val jointName = s"joint_${lc}_${rc}"
         sb ++= s"            float $jointName = ${semiring.times(s"leftChild_$lc", s"rightChild_$rc")};\n"
         for ((r, id) <- rrr) {
-          sb ++= s"            ${accumulator(r.parent.gpu).repr} = ${semiring.mad(accumulator(r.parent.gpu).repr, jointName, s"ruleScores[$id]")};\n"
+          sb ++= s"            ${accumulator(r.parent.gpu).repr} = ${semiring.mad(accumulator(r.parent.gpu).repr, jointName, floatToString(structure.scores(id)))};\n"
         }
       }
       sb ++= "         }\n"
@@ -87,7 +87,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     val parents = rulePartition.map(_._1.parent).toSet
     val parentVariables = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
     val text = s"""
-    __kernel void $name(__global float* parents, __global float* children, __global float* ruleScores, int numRows, int cellsToDo) {
+    __kernel void $name(__global float* parents, __global float* children, int numRows, int cellsToDo) {
         int row = get_global_id(0);
         if(row < cellsToDo) {
           ${parentVariables.values.map(_.declare).mkString("\n        ")}
@@ -107,7 +107,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
       val child = s"child_$lc"
       sb ++= s"        float $child = children[numRows * $lc + row];\n"
       for ((r, id) <- rr) {
-        sb ++= s"            ${accumulator(r.parent.gpu).repr} = ${semiring.mad(accumulator(r.parent.gpu).repr, child, s"ruleScores[$id]")};\n"
+        sb ++= s"            ${accumulator(r.parent.gpu).repr} = ${semiring.mad(accumulator(r.parent.gpu).repr, child,  floatToString(structure.scores(id)))};\n"
       }
     }
     sb.result()

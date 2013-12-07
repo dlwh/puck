@@ -96,7 +96,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     devOutside.release()
     devLeft.release()
     devRight.release()
-    parsers.foreach(_.release())
     queue.release()
     devParentPtrs.release()
     devLeftPtrs.release()
@@ -117,8 +116,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   val (numWorkCells:Int, numChartCells: Int) = {
     val sizeOfFloat = 4
-    val fractionOfMemoryToUse = 0.8 // slack!
-    val amountOfMemory = ((context.getDevices.head.getGlobalMemSize min maxAllocSize) * fractionOfMemoryToUse).toInt - data.map(_.ruleScores.length).sum * sizeOfFloat - maxSentencesPerBatch * 3 * 4;
+    val fractionOfMemoryToUse = 0.7 // slack!
+    val amountOfMemory = ((context.getDevices.head.getGlobalMemSize min maxAllocSize) * fractionOfMemoryToUse).toInt  - maxSentencesPerBatch * 3 * 4;
     val maxPossibleNumberOfCells = ((amountOfMemory / sizeOfFloat) / (cellSize + 4 + maskSize)).toInt // + 4 for each kind of offset
     // We want numGPUCells and numGPUChartCells to be divisible by 16, so that we get aligned strided access:
     //       On devices of compute capability 1.0 or 1.1, the k-th thread in a half warp must access the
@@ -141,7 +140,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     (plrSize * 16, (baseSize * relativeSizeOfChartsToP + extra) * 16)
   }
 
-  println(numWorkCells, numChartCells, (3 * numWorkCells + numChartCells) * cellSize * 4, context.getMaxMemAllocSize, data.map(_.ruleScores.length))
+  println(numWorkCells, numChartCells, (3 * numWorkCells + numChartCells) * cellSize * 4, context.getMaxMemAllocSize)
 
 
   // On the Device side we have 4 Matrices:
@@ -172,9 +171,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   private class ActualParser(val data: CLParserData[C, L, W]) {
     import data._
-    val devRules = context.createFloatBuffer(CLMem.Usage.Input, FloatBuffer.wrap(ruleScores), true)
 
-    def release() { devRules.release() }
 
     def _zero: Float = data.semiring.zero
 
@@ -583,7 +580,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
         val zeroParent = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
         val kEvents: IndexedSeq[CLEvent] = kernels.map{ kernel =>
-          kernel.setArgs(devParent.data.safeBuffer, devParentPtrs, devLeft.data.safeBuffer, devRight.data.safeBuffer, parser.devRules, maskCharts.data.safeBuffer, Integer.valueOf(numWorkCells), Integer.valueOf(offset))
+          kernel.setArgs(devParent.data.safeBuffer, devParentPtrs, devLeft.data.safeBuffer, devRight.data.safeBuffer, maskCharts.data.safeBuffer, Integer.valueOf(numWorkCells), Integer.valueOf(offset))
           kernel.enqueueNDRange(queue, Array(offset), evTransLeft, evTransRight, zeroParent, evWriteDevParent) profileIn binaryEvents
         }
 
@@ -687,7 +684,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), scoreMatrix, devLeftPtrs, offset, wevl) profileIn transferEvents
 
         val endEvents = kernels.map{ kernel  =>
-          kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, parser.devRules, Integer.valueOf(numWorkCells), Integer.valueOf(offset))
+          kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, Integer.valueOf(numWorkCells), Integer.valueOf(offset))
           kernel.enqueueNDRange(queue, Array(offset), wl, zz) profileIn unaryEvents
         }
 
@@ -882,7 +879,6 @@ object CLParser extends Logging {
 case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
                                  structure: RuleStructure[C, L],
                                  semiring: RuleSemiring,
-                                 ruleScores: Array[Float],
                                  inside: CLInsideKernels,
                                  outside: CLOutsideKernels,
                                  masks: CLMaskKernels,
@@ -901,7 +897,6 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     outside.write(zout)
     util.write(zout)
     masks.write(zout)
-    ZipUtil.serializedEntry(zout, "scores", ruleScores)
     zout.close()
   }
 }
@@ -909,17 +904,17 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 object CLParserData {
   def make[C, L, W](grammar: SimpleRefinedGrammar[C, L, W])(implicit context: CLContext) = {
     implicit val viterbi = ViterbiRuleSemiring
-    val structure = new RuleStructure(grammar.refinements, grammar.refinedGrammar)
+    val ruleScores: Array[Float] = Array.tabulate(grammar.refinedGrammar.index.size){r =>
+      val score = grammar.ruleScoreArray(grammar.refinements.rules.project(r))(grammar.refinements.rules.localize(r))
+      viterbi.fromLogSpace(score.toFloat)
+    }
+    val structure = new RuleStructure(grammar.refinements, grammar.refinedGrammar, ruleScores)
     val inside = CLInsideKernels.make(structure)
     val outside =  CLOutsideKernels.make(structure)
     val util = CLParserUtils.make(structure)
     val masks = CLMaskKernels.make(structure)
 
-    val ruleScores: Array[Float] = Array.tabulate(grammar.refinedGrammar.index.size){r =>
-      val score = grammar.ruleScoreArray(grammar.refinements.rules.project(r))(grammar.refinements.rules.localize(r))
-      viterbi.fromLogSpace(score.toFloat)
-    }
-    new CLParserData(grammar, structure, viterbi, ruleScores, inside, outside, masks, util, viterbi.plusIsIdempotent)
+    new CLParserData(grammar, structure, viterbi, inside, outside, masks, util, viterbi.plusIsIdempotent)
   }
 
   def read[C, L, W](file: ZipFile)(implicit context: CLContext) = {
@@ -930,9 +925,8 @@ object CLParserData {
     val outside = CLOutsideKernels.read(file)
     val util = CLParserUtils.read(file)
     val masks = CLMaskKernels.read(file)
-    val scores = ZipUtil.deserializeEntry[Array[Float]](file.getInputStream(file.getEntry("scores")))
 
-    CLParserData(gr, structure, semiring, scores, inside, outside, masks, util, semiring.plusIsIdempotent)
+    CLParserData(gr, structure, semiring, inside, outside, masks, util, semiring.plusIsIdempotent)
   }
 }
 

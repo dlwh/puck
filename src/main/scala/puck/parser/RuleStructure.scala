@@ -10,7 +10,7 @@ import breeze.util.Index
  * @author dlwh
  */
 @SerialVersionUID(1L)
-case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: BaseGrammar[L]) {
+case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: BaseGrammar[L], scores: Array[Float]) {
 
   def numCoarseSyms = refinements.labels.coarseIndex.size
 
@@ -102,9 +102,9 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   def labelIndexToTerminal(label: Int) = reverseIndex(label)
   def labelIndexToNonterminal(label: Int) = reverseIndex(label)
 
-  def clusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(projectedNonterminalMap, 100, 200)//55)//new ILPGrammarClusterer(12, 55)
+  def clusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(projectedNonterminalMap, 100, 100)//55)//new ILPGrammarClusterer(12, 55)
   def unaryClusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(projectedNonterminalMap, 100, 200)//55)//new ILPGrammarClusterer(12, 55)
-  def termParentClusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(projectedTerminalMap, 100, 200)//55)//new ILPGrammarClusterer(12, 55)
+  def termParentClusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(projectedTerminalMap, 100, 100)//55)//new ILPGrammarClusterer(12, 55)
 
   lazy val partitionsParent  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(nontermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
   lazy val partitionsLeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(nontermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
