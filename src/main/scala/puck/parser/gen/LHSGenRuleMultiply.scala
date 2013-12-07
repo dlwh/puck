@@ -25,6 +25,21 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     case x => s"${x}f"
   }
 
+  def writeParent = {
+    """ typedef union { int old; float oldf; } intbox;
+      |
+      |inline void write_parent(volatile __global float* loc, float value) {
+      |  intbox old;
+      |  old.oldf = value;
+      |
+      |  // TODO if not idempotent, have to do operator here.
+      |  //while((old.old = atomic_cmpxchg((volatile __global int*)loc, old.old, *(int*)&value)) !=  *(int*)&value) value = max(value, old.oldf);
+      |  *loc = value;
+      |}
+    """.stripMargin
+
+  }
+
   def binaryRuleApplication(rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLKernel = {
     val parents = rulePartition.map(_._1.parent).toSet
     val parentVariables: Map[Int, Variable] = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
@@ -39,6 +54,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     val checkMaskString = maskStrings.mkString("if (!((", ") | (", ")) ) return;")
 
       val text = structure.maskHeader + s"""
+      $writeParent
     __kernel void $name(__global float* parents, __global int* parentIndex, __global float* left, __global float* right, __global float* ruleScores, __global const mask_t* masks, int numRows, int cellsToDo) {
         int row = get_global_id(0);
         if(row < cellsToDo) {
@@ -46,7 +62,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
           $checkMaskString
           ${parentVariables.values.map(_.declare).mkString("\n        ")}
           ${coreRuleLoop(rulePartition, parentVariables)}
-          ${{for( (id,v) <- parentVariables) yield s"parents[numRows * $id + row] = ${v.repr};"}.mkString("\n        ")}
+          ${{for( (id,v) <- parentVariables) yield s"write_parent(parents + numRows * $id + row, ${v.repr});"}.mkString("\n        ")}
         }
     }
 
