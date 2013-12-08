@@ -773,7 +773,7 @@ object CLParser extends Logging {
     out.close()
 
     implicit val context = if (useGPU) {
-      val gpu = JavaCL.listPlatforms.flatMap(_.listGPUDevices(true)).head
+      val gpu = JavaCL.listPlatforms.flatMap(_.listGPUDevices(true)).sortBy(d => d.toString.contains("GeForce") || d.toString.toLowerCase.contains("nvidia")).last
       JavaCL.createContext(new java.util.HashMap(), gpu)
     } else {
       //      val gpu = JavaCL.listPlatforms.flatMap(_.listGPUDevices(true)).last
