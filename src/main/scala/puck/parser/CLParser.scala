@@ -929,7 +929,3 @@ object CLParserData {
     CLParserData(gr, structure, semiring, inside, outside, masks, util, semiring.plusIsIdempotent)
   }
 }
-
-
-
-
