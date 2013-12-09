@@ -17,8 +17,8 @@ case class CLOutsideKernels(outside_L_NNKernels: CLBinaryRuleUpdater,
                             outside_R_TNKernels: CLBinaryRuleUpdater,
                             outside_L_TTKernels: CLBinaryRuleUpdater,
                             outside_R_TTKernels: CLBinaryRuleUpdater,
-                            outsideNUKernels: IndexedSeq[CLKernel],
-                            outsideTUKernels: IndexedSeq[CLKernel]) {
+                            outsideNUKernels: CLUnaryRuleUpdater,
+                            outsideTUKernels: CLUnaryRuleUpdater) {
 
   def write(out: ZipOutputStream) {
      outside_L_NNKernels.write("outside_L_NN", out)
@@ -29,8 +29,8 @@ case class CLOutsideKernels(outside_L_NNKernels: CLBinaryRuleUpdater,
      outside_R_TNKernels.write("outside_R_TN", out)
      outside_L_TTKernels.write("outside_L_TT", out)
      outside_R_TTKernels.write("outside_R_TT", out)
-    ZipUtil.addKernelSet(out, "outsideNU", outsideNUKernels)
-    ZipUtil.addKernelSet(out, "outsideTU", outsideTUKernels)
+    outsideNUKernels.write("outsideNU", out)
+    outsideTUKernels.write("outsideTU", out)
   }
 }
 
@@ -45,8 +45,8 @@ object CLOutsideKernels {
     val outside_R_TN = CLBinaryRuleUpdater.read(in, "outside_R_TN")
     val outside_L_TT = CLBinaryRuleUpdater.read(in, "outside_L_TT")
     val outside_R_TT = CLBinaryRuleUpdater.read(in, "outside_R_TT")
-    val outsideNU = ZipUtil.readKernelSet(in, "outsideNU")
-    val outsideTU = ZipUtil.readKernelSet(in, "outsideTU")
+    val outsideNU = CLUnaryRuleUpdater.read(in, "outsideNU")
+    val outsideTU = CLUnaryRuleUpdater.read(in, "outsideTU")
     CLOutsideKernels(outside_L_NN, outside_R_NN,
       outside_L_NT, outside_R_NT,
       outside_L_TN, outside_R_TN,
@@ -92,13 +92,9 @@ object CLOutsideKernels {
     val outside_R_TTKernels =
       parserGen.binaryRuleApplication(structure.bothTermRules.map(rotateRightToParent), "outside_R_tt_binaries")
 
-    val outsideNUKernels = structure.nontermUnariesChild.zipWithIndex.map { case (partition, i) =>
-      parserGen.unaryRuleApplication(partition.map(rotateChildToParent), "outside_nn_unaries"+i)
-    }
+    val outsideNUKernels =  parserGen.unaryRuleApplication(structure.unaryRules.map(rotateChildToParent), "outside_nn_unaries")
 
-    val outsideTUKernels = structure.termUnariesChild.zipWithIndex.map { case (partition, i) =>
-      parserGen.unaryRuleApplication(partition.map(rotateChildToParent), "outside_nt_unaries"+i)
-    }
+    val outsideTUKernels =  parserGen.unaryRuleApplication(structure.unaryTermRules.map(rotateChildToParent), "outside_nt_unaries")
 
     CLOutsideKernels(outside_L_NNKernels,
       outside_R_NNKernels,

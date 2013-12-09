@@ -11,16 +11,16 @@ case class CLInsideKernels(insideNNKernels: CLBinaryRuleUpdater,
                            insideNTKernels: CLBinaryRuleUpdater,
                            insideTNKernels: CLBinaryRuleUpdater,
                            insideTTKernels: CLBinaryRuleUpdater,
-                           insideNUKernels: IndexedSeq[CLKernel],
-                           insideTUKernels: IndexedSeq[CLKernel]) {
+                           insideNUKernels: CLUnaryRuleUpdater,
+                           insideTUKernels: CLUnaryRuleUpdater) {
 
   def write(out: ZipOutputStream) {
      insideNTKernels.write("insideNT", out)
      insideNNKernels.write("insideNN", out)
      insideTNKernels.write("insideTN", out)
      insideTTKernels.write("insideTT", out)
-    ZipUtil.addKernelSet(out, "insideNU", insideNUKernels)
-    ZipUtil.addKernelSet(out, "insideTU", insideTUKernels)
+    insideNUKernels.write("insideNU", out)
+    insideTUKernels.write("insideTU", out)
   }
 }
 
@@ -30,8 +30,8 @@ object CLInsideKernels {
     val insideNN = CLBinaryRuleUpdater.read(in, "insideNN")
     val insideTN = CLBinaryRuleUpdater.read(in, "insideTN")
     val insideTT = CLBinaryRuleUpdater.read(in, "insideTT")
-    val insideNU = ZipUtil.readKernelSet(in, "insideNU")
-    val insideTU = ZipUtil.readKernelSet(in, "insideTU")
+    val insideNU = CLUnaryRuleUpdater.read(in, "insideNU")
+    val insideTU = CLUnaryRuleUpdater.read(in, "insideTU")
     CLInsideKernels(insideNN, insideNT, insideTN, insideTT, insideNU, insideTU)
   }
 
@@ -47,13 +47,9 @@ object CLInsideKernels {
 
     val insideTTKernels =  parserGen.binaryRuleApplication(structure.bothTermRules, "inside_tt_binaries")
 
-    val insideNUKernels = structure.nontermUnariesParent.zipWithIndex.map { case (partition, i) =>
-      parserGen.unaryRuleApplication(partition, "inside_n_unaries"+i)
-    }
+    val insideNUKernels =  parserGen.unaryRuleApplication(structure.unaryRules, "inside_n_unaries")
 
-    val insideTUKernels = structure.termUnariesParent.zipWithIndex.map { case (partition, i) =>
-      parserGen.unaryRuleApplication(partition, "inside_t_unaries"+i)
-    }
+    val insideTUKernels =  parserGen.unaryRuleApplication(structure.unaryTermRules, "inside_t_unaries")
 
     CLInsideKernels(insideNNKernels,
       insideNTKernels,

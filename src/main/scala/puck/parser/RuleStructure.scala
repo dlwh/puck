@@ -102,16 +102,6 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   def labelIndexToTerminal(label: Int) = reverseIndex(label)
   def labelIndexToNonterminal(label: Int) = reverseIndex(label)
 
-  def clusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer()//55)//new ILPGrammarClusterer(12, 55)
-  def unaryClusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer()//55)//new ILPGrammarClusterer(12, 55)
-  def termParentClusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer()//55)//new ILPGrammarClusterer(12, 55)
-
-  lazy val nontermUnariesParent : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = clusterer.partitionUnaries(unaryRules).toIndexedSeq
-  lazy val nontermUnariesChild : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = clusterer.partitionUnaries(unaryRules).toIndexedSeq
-
-  lazy val termUnariesParent : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = unaryClusterer.partitionUnaries(unaryTermRules).toIndexedSeq
-  lazy val termUnariesChild : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = termParentClusterer.partitionUnaries(unaryTermRules).toIndexedSeq
-
   def numRules = grammar.index.size
 
   // TODO this really shouldn't be here:

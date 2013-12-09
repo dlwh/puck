@@ -110,11 +110,13 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
 
   }
 
-  def unaryRuleApplication(rulePartition: IndexedSeq[(UnaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLKernel = {
-    val parents = rulePartition.map(_._1.parent).toSet
-    val parentVariables = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
-    val text = s"""
-    __kernel void $name(__global float* parents, __global float* children, int numRows, int cellsToDo) {
+  def unaryRuleApplication(rules: IndexedSeq[(UnaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLUnaryRuleUpdater = {
+    val partitions  : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = clusterer.partitionUnaries(rules).toIndexedSeq
+    val kernels = partitions.zipWithIndex.map { case (rulePartition, partitionIndex) =>
+      val parents = rulePartition.map(_._1.parent).toSet
+      val parentVariables = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
+      val text = s"""
+    __kernel void ${name}_$partitionIndex(__global float* parents, __global float* children, int numRows, int cellsToDo) {
         int row = get_global_id(0);
         if(row < cellsToDo) {
           ${parentVariables.values.map(_.declare).mkString("\n        ")}
@@ -124,7 +126,9 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     }
 
     """
-    cl.createProgram(text).build().createKernels.head
+      cl.createProgram(text).build().createKernels.head
+    }
+    CLUnaryRuleUpdater(kernels)
   }
 
   private def coreUnaryRuleLoop(rulePartition: IndexedSeq[(UnaryRule[SymId[C, L]], Int)], accumulator: Map[Int, Variable])(implicit cl: CLContext) = {

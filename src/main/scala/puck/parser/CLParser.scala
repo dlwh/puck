@@ -655,7 +655,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   }
 
   private class UnaryUpdateManager(parser: ActualParser,
-                                   kernels: IndexedSeq[CLKernel],
+                                   kernels: CLUnaryRuleUpdater,
                                    scoreMatrix: CLMatrix[Float],
                                    parentChart: (Batch,Int)=>ChartHalf,
                                    childChart: (Batch,Int)=>ChartHalf) {
@@ -682,10 +682,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
         val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), scoreMatrix, devLeftPtrs, offset, wevl) profileIn transferEvents
 
-        val endEvents = kernels.map{ kernel  =>
-          kernel.setArgs(devParent.data.safeBuffer, devLeft.data.safeBuffer, Integer.valueOf(numWorkCells), Integer.valueOf(offset))
-          kernel.enqueueNDRange(queue, Array(offset), wl, zz) profileIn unaryEvents
-        }
+        val endEvents = kernels.update(devParent(0 until offset, ::),
+          devLeft(0 until offset, ::),  wl, zz) map  (_ profileIn unaryEvents)
 
 
         val ev2 = devParentPtrs.writeArray(queue, pArray, offset, ev:_*) profileIn hdTransferEvents
