@@ -14,7 +14,6 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
 
   def numCoarseSyms = refinements.labels.coarseIndex.size
 
-  def maskSize = puck.roundUpToMultipleOf(numCoarseSyms, 32) / 32
 
   val (
   nontermIndex,
@@ -104,28 +103,7 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
 
   def numRules = grammar.index.size
 
-  // TODO this really shouldn't be here:
-  def maskHeader =  """#define NUM_FIELDS """ + maskSize + """
 
-  typedef struct { int fields[NUM_FIELDS]; } mask_t;
-
-  inline void set_bit(mask_t* mask, int bit, int shouldSet) {
-    int field = (bit/32);
-    int modulus = bit%32;
-    mask->fields[field] = mask->fields[field] | (shouldSet<<(modulus));
-  }
-
-  /* Intel gets sad from this one?
-  inline int is_set(mask_t* mask, int bit) {
-    int field = (bit/32);
-    int modulus = bit%32;
-    return mask->fields[field] & (1<<(modulus));
-  }
-  */
-
-   #define is_set(mask, bit)  ((mask)->fields[(bit)/32] & (1<<((bit)%32)))
-
-                                                           """
 }
 
 final case class SymId[C, L](coarseSym: C, fineSym: L, system: Int, gpu: Int, isTerminal: Boolean)

@@ -883,7 +883,7 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
                                  isViterbi: Boolean) {
 
   def numSyms = structure.nontermIndex.size max structure.termIndex.size
-  def maskSize = structure.maskSize
+  def maskSize = masks.maskSize
 
   def write(out: OutputStream) {
     val zout = new ZipOutputStream(out)

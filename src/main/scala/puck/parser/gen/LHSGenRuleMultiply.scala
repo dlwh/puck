@@ -14,39 +14,8 @@ import puck.parser.RuleStructure
  *
  * @author dlwh
  **/
+
 class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring: RuleSemiring) extends GenRuleMultiply[C, L] with Logging {
-
-  case class Variable(name: String, descr: String) {
-
-    def declare = s"float $name = ${floatToString(semiring.zero)}; // $descr"
-
-    def repr = name
-  }
-
-  private def floatToString(x: Float) = x match {
-    case Float.PositiveInfinity => "INFINITY"
-    case Float.NegativeInfinity => "-INFINITY"
-    case x if x.isNaN => "NAN"
-    case x => s"${x}f"
-  }
-
-  def writeParent = {
-    """ typedef union { int old; float oldf; } intbox;
-      |
-      |inline void write_parent(volatile __global float* loc, float value) {
-      |  intbox old;
-      |  old.oldf = value;
-      |
-      |  // TODO if not idempotent, have to do operator here.
-      |  //while((old.old = atomic_cmpxchg((volatile __global int*)loc, old.old, *(int*)&value)) !=  *(int*)&value) value = max(value, old.oldf);
-      |  *loc = value;
-      |}
-    """.stripMargin
-
-  }
-
-  def clusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(numRestarts = 100, maxPartitionLabelSize = 100)//55)//new ILPGrammarClusterer(12, 55)
-  def unaryClusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(numRestarts = 100, maxPartitionLabelSize = 200)//55)//new ILPGrammarClusterer(12, 55)
 
   def binaryRuleApplication(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLBinaryRuleUpdater = {
     val partitions  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(rules).toIndexedSeq
@@ -78,7 +47,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     """
 
     }
-    val text = structure.maskHeader + "\n" + writeParent + "\n" + kernelTexts.mkString("\n\n")
+    val text = CLMaskKernels.maskHeader(structure) + "\n" + writeParent + "\n" + kernelTexts.mkString("\n\n")
     val prog = cl.createProgram(text)
     logger.info(s"Compiling $name")
     println(s"Compiling $name")
@@ -144,5 +113,37 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
   }
 
 
+
+    case class Variable(name: String, descr: String) {
+
+    def declare = s"float $name = ${floatToString(semiring.zero)}; // $descr"
+
+    def repr = name
+  }
+
+  private def floatToString(x: Float) = x match {
+    case Float.PositiveInfinity => "INFINITY"
+    case Float.NegativeInfinity => "-INFINITY"
+    case x if x.isNaN => "NAN"
+    case x => s"${x}f"
+  }
+
+  def writeParent = {
+    """ typedef union { int old; float oldf; } intbox;
+      |
+      |inline void write_parent(volatile __global float* loc, float value) {
+      |  intbox old;
+      |  old.oldf = value;
+      |
+      |  // TODO if not idempotent, have to do operator here.
+      |  //while((old.old = atomic_cmpxchg((volatile __global int*)loc, old.old, *(int*)&value)) !=  *(int*)&value) value = max(value, old.oldf);
+      |  *loc = value;
+      |}
+    """.stripMargin
+
+  }
+
+  def clusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(numRestarts = 100, maxPartitionLabelSize = 100)//55)//new ILPGrammarClusterer(12, 55)
+  def unaryClusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(numRestarts = 100, maxPartitionLabelSize = 200)//55)//new ILPGrammarClusterer(12, 55)
 
 }
