@@ -4,21 +4,18 @@ import scala.collection.{immutable, mutable}
 import collection.immutable.BitSet
 import epic.trees.BinaryRule
 
-import GrammarClusterer._
 import com.typesafe.scalalogging.slf4j.Logging
 
-class AgglomerativeGrammarClusterer[C, L](grouper: Int=>Int = identity, numRestarts: Int = 100, maxPartitionLabelSize: Int = 128) extends GrammarClusterer[C, L] with Logging {
+class AgglomerativeGrammarClusterer[C, L](numRestarts: Int = 100, maxPartitionLabelSize: Int = 128) extends GrammarClusterer[C, L] with Logging {
 
 
-  def partition(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)],
-                targetLabel: TargetLabel = Parent): IndexedSeq[immutable.IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = {
-
-
-    val clusters_x: Map[Int, IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = rules.groupBy(r => grouper(targetLabel.target(r._1)))
+  def partition(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)]): IndexedSeq[immutable.IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = {
+    val clusters_x: Map[Any, IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = rules.groupBy(r => r._1.parent.gpu)
 
     val initialClusters = clusters_x.map { case (p:Int, r: IndexedSeq[(BinaryRule[SymId[C, L]], Int)]) =>
-      val (g1, g2) = r.map(rr => targetLabel.clusterPieces(rr._1)).unzip
-      p -> Partition(BitSet(p), g1.reduce( _ ++ _), g2.reduce(_ ++ _))
+      val (g1, g2) = r.map(rr => BitSet(rr._1.left.gpu) -> BitSet(rr._1.right.gpu)).unzip
+      val parents = BitSet.empty ++ r.map(rr => rr._1.parent.gpu)
+      p -> Partition(parents, g1.reduce( _ ++ _), g2.reduce(_ ++ _))
     }
 
     val clusters = (0 until numRestarts).par.aggregate(restart(initialClusters, maxPartitionLabelSize, 1.0))({ (c1, seed) =>
@@ -29,7 +26,7 @@ class AgglomerativeGrammarClusterer[C, L](grouper: Int=>Int = identity, numResta
       (c1, c2) => if (c1.values.map(_.badness).sum < c2.values.map(_.badness).sum) c1 else c2
     })
 
-    println("Best badness: " + targetLabel  + " " + clusters.values.iterator.map(_.badness).sum)
+    println("Best badness: " +  clusters.values.iterator.map(_.badness).sum)
 
     var p = 0
     for( Partition(targets, g1, g2, _) <- clusters.values.iterator) {
@@ -47,7 +44,7 @@ class AgglomerativeGrammarClusterer[C, L](grouper: Int=>Int = identity, numResta
 
   private def restart(initialClusters: Map[Int, Partition], maxPartitionLabelSize: Int, random: =>Double) = {
 
-    var clusters = initialClusters.map { case (k,v) => BitSet(k) -> v}
+    var clusters = initialClusters.map { case (k,v) => v.targets -> v}
 
     def remove(p: Partition, t: Int) = {
       (for(t2 <- p.targets if t != t2) yield initialClusters(t2)).reduceLeft(_.merge(_, maxPartitionLabelSize).get)

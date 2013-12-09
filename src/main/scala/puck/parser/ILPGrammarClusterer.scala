@@ -1,16 +1,15 @@
 package puck.parser
 
+/**
 import epic.trees.BinaryRule
 import puck.parser.GrammarClusterer.TargetLabel
 import scala.collection.immutable
 import breeze.optimize.linear.LinearProgram
 import scala.collection.mutable.ArrayBuffer
 
-/**
  * TODO
  *
  * @author dlwh
- **/
 class ILPGrammarClusterer[C, L](maxNumPartitions: Int = 32, partitionBadnessThreshold: Int = 55) extends GrammarClusterer[C, L] {
   /**
    * Solve an ILP that basically says:
@@ -97,3 +96,4 @@ class ILPGrammarClusterer[C, L](maxNumPartitions: Int = 32, partitionBadnessThre
     parentPartitions.map(targetsInPartition => targetsInPartition.flatMap(groupedRules).toIndexedSeq).toIndexedSeq.filter(_.nonEmpty)
   }
 }
+ */

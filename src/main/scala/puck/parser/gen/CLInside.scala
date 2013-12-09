@@ -39,21 +39,13 @@ object CLInsideKernels {
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
 //    val parserGen = new LHSGenRuleMultiply[C, L](structure)
     val parserGen = new LHSGenRuleMultiply[C, L](structure)
-    val insideNNKernels = structure.partitionsParent.zipWithIndex.map { case(partition, i) =>
-      parserGen.binaryRuleApplication(partition, "inside_nn_binaries_"+i)
-    }
+    val insideNNKernels =  parserGen.binaryRuleApplication(structure.nontermRules, "inside_nn_binaries")
 
-    val insideNTKernels = structure.partitionsRightTermRules.zipWithIndex.map { case (partition, i) =>
-      parserGen.binaryRuleApplication(partition, "inside_nt_binaries_"+i)
-    }
+    val insideNTKernels =  parserGen.binaryRuleApplication(structure.rightTermRules, "inside_nt_binaries")
 
-    val insideTNKernels = structure.partitionsLeftTermRules.zipWithIndex.map { case (partition, i) =>
-      parserGen.binaryRuleApplication(partition, "inside_tn_binaries_"+i)
-    }
+    val insideTNKernels =  parserGen.binaryRuleApplication(structure.leftTermRules, "inside_tn_binaries")
 
-    val insideTTKernels = structure.partitionsBothTermRules.zipWithIndex.map { case (partition, i) =>
-      parserGen.binaryRuleApplication(partition, "inside_tt_binaries_"+i)
-    }
+    val insideTTKernels =  parserGen.binaryRuleApplication(structure.bothTermRules, "inside_tt_binaries")
 
     val insideNUKernels = structure.nontermUnariesParent.zipWithIndex.map { case (partition, i) =>
       parserGen.unaryRuleApplication(partition, "inside_n_unaries"+i)
@@ -63,10 +55,10 @@ object CLInsideKernels {
       parserGen.unaryRuleApplication(partition, "inside_t_unaries"+i)
     }
 
-    CLInsideKernels(new CLBinaryRuleUpdater(insideNNKernels),
-      new CLBinaryRuleUpdater(insideNTKernels),
-      new CLBinaryRuleUpdater(insideTNKernels),
-      new CLBinaryRuleUpdater(insideTTKernels),
+    CLInsideKernels(insideNNKernels,
+      insideNTKernels,
+      insideTNKernels,
+      insideTTKernels,
       insideNUKernels,
       insideTUKernels)
   }

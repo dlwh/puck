@@ -102,31 +102,15 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   def labelIndexToTerminal(label: Int) = reverseIndex(label)
   def labelIndexToNonterminal(label: Int) = reverseIndex(label)
 
-  def clusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(projectedNonterminalMap, 100, 100)//55)//new ILPGrammarClusterer(12, 55)
-  def unaryClusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(projectedNonterminalMap, 100, 200)//55)//new ILPGrammarClusterer(12, 55)
-  def termParentClusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(projectedTerminalMap, 100, 100)//55)//new ILPGrammarClusterer(12, 55)
+  def clusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer()//55)//new ILPGrammarClusterer(12, 55)
+  def unaryClusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer()//55)//new ILPGrammarClusterer(12, 55)
+  def termParentClusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer()//55)//new ILPGrammarClusterer(12, 55)
 
-  lazy val partitionsParent  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(nontermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
-  lazy val partitionsLeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(nontermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
-  lazy val partitionsRightChild : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(nontermRules, targetLabel = GrammarClusterer.RightChild).toIndexedSeq
+  lazy val nontermUnariesParent : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = clusterer.partitionUnaries(unaryRules).toIndexedSeq
+  lazy val nontermUnariesChild : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = clusterer.partitionUnaries(unaryRules).toIndexedSeq
 
-  lazy val partitionsLeftTermRules            : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(leftTermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
-  lazy val partitionsLeftTermRules_LeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = termParentClusterer.partition(leftTermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
-  lazy val partitionsLeftTermRules_RightChild : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(leftTermRules, targetLabel = GrammarClusterer.RightChild).toIndexedSeq
-
-  lazy val partitionsRightTermRules            : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(rightTermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
-  lazy val partitionsRightTermRules_LeftChild  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(rightTermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
-  lazy val partitionsRightTermRules_RightChild : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = termParentClusterer.partition(rightTermRules, targetLabel = GrammarClusterer.RightChild).toIndexedSeq
-
-  lazy val partitionsBothTermRules             : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(bothTermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
-  lazy val partitionsBothTermRules_LeftChild   : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = termParentClusterer.partition(bothTermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
-  lazy val partitionsBothTermRules_RightChild  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = termParentClusterer.partition(bothTermRules, targetLabel = GrammarClusterer.RightChild).toIndexedSeq
-
-  lazy val nontermUnariesParent : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = clusterer.partitionUnaries(unaryRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
-  lazy val nontermUnariesChild : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = clusterer.partitionUnaries(unaryRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
-
-  lazy val termUnariesParent : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = unaryClusterer.partitionUnaries(unaryTermRules, targetLabel = GrammarClusterer.Parent).toIndexedSeq
-  lazy val termUnariesChild : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = termParentClusterer.partitionUnaries(unaryTermRules, targetLabel = GrammarClusterer.LeftChild).toIndexedSeq
+  lazy val termUnariesParent : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = unaryClusterer.partitionUnaries(unaryTermRules).toIndexedSeq
+  lazy val termUnariesChild : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = termParentClusterer.partitionUnaries(unaryTermRules).toIndexedSeq
 
   def numRules = grammar.index.size
 

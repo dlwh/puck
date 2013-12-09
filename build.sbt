@@ -54,3 +54,6 @@ excludedJars in assembly <<= (fullClasspath in assembly) map { cp =>
   cp filter {_.data.getName.contains("dx-")}
 }
 
+
+testOptions in Test += Tests.Argument("-oDF")
+

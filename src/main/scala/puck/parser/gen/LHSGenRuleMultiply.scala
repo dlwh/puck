@@ -2,8 +2,12 @@ package puck.parser.gen
 
 import epic.trees.{UnaryRule, BinaryRule}
 import com.nativelibs4java.opencl.{CLKernel, CLContext}
-import puck.parser.{RuleStructure, SymId, RuleSemiring}
+import puck.parser._
 import com.typesafe.scalalogging.slf4j.Logging
+import epic.trees.BinaryRule
+import epic.trees.UnaryRule
+import puck.parser.SymId
+import puck.parser.RuleStructure
 
 /**
  * TODO
@@ -41,22 +45,27 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
 
   }
 
-  def binaryRuleApplication(rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLKernel = {
-    val parents = rulePartition.map(_._1.parent).toSet
-    val parentVariables: Map[Int, Variable] = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
+  def clusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(numRestarts = 100, maxPartitionLabelSize = 100)//55)//new ILPGrammarClusterer(12, 55)
+  def unaryClusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(numRestarts = 100, maxPartitionLabelSize = 200)//55)//new ILPGrammarClusterer(12, 55)
 
-    // set up the mask
-    val maskStrings = for {
-      (field, parentsInField) <- parents
-                                .map(s => structure.refinements.labels.project(s.system))
-                                .groupBy(_ / 32)
-    } yield parentsInField.map(p => s"(1<<($p%32))").mkString(s"mask.fields[$field] & (","|",")")
+  def binaryRuleApplication(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLBinaryRuleUpdater = {
+    val partitions  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(rules).toIndexedSeq
+    val kernels = partitions.zipWithIndex.map { case (rulePartition, partitionIndex) =>
+      val parents = rulePartition.map(_._1.parent).toSet
+      val parentVariables: Map[Int, Variable] = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
 
-    val checkMaskString = maskStrings.mkString("if (!((", ") | (", ")) ) return;")
+      // set up the mask
+      val maskStrings = for {
+        (field, parentsInField) <- parents
+          .map(s => structure.refinements.labels.project(s.system))
+          .groupBy(_ / 32)
+      } yield parentsInField.map(p => s"(1<<($p%32))").mkString(s"mask.fields[$field] & (","|",")")
+
+      val checkMaskString = maskStrings.mkString("if (!((", ") | (", ")) ) return;")
 
       val text = structure.maskHeader + s"""
       $writeParent
-    __kernel void $name(__global float* parents, __global int* parentIndex, __global float* left, __global float* right, __global const mask_t* masks, int numRows, int cellsToDo) {
+    __kernel void ${name}_$partitionIndex(__global float* parents, __global int* parentIndex, __global float* left, __global float* right, __global const mask_t* masks, int numRows, int cellsToDo) {
         int row = get_global_id(0);
         if(row < cellsToDo) {
           const mask_t mask = masks[parentIndex[row]];
@@ -68,12 +77,14 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     }
 
     """
-    val prog = cl.createProgram(text)
-    //prog.addBuildOption("-cl-nv-verbose")
+      val prog = cl.createProgram(text)
+      //prog.addBuildOption("-cl-nv-verbose")
 
-    logger.info(s"Compiling $name")
-    println(s"Compiling $name")
-    prog.build().createKernels().head
+      logger.info(s"Compiling $name")
+      println(s"Compiling $name")
+      prog.build().createKernels().head
+    }
+    new CLBinaryRuleUpdater(kernels)
   }
 
   private def coreRuleLoop(rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], accumulator: Map[Int, Variable])(implicit cl: CLContext) = {

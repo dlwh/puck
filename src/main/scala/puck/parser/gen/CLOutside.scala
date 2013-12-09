@@ -69,37 +69,28 @@ object CLOutsideKernels {
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
 //    val parserGen = new LHSGenRuleMultiply[C, L](structure)
     val parserGen = new LHSGenRuleMultiply[C, L](structure)
-    val outside_L_NNKernels = structure.partitionsLeftChild.zipWithIndex.map { case(partition, i) =>
-      parserGen.binaryRuleApplication(partition.map(rotateLeftToParent), "outside_L_nn_binaries"+i)
-    }
+    val outside_L_NNKernels = parserGen.binaryRuleApplication(structure.nontermRules.map(rotateLeftToParent), "outside_L_nn_binaries")
 
-    val outside_R_NNKernels = structure.partitionsRightChild.zipWithIndex.map { case(partition, i) =>
-      parserGen.binaryRuleApplication(partition.map(rotateRightToParent), "outside_R_nn_binaries"+i)
-    }
+    val outside_R_NNKernels =
+      parserGen.binaryRuleApplication(structure.nontermRules.map(rotateRightToParent), "outside_R_nn_binaries")
 
-    val outside_L_NTKernels = structure.partitionsRightTermRules_LeftChild.zipWithIndex.map { case (partition, i) =>
-      parserGen.binaryRuleApplication(partition.map(rotateLeftToParent), "outside_L_nt_binaries"+i)
-    }
+    val outside_L_NTKernels =
+      parserGen.binaryRuleApplication(structure.rightTermRules.map(rotateLeftToParent), "outside_L_nt_binaries")
 
-    val outside_R_NTKernels = structure.partitionsRightTermRules_RightChild.zipWithIndex.map { case (partition, i) =>
-      parserGen.binaryRuleApplication(partition.map(rotateRightToParent), "outside_R_nt_binaries"+i)
-    }
+    val outside_R_NTKernels =
+      parserGen.binaryRuleApplication(structure.rightTermRules.map(rotateRightToParent), "outside_R_nt_binaries")
 
-    val outside_L_TNKernels = structure.partitionsLeftTermRules_LeftChild.zipWithIndex.map { case (partition, i) =>
-      parserGen.binaryRuleApplication(partition.map(rotateLeftToParent), "outside_L_tn_binaries"+i)
-    }
+    val outside_L_TNKernels =
+      parserGen.binaryRuleApplication(structure.leftTermRules.map(rotateLeftToParent), "outside_L_tn_binaries")
 
-    val outside_R_TNKernels = structure.partitionsLeftTermRules_RightChild.zipWithIndex.map { case (partition, i) =>
-      parserGen.binaryRuleApplication(partition.map(rotateRightToParent), "outside_R_tn_binaries"+i)
-    }
+    val outside_R_TNKernels =
+      parserGen.binaryRuleApplication(structure.leftTermRules.map(rotateRightToParent), "outside_R_tn_binaries")
 
-    val outside_L_TTKernels = structure.partitionsBothTermRules_LeftChild.zipWithIndex.map { case (partition, i) =>
-       parserGen.binaryRuleApplication(partition.map(rotateLeftToParent), "outside_L_tt_binaries"+i)
-    }
+    val outside_L_TTKernels =
+       parserGen.binaryRuleApplication(structure.bothTermRules.map(rotateLeftToParent), "outside_L_tt_binaries")
 
-    val outside_R_TTKernels = structure.partitionsBothTermRules_RightChild.zipWithIndex.map { case (partition, i) =>
-      parserGen.binaryRuleApplication(partition.map(rotateRightToParent), "outside_R_tt_binaries"+i)
-    }
+    val outside_R_TTKernels =
+      parserGen.binaryRuleApplication(structure.bothTermRules.map(rotateRightToParent), "outside_R_tt_binaries")
 
     val outsideNUKernels = structure.nontermUnariesChild.zipWithIndex.map { case (partition, i) =>
       parserGen.unaryRuleApplication(partition.map(rotateChildToParent), "outside_nn_unaries"+i)
@@ -109,14 +100,14 @@ object CLOutsideKernels {
       parserGen.unaryRuleApplication(partition.map(rotateChildToParent), "outside_nt_unaries"+i)
     }
 
-    CLOutsideKernels(new CLBinaryRuleUpdater(outside_L_NNKernels),
-      new CLBinaryRuleUpdater(outside_R_NNKernels),
-      new CLBinaryRuleUpdater(outside_L_NTKernels),
-      new CLBinaryRuleUpdater(outside_R_NTKernels),
-      new CLBinaryRuleUpdater(outside_L_TNKernels),
-      new CLBinaryRuleUpdater(outside_R_TNKernels),
-      new CLBinaryRuleUpdater(outside_L_TTKernels),
-      new CLBinaryRuleUpdater(outside_R_TTKernels),
+    CLOutsideKernels(outside_L_NNKernels,
+      outside_R_NNKernels,
+      outside_L_NTKernels,
+      outside_R_NTKernels,
+      outside_L_TNKernels,
+      outside_R_TNKernels,
+      outside_L_TTKernels,
+      outside_R_TTKernels,
       outsideNUKernels,
       outsideTUKernels)
   }
