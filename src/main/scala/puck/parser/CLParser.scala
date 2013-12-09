@@ -580,9 +580,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val evWriteDevSplitPoint = devSplitPointOffsets.writeArray(queue, splitPointOffsets, splitPointOffset + 1, ev:_*) profileIn hdTransferEvents
 
         val zeroParent = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
-        val kEvents: IndexedSeq[CLEvent] = updater.update(devParent(0 until offset, ::), devParentPtrs,
+        val kEvents = updater.update(binaryEvents, devParent(0 until offset, ::), devParentPtrs,
           devLeft(0 until offset, ::), devRight(0 until offset, ::),
-          maskCharts, evTransLeft, evTransRight, zeroParent, evWriteDevParent) map  (_ profileIn binaryEvents)
+          maskCharts, evTransLeft, evTransRight, zeroParent, evWriteDevParent)
 
         val sumEv = parser.data.util.sumSplitPoints(devParent,
           parentChartMatrix,
@@ -682,8 +682,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
         val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), scoreMatrix, devLeftPtrs, offset, wevl) profileIn transferEvents
 
-        val endEvents = kernels.update(devParent(0 until offset, ::),
-          devLeft(0 until offset, ::),  wl, zz) map  (_ profileIn unaryEvents)
+        val endEvents = kernels.update(unaryEvents, devParent(0 until offset, ::), devLeft(0 until offset, ::),  wl, zz)
 
 
         val ev2 = devParentPtrs.writeArray(queue, pArray, offset, ev:_*) profileIn hdTransferEvents

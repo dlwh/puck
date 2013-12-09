@@ -1,9 +1,10 @@
-package puck.parser.gen
+package puck.parser
 
 import com.nativelibs4java.opencl._
+import puck._
 import puck.linalg.CLMatrix
 import java.util.zip.{ZipFile, ZipInputStream, ZipOutputStream}
-import puck.util.ZipUtil
+import puck.util.{CLProfiler, ZipUtil}
 
 /**
  *
@@ -11,7 +12,7 @@ import puck.util.ZipUtil
  * @author dlwh
  */
 case class CLBinaryRuleUpdater(kernels: IndexedSeq[CLKernel], globalSize: Array[Int], wgSize: Array[Int]) {
-  def update(parent: CLMatrix[Float], parentPointers: CLBuffer[Int],
+  def update(profiler: CLProfiler, parent: CLMatrix[Float], parentPointers: CLBuffer[Int],
              left: CLMatrix[Float], right: CLMatrix[Float],
              masks: CLMatrix[Int], events: CLEvent*)(implicit queue: CLQueue) = synchronized {
     require(parent.rows <= parentPointers.getElementCount)
@@ -21,12 +22,13 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[CLKernel], globalSize: Array[
     require(parent.rows == right.rows)
     require(parent.cols == right.cols)
     require(parent.majorStride == right.majorStride)
-    kernels.map { k =>
+    kernels.foldLeft(events) { (ev, k) =>
       k.setArgs(parent.data.safeBuffer, parentPointers,
         left.data.safeBuffer, right.data.safeBuffer,
         masks.data.safeBuffer,
         Integer.valueOf(parent.majorStride), Integer.valueOf(parent.rows) )
-      k.enqueueNDRange(queue, globalSize, wgSize, events: _*)
+      val evv = k.enqueueNDRange(queue, globalSize, wgSize, ev:_*) profileIn profiler
+      IndexedSeq(evv)
     }
 
   }

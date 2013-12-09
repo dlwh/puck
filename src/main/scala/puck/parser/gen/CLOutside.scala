@@ -4,8 +4,12 @@ import puck.util._
 import com.nativelibs4java.opencl._
 import java.util.zip._
 import epic.trees._
-import puck.parser.{SymId, RuleSemiring, RuleStructure}
+import puck.parser._
 import java.io.{PrintStream, FileOutputStream}
+import epic.trees.BinaryRule
+import epic.trees.UnaryRule
+import puck.parser.SymId
+import puck.parser.RuleStructure
 
 // These kernels assume that the parent and the child named (L or R) are swapped
 // in the workspace tables.

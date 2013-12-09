@@ -1,9 +1,11 @@
-package puck.parser.gen
+package puck.parser
 
-import com.nativelibs4java.opencl._
+import puck._
+import com.nativelibs4java.opencl.{CLContext, CLQueue, CLEvent, CLKernel}
 import puck.linalg.CLMatrix
-import java.util.zip.{ZipFile, ZipOutputStream}
-import puck.util.ZipUtil
+import scala.Array
+import java.util.zip._
+import puck.util._
 
 /**
  *
@@ -11,7 +13,8 @@ import puck.util.ZipUtil
  * @author dlwh
  */
 case class CLUnaryRuleUpdater(kernels: IndexedSeq[CLKernel]) {
-  def update(parent: CLMatrix[Float],
+  def update(profiler: CLProfiler,
+             parent: CLMatrix[Float],
              child: CLMatrix[Float],  events: CLEvent*)(implicit queue: CLQueue) = synchronized {
     require(parent.rows == child.rows)
     require(parent.cols == child.cols)
@@ -19,7 +22,7 @@ case class CLUnaryRuleUpdater(kernels: IndexedSeq[CLKernel]) {
     kernels.map { k =>
       k.setArgs(parent.data.safeBuffer,  child.data.safeBuffer,
         Integer.valueOf(parent.majorStride), Integer.valueOf(parent.rows) )
-      k.enqueueNDRange(queue, Array(parent.rows), events: _*)
+      k.enqueueNDRange(queue, Array(parent.rows), events: _*) profileIn profiler
     }
 
   }

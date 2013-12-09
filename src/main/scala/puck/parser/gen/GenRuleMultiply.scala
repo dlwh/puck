@@ -2,7 +2,7 @@ package puck.parser.gen
 
 import epic.trees.{UnaryRule, BinaryRule}
 import com.nativelibs4java.opencl.{CLContext, CLKernel}
-import puck.parser.SymId
+import puck.parser.{CLUnaryRuleUpdater, CLBinaryRuleUpdater, SymId}
 
 /**
  * TODO
