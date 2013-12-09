@@ -99,7 +99,7 @@ object ParserTestHarness {
       case e:Exception => e.printStackTrace(); throw e
     }
   }
-  val grammar = {
+  val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = {
 
     val trees = getTrainTrees()
     GenerativeParser.extractGrammar[AnnotatedLabel, String](trees.head.label.label, trees.map(_.mapLabels(_.baseAnnotatedLabel)))

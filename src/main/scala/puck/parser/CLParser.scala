@@ -535,6 +535,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                                     rightChart: (Batch,Int)=>ChartHalf,
                                     ranger: (Int, Int, Int)=>Range) {
 
+    val updater = new CLBinaryRuleUpdater(kernels)
+
+
     case class WorkItem(sent: Int, begin: Int, end: Int, masks: DenseVector[Double])
 
     var splitPointOffset = 0 // number of unique parent spans used so far
@@ -554,7 +557,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       rArray(offset) = right
       offset += 1
       if (offset >= numWorkCells)  {
-        println(s"flush ${this.kernels.head.getFunctionName}!")
         flushQueue(batch, span, events)
       } else {
         events
@@ -579,11 +581,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val evWriteDevSplitPoint = devSplitPointOffsets.writeArray(queue, splitPointOffsets, splitPointOffset + 1, ev:_*) profileIn hdTransferEvents
 
         val zeroParent = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
-        val kEvents: IndexedSeq[CLEvent] = kernels.map{ kernel =>
-          kernel.setArgs(devParent.data.safeBuffer, devParentPtrs, devLeft.data.safeBuffer, devRight.data.safeBuffer, maskCharts.data.safeBuffer, Integer.valueOf(numWorkCells), Integer.valueOf(offset))
-          kernel.enqueueNDRange(queue, Array(offset), evTransLeft, evTransRight, zeroParent, evWriteDevParent) profileIn binaryEvents
-        }
-
+        val kEvents: IndexedSeq[CLEvent] = updater.update(devParent(0 until offset, ::), devParentPtrs,
+          devLeft(0 until offset, ::), devRight(0 until offset, ::),
+          maskCharts, evTransLeft, evTransRight, zeroParent, evWriteDevParent) map  (_ profileIn binaryEvents)
 
         val sumEv = parser.data.util.sumSplitPoints(devParent,
           parentChartMatrix,
