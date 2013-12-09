@@ -38,7 +38,8 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
 
       s"""
     __kernel void ${name}_$partitionIndex(__global float* parents, __global int* parentIndex, __global float* left, __global float* right, __global const mask_t* masks, int numRows, int cellsToDo) {
-        int numWorkers = get_global_size(1);
+        int numWorkers = get_global_size(0);
+        int grammarPartition = get_group_id(1);
         for(int row = get_global_id(0); row < cellsToDo; row += numWorkers) {
           const mask_t mask = masks[parentIndex[row]];
           $checkMaskString
