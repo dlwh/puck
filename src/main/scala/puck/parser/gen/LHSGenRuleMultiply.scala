@@ -20,32 +20,26 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
   def binaryRuleApplication(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLBinaryRuleUpdater = {
 
     val wgSize = Array(32, 1, 1)
-    val globalSize = Array(32 * 48, 1, 1)
+    val globalSize = Array(32 * 48, 8, 1)
 
     val partitions  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(rules).toIndexedSeq
+
+
     val kernelTexts = partitions.zipWithIndex.map { case (rulePartition, partitionIndex) =>
-      val parents = rulePartition.map(_._1.parent).toSet
-      val parentVariables: Map[Int, Variable] = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
-
-      // set up the mask
-      val maskStrings = for {
-        (field, parentsInField) <- parents
-          .map(s => structure.refinements.labels.project(s.system))
-          .groupBy(_ / 32)
-      } yield parentsInField.map(p => s"(1<<($p%32))").mkString(s"mask.fields[$field] & (","|",")")
-
-      val checkMaskString = maskStrings.mkString("if (!((", ") | (", ")) ) return;")
-
+      val subpartitions = rulePartition.groupBy(_._1.parent.gpu % 8).map{case (subId, subpart) => subId -> doSingleRow(s"${name}_${partitionIndex}_$subId", subpart)}
       s"""
+
+      ${subpartitions.values.map(_._2).mkString("\n\n")}
+
     __kernel void ${name}_$partitionIndex(__global float* parents, __global int* parentIndex, __global float* left, __global float* right, __global const mask_t* masks, int numRows, int cellsToDo) {
         int numWorkers = get_global_size(0);
-        int grammarPartition = get_group_id(1);
+        int grammarSubPartition = get_group_id(1);
         for(int row = get_global_id(0); row < cellsToDo; row += numWorkers) {
           const mask_t mask = masks[parentIndex[row]];
-          $checkMaskString
-          ${parentVariables.values.map(_.declare).mkString("\n        ")}
-          ${coreRuleLoop(rulePartition, parentVariables)}
-          ${{for( (id,v) <- parentVariables) yield s"write_parent(parents + numRows * $id + row, ${v.repr});"}.mkString("\n        ")}
+          switch(grammarSubPartition) {
+            ${subpartitions.map {case  (id, (fnname, _)) => s"case $id: $fnname(mask, parents, row, left, right, numRows); continue;" }.mkString("\n            ")}
+            default: continue;
+          }
         }
     }
 
@@ -60,7 +54,31 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     new CLBinaryRuleUpdater(kernels, globalSize, wgSize)
   }
 
-  private def coreRuleLoop(rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], accumulator: Map[Int, Variable])(implicit cl: CLContext) = {
+  private def doSingleRow(name: String, rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)]):(String, String) = {
+    val parents = rulePartition.map(_._1.parent).toSet
+      // set up the mask
+      val maskStrings = for {
+        (field, parentsInField) <- parents
+          .map(s => structure.refinements.labels.project(s.system))
+          .groupBy(_ / 32)
+      } yield parentsInField.map(p => s"(1<<($p%32))").mkString(s"mask.fields[$field] & (","|",")")
+
+      val checkMaskString = maskStrings.mkString("if (!((", ") | (", ")) ) return;")
+
+
+    val parentVariables: Map[Int, Variable] = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
+    name -> s"""
+void $name(const mask_t mask, __global float* parents, int row, __global float* left, __global float* right, int numRows) {
+    $checkMaskString
+    ${parentVariables.values.map(_.declare).mkString("\n        ")}
+    ${coreRuleLoop(rulePartition, parentVariables)}
+    ${{for( (id,v) <- parentVariables) yield s"write_parent(parents + numRows * $id + row, ${v.repr});"}.mkString("\n        ")}
+}
+    """
+
+  }
+
+  private def coreRuleLoop(rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], accumulator: Map[Int, Variable]) = {
     val sb = new StringBuilder()
     for ((_lc, rr) <- rulePartition.groupBy(_._1.left)) {
       val lc = _lc.gpu
