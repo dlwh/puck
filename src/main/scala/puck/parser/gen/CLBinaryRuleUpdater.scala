@@ -10,7 +10,7 @@ import puck.util.ZipUtil
  *
  * @author dlwh
  */
-case class CLBinaryRuleUpdater(kernels: IndexedSeq[CLKernel]) {
+case class CLBinaryRuleUpdater(kernels: IndexedSeq[CLKernel], globalSize: Array[Int], wgSize: Array[Int]) {
   def update(parent: CLMatrix[Float], parentPointers: CLBuffer[Int],
              left: CLMatrix[Float], right: CLMatrix[Float],
              masks: CLMatrix[Int], events: CLEvent*)(implicit queue: CLQueue) = synchronized {
@@ -26,19 +26,23 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[CLKernel]) {
         left.data.safeBuffer, right.data.safeBuffer,
         masks.data.safeBuffer,
         Integer.valueOf(parent.majorStride), Integer.valueOf(parent.rows) )
-      k.enqueueNDRange(queue, Array(parent.rows), events: _*)
+      k.enqueueNDRange(queue, globalSize, wgSize, events: _*)
     }
 
   }
 
   def write(name: String, out: ZipOutputStream) {
     ZipUtil.addKernelSet(out, name, kernels)
+    ZipUtil.serializedEntry(out, s"$name/globalSize", globalSize)
+    ZipUtil.serializedEntry(out, s"$name/wgSize", wgSize)
   }
 }
 
 
 object CLBinaryRuleUpdater {
   def read(in: ZipFile, name: String)(implicit ctxt: CLContext) = {
-    CLBinaryRuleUpdater(ZipUtil.readKernelSet(in, name))
+    val globalSize = ZipUtil.deserializeEntry[Array[Int]](in.getInputStream(in.getEntry(s"$name/globalSize")))
+    val wgSize = ZipUtil.deserializeEntry[Array[Int]](in.getInputStream(in.getEntry(s"$name/wgSize")))
+    CLBinaryRuleUpdater(ZipUtil.readKernelSet(in, name), globalSize, wgSize)
   }
 }

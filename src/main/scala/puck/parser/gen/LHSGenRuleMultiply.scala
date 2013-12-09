@@ -18,6 +18,10 @@ import puck.parser.RuleStructure
 class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring: RuleSemiring) extends GenRuleMultiply[C, L] with Logging {
 
   def binaryRuleApplication(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLBinaryRuleUpdater = {
+
+    val wgSize = Array(32, 1, 1)
+    val globalSize = Array(32 * 48, 1, 1)
+
     val partitions  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(rules).toIndexedSeq
     val kernelTexts = partitions.zipWithIndex.map { case (rulePartition, partitionIndex) =>
       val parents = rulePartition.map(_._1.parent).toSet
@@ -34,8 +38,8 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
 
       s"""
     __kernel void ${name}_$partitionIndex(__global float* parents, __global int* parentIndex, __global float* left, __global float* right, __global const mask_t* masks, int numRows, int cellsToDo) {
-        int row = get_global_id(0);
-        if(row < cellsToDo) {
+        int numWorkers = get_global_size(1);
+        for(int row = get_global_id(0); row < cellsToDo; row += numWorkers) {
           const mask_t mask = masks[parentIndex[row]];
           $checkMaskString
           ${parentVariables.values.map(_.declare).mkString("\n        ")}
@@ -52,7 +56,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     logger.info(s"Compiling $name")
     println(s"Compiling $name")
     val kernels = prog.build().createKernels()
-    new CLBinaryRuleUpdater(kernels)
+    new CLBinaryRuleUpdater(kernels, globalSize, wgSize)
   }
 
   private def coreRuleLoop(rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], accumulator: Map[Int, Variable])(implicit cl: CLContext) = {
@@ -85,8 +89,8 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
       val parentVariables = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
        s"""
     __kernel void ${name}_$partitionIndex(__global float* parents, __global float* children, int numRows, int cellsToDo) {
-        int row = get_global_id(0);
-        if(row < cellsToDo) {
+        int numWorkers = get_global_size(1);
+        for(int row = get_global_id(0); row < cellsToDo; row += numWorkers) {
           ${parentVariables.values.map(_.declare).mkString("\n        ")}
           ${coreUnaryRuleLoop(rulePartition, parentVariables)}
           ${{for( (id,v) <- parentVariables) yield s"parents[numRows * $id + row] = ${v.repr};"}.mkString("\n        ")}
