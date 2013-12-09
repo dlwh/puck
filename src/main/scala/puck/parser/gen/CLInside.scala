@@ -7,18 +7,18 @@ import puck.util.ZipUtil
 import puck.parser.{RuleSemiring, RuleStructure}
 
 
-case class CLInsideKernels(insideNNKernels: IndexedSeq[CLKernel],
-                           insideNTKernels: IndexedSeq[CLKernel],
-                           insideTNKernels: IndexedSeq[CLKernel],
-                           insideTTKernels: IndexedSeq[CLKernel],
+case class CLInsideKernels(insideNNKernels: CLBinaryRuleUpdater,
+                           insideNTKernels: CLBinaryRuleUpdater,
+                           insideTNKernels: CLBinaryRuleUpdater,
+                           insideTTKernels: CLBinaryRuleUpdater,
                            insideNUKernels: IndexedSeq[CLKernel],
                            insideTUKernels: IndexedSeq[CLKernel]) {
 
   def write(out: ZipOutputStream) {
-    ZipUtil.addKernelSet(out, "insideNT", insideNTKernels)
-    ZipUtil.addKernelSet(out, "insideNN", insideNNKernels)
-    ZipUtil.addKernelSet(out, "insideTN", insideTNKernels)
-    ZipUtil.addKernelSet(out, "insideTT", insideTTKernels)
+     insideNTKernels.write("insideNT", out)
+     insideNNKernels.write("insideNN", out)
+     insideTNKernels.write("insideTN", out)
+     insideTTKernels.write("insideTT", out)
     ZipUtil.addKernelSet(out, "insideNU", insideNUKernels)
     ZipUtil.addKernelSet(out, "insideTU", insideTUKernels)
   }
@@ -26,10 +26,10 @@ case class CLInsideKernels(insideNNKernels: IndexedSeq[CLKernel],
 
 object CLInsideKernels {
   def read(in: ZipFile)(implicit context: CLContext) = {
-    val insideNT = ZipUtil.readKernelSet(in, "insideNT")
-    val insideNN = ZipUtil.readKernelSet(in, "insideNN")
-    val insideTN = ZipUtil.readKernelSet(in, "insideTN")
-    val insideTT = ZipUtil.readKernelSet(in, "insideTT")
+    val insideNT = CLBinaryRuleUpdater.read(in, "insideNT")
+    val insideNN = CLBinaryRuleUpdater.read(in, "insideNN")
+    val insideTN = CLBinaryRuleUpdater.read(in, "insideTN")
+    val insideTT = CLBinaryRuleUpdater.read(in, "insideTT")
     val insideNU = ZipUtil.readKernelSet(in, "insideNU")
     val insideTU = ZipUtil.readKernelSet(in, "insideTU")
     CLInsideKernels(insideNN, insideNT, insideTN, insideTT, insideNU, insideTU)
@@ -63,10 +63,10 @@ object CLInsideKernels {
       parserGen.unaryRuleApplication(partition, "inside_t_unaries"+i)
     }
 
-    CLInsideKernels(insideNNKernels,
-      insideNTKernels,
-      insideTNKernels,
-      insideTTKernels,
+    CLInsideKernels(new CLBinaryRuleUpdater(insideNNKernels),
+      new CLBinaryRuleUpdater(insideNTKernels),
+      new CLBinaryRuleUpdater(insideTNKernels),
+      new CLBinaryRuleUpdater(insideTTKernels),
       insideNUKernels,
       insideTUKernels)
   }

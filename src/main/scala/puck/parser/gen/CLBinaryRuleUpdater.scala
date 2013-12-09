@@ -1,7 +1,9 @@
 package puck.parser.gen
 
-import com.nativelibs4java.opencl.{CLQueue, CLBuffer, CLEvent, CLKernel}
+import com.nativelibs4java.opencl._
 import puck.linalg.CLMatrix
+import java.util.zip.{ZipFile, ZipInputStream, ZipOutputStream}
+import puck.util.ZipUtil
 
 /**
  *
@@ -27,5 +29,16 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[CLKernel]) {
       k.enqueueNDRange(queue, Array(parent.rows), events: _*)
     }
 
+  }
+
+  def write(name: String, out: ZipOutputStream) {
+    ZipUtil.addKernelSet(out, name, kernels)
+  }
+}
+
+
+object CLBinaryRuleUpdater {
+  def read(in: ZipFile, name: String)(implicit ctxt: CLContext) = {
+    CLBinaryRuleUpdater(ZipUtil.readKernelSet(in, name))
   }
 }

@@ -526,7 +526,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   }
 
   private class BinaryUpdateManager(parser: ActualParser,
-                                    kernels: IndexedSeq[CLKernel],
+                                    updater: CLBinaryRuleUpdater,
                                     parentChartMatrix: CLMatrix[Float],
                                     leftChartMatrix: CLMatrix[Float],
                                     rightChartMatrix: CLMatrix[Float],
@@ -535,7 +535,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                                     rightChart: (Batch,Int)=>ChartHalf,
                                     ranger: (Int, Int, Int)=>Range) {
 
-    val updater = new CLBinaryRuleUpdater(kernels)
 
 
     case class WorkItem(sent: Int, begin: Int, end: Int, masks: DenseVector[Double])

@@ -9,26 +9,26 @@ import java.io.{PrintStream, FileOutputStream}
 
 // These kernels assume that the parent and the child named (L or R) are swapped
 // in the workspace tables.
-case class CLOutsideKernels(outside_L_NNKernels: IndexedSeq[CLKernel],
-                            outside_R_NNKernels: IndexedSeq[CLKernel],
-                            outside_L_NTKernels: IndexedSeq[CLKernel],
-                            outside_R_NTKernels: IndexedSeq[CLKernel],
-                            outside_L_TNKernels: IndexedSeq[CLKernel],
-                            outside_R_TNKernels: IndexedSeq[CLKernel],
-                            outside_L_TTKernels: IndexedSeq[CLKernel],
-                            outside_R_TTKernels: IndexedSeq[CLKernel],
+case class CLOutsideKernels(outside_L_NNKernels: CLBinaryRuleUpdater,
+                            outside_R_NNKernels: CLBinaryRuleUpdater,
+                            outside_L_NTKernels: CLBinaryRuleUpdater,
+                            outside_R_NTKernels: CLBinaryRuleUpdater,
+                            outside_L_TNKernels: CLBinaryRuleUpdater,
+                            outside_R_TNKernels: CLBinaryRuleUpdater,
+                            outside_L_TTKernels: CLBinaryRuleUpdater,
+                            outside_R_TTKernels: CLBinaryRuleUpdater,
                             outsideNUKernels: IndexedSeq[CLKernel],
                             outsideTUKernels: IndexedSeq[CLKernel]) {
 
   def write(out: ZipOutputStream) {
-    ZipUtil.addKernelSet(out, "outside_L_NN", outside_L_NNKernels)
-    ZipUtil.addKernelSet(out, "outside_R_NN", outside_R_NNKernels)
-    ZipUtil.addKernelSet(out, "outside_L_NT", outside_L_NTKernels)
-    ZipUtil.addKernelSet(out, "outside_R_NT", outside_R_NTKernels)
-    ZipUtil.addKernelSet(out, "outside_L_TN", outside_L_TNKernels)
-    ZipUtil.addKernelSet(out, "outside_R_TN", outside_R_TNKernels)
-    ZipUtil.addKernelSet(out, "outside_L_TT", outside_L_TTKernels)
-    ZipUtil.addKernelSet(out, "outside_R_TT", outside_R_TTKernels)
+     outside_L_NNKernels.write("outside_L_NN", out)
+     outside_R_NNKernels.write("outside_R_NN", out)
+     outside_L_NTKernels.write("outside_L_NT", out)
+     outside_R_NTKernels.write("outside_R_NT", out)
+     outside_L_TNKernels.write("outside_L_TN", out)
+     outside_R_TNKernels.write("outside_R_TN", out)
+     outside_L_TTKernels.write("outside_L_TT", out)
+     outside_R_TTKernels.write("outside_R_TT", out)
     ZipUtil.addKernelSet(out, "outsideNU", outsideNUKernels)
     ZipUtil.addKernelSet(out, "outsideTU", outsideTUKernels)
   }
@@ -37,14 +37,14 @@ case class CLOutsideKernels(outside_L_NNKernels: IndexedSeq[CLKernel],
 object CLOutsideKernels {
 
   def read(in: ZipFile)(implicit context: CLContext) = {
-    val outside_L_NN = ZipUtil.readKernelSet(in, "outside_L_NN")
-    val outside_R_NN = ZipUtil.readKernelSet(in, "outside_R_NN")
-    val outside_L_NT = ZipUtil.readKernelSet(in, "outside_L_NT")
-    val outside_R_NT = ZipUtil.readKernelSet(in, "outside_R_NT")
-    val outside_L_TN = ZipUtil.readKernelSet(in, "outside_L_TN")
-    val outside_R_TN = ZipUtil.readKernelSet(in, "outside_R_TN")
-    val outside_L_TT = ZipUtil.readKernelSet(in, "outside_L_TT")
-    val outside_R_TT = ZipUtil.readKernelSet(in, "outside_R_TT")
+    val outside_L_NN = CLBinaryRuleUpdater.read(in, "outside_L_NN")
+    val outside_R_NN = CLBinaryRuleUpdater.read(in, "outside_R_NN")
+    val outside_L_NT = CLBinaryRuleUpdater.read(in, "outside_L_NT")
+    val outside_R_NT = CLBinaryRuleUpdater.read(in, "outside_R_NT")
+    val outside_L_TN = CLBinaryRuleUpdater.read(in, "outside_L_TN")
+    val outside_R_TN = CLBinaryRuleUpdater.read(in, "outside_R_TN")
+    val outside_L_TT = CLBinaryRuleUpdater.read(in, "outside_L_TT")
+    val outside_R_TT = CLBinaryRuleUpdater.read(in, "outside_R_TT")
     val outsideNU = ZipUtil.readKernelSet(in, "outsideNU")
     val outsideTU = ZipUtil.readKernelSet(in, "outsideTU")
     CLOutsideKernels(outside_L_NN, outside_R_NN,
@@ -109,14 +109,14 @@ object CLOutsideKernels {
       parserGen.unaryRuleApplication(partition.map(rotateChildToParent), "outside_nt_unaries"+i)
     }
 
-    CLOutsideKernels(outside_L_NNKernels,
-      outside_R_NNKernels,
-      outside_L_NTKernels,
-      outside_R_NTKernels,
-      outside_L_TNKernels,
-      outside_R_TNKernels,
-      outside_L_TTKernels,
-      outside_R_TTKernels,
+    CLOutsideKernels(new CLBinaryRuleUpdater(outside_L_NNKernels),
+      new CLBinaryRuleUpdater(outside_R_NNKernels),
+      new CLBinaryRuleUpdater(outside_L_NTKernels),
+      new CLBinaryRuleUpdater(outside_R_NTKernels),
+      new CLBinaryRuleUpdater(outside_L_TNKernels),
+      new CLBinaryRuleUpdater(outside_R_TNKernels),
+      new CLBinaryRuleUpdater(outside_L_TTKernels),
+      new CLBinaryRuleUpdater(outside_R_TTKernels),
       outsideNUKernels,
       outsideTUKernels)
   }
