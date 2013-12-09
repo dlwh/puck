@@ -26,12 +26,15 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
 
 
     val kernelTexts = partitions.zipWithIndex.map { case (rulePartition, partitionIndex) =>
+
       val subpartitions = rulePartition.groupBy(_._1.parent.gpu % 8).map{case (subId, subpart) => subId -> doSingleRow(s"${name}_${partitionIndex}_$subId", subpart)}
+
       s"""
 
       ${subpartitions.values.map(_._2).mkString("\n\n")}
 
-    __kernel void ${name}_$partitionIndex(__global float* parents, __global int* parentIndex, __global float* left, __global float* right, __global const mask_t* masks, int numRows, int cellsToDo) {
+ __attribute__((reqd_work_group_size(${wgSize.mkString(", ")})))
+    __kernel void ${name}_$partitionIndex(__global volatile float* parents, __global int* parentIndex, __global float* left, __global float* right, __global const mask_t* masks, int numRows, int cellsToDo) {
         int numWorkers = get_global_size(0);
         int grammarSubPartition = get_group_id(1);
         for(int row = get_global_id(0); row < cellsToDo; row += numWorkers) {
@@ -68,7 +71,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
 
     val parentVariables: Map[Int, Variable] = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
     name -> s"""
-void $name(const mask_t mask, __global float* parents, int row, __global float* left, __global float* right, int numRows) {
+void $name(const mask_t mask, __global volatile float* parents, int row, __global float* left, __global float* right, int numRows) {
     $checkMaskString
     ${parentVariables.values.map(_.declare).mkString("\n        ")}
     ${coreRuleLoop(rulePartition, parentVariables)}
@@ -156,9 +159,8 @@ void $name(const mask_t mask, __global float* parents, int row, __global float* 
       |
       |inline void write_parent(volatile __global float* loc, float value) {
       |  intbox old;
-      |  old.oldf = value;
+      |  old.oldf = max(*loc, value);
       |
-      |  // TODO if not idempotent, have to do operator here.
       |  //while((old.old = atomic_cmpxchg((volatile __global int*)loc, old.old, *(int*)&value)) !=  *(int*)&value) value = max(value, old.oldf);
       |  *loc = value;
       |}
