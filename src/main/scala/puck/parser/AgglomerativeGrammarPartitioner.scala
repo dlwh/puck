@@ -6,7 +6,7 @@ import epic.trees.BinaryRule
 
 import com.typesafe.scalalogging.slf4j.Logging
 
-class AgglomerativeGrammarClusterer[C, L](numRestarts: Int = 100, maxPartitionLabelSize: Int = 128) extends GrammarClusterer[C, L] with Logging {
+class AgglomerativeGrammarPartitioner[C, L](numRestarts: Int = 100, maxPartitionLabelSize: Int = 128) extends GrammarPartitioner[C, L] with Logging {
 
 
   def partition(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)]): IndexedSeq[immutable.IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = {

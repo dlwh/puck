@@ -23,6 +23,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     val globalSize = Array(32 * 48, 8, 1)
 
     val partitions  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(rules).toIndexedSeq
+    assert(partitions.map(_.length).sum == rules.length)
 
 
     val kernelTexts = partitions.zipWithIndex.map { case (rulePartition, partitionIndex) =>
@@ -105,7 +106,8 @@ void $name(const mask_t mask, __global volatile float* parents, int row, __globa
   }
 
   def unaryRuleApplication(rules: IndexedSeq[(UnaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLUnaryRuleUpdater = {
-    val partitions  : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = clusterer.partitionUnaries(rules).toIndexedSeq
+    val partitions  : IndexedSeq[IndexedSeq[(UnaryRule[SymId[C, L]], Int)]] = unaryClusterer.partitionUnaries(rules).toIndexedSeq
+    assert(partitions.map(_.length).sum == rules.length)
     val texts = partitions.zipWithIndex.map { case (rulePartition, partitionIndex) =>
       val parents = rulePartition.map(_._1.parent).toSet
       val parentVariables = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
@@ -159,16 +161,18 @@ void $name(const mask_t mask, __global volatile float* parents, int row, __globa
       |
       |inline void write_parent(volatile __global float* loc, float value) {
       |  intbox old;
-      |  old.oldf = max(*loc, value);
+      |  value = max(*loc, value);
+      |  old.oldf = value;
       |
       |  //while((old.old = atomic_cmpxchg((volatile __global int*)loc, old.old, *(int*)&value)) !=  *(int*)&value) value = max(value, old.oldf);
-      |  *loc = value;
+      |  *loc = value;//old.oldf;
       |}
     """.stripMargin
 
   }
 
-  def clusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(numRestarts = 100, maxPartitionLabelSize = 100)//55)//new ILPGrammarClusterer(12, 55)
-  def unaryClusterer:GrammarClusterer[C, L] = new AgglomerativeGrammarClusterer(numRestarts = 100, maxPartitionLabelSize = 200)//55)//new ILPGrammarClusterer(12, 55)
+//  def clusterer:GrammarPartitioner[C, L] = new AgglomerativeGrammarPartitioner(numRestarts = 100, maxPartitionLabelSize = 100)//55)//new ILPGrammarClusterer(12, 55)
+  def clusterer:GrammarPartitioner[C, L] = new KMeansGrammarPartitioner(k = 2)//55)//new ILPGrammarClusterer(12, 55)
+  def unaryClusterer:GrammarPartitioner[C, L] = new AgglomerativeGrammarPartitioner(numRestarts = 100, maxPartitionLabelSize = 200)//55)//new ILPGrammarClusterer(12, 55)
 
 }
