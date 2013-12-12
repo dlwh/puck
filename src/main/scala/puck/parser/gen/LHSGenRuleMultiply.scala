@@ -113,7 +113,7 @@ void $name(const mask_t mask, __global volatile float* parents, int row, __globa
       val parentVariables = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
        s"""
     __kernel void ${name}_$partitionIndex(__global float* parents, __global float* children, int numRows, int cellsToDo) {
-        int numWorkers = get_global_size(1);
+        int numWorkers = get_global_size(0);
         for(int row = get_global_id(0); row < cellsToDo; row += numWorkers) {
           ${parentVariables.values.map(_.declare).mkString("\n        ")}
           ${coreUnaryRuleLoop(rulePartition, parentVariables)}
