@@ -725,16 +725,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   }
 }
 
-case class StripUnaries() extends TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] {
-  def apply(tree: BinarizedTree[AnnotatedLabel], words: Seq[String]):BinarizedTree[AnnotatedLabel] = tree match {
-    case UnaryTree(a, b, _, span) => UnaryTree(a, apply(b, words), IndexedSeq.empty, span)
-    case BinaryTree(a, b, c, span) => BinaryTree(a, apply(b, words), apply(c, words), span)
-    case x => x
-  }
-
-
-}
-
 object CLParser extends Logging {
 
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = Xbarize(),
