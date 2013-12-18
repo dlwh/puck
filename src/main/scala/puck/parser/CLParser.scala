@@ -746,7 +746,6 @@ object CLParser extends Logging {
     val transformed = params.treebank.copy(binarization="left", keepUnaryChainsFromTrain = false).trainTrees
     val toParse =  params.treebank.trainTrees.filter(_.words.length <= maxParseLength).map(_.words).take(numToParse)
 
-
     val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = if (textGrammarPrefix == null) {
       GenerativeParser.annotated(annotator, transformed)
     } else {
@@ -754,7 +753,6 @@ object CLParser extends Logging {
     }
 
     lazy val xbarGrammar = GenerativeParser.annotated(grammar.grammar, grammar.lexicon, Xbarize(), transformed)
-
 
     grammar.prettyPrint(new FileWriter("grammar.out"))
     val out = new PrintStream(new FileOutputStream("refs.txt"))
@@ -788,7 +786,6 @@ object CLParser extends Logging {
 
     val kern = if (prune) {
       val genData = CLParserData.make(xbarGrammar)
-
       fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](IndexedSeq(genData, parserData), profile)
     } else {
       fromParserData[AnnotatedLabel, AnnotatedLabel, String](parserData, profile)
