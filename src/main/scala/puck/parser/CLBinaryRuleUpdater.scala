@@ -5,6 +5,7 @@ import puck._
 import puck.linalg.CLMatrix
 import java.util.zip.{ZipFile, ZipInputStream, ZipOutputStream}
 import puck.util.{CLProfiler, ZipUtil}
+import scala.collection.JavaConverters._
 
 /**
  *
@@ -12,6 +13,9 @@ import puck.util.{CLProfiler, ZipUtil}
  * @author dlwh
  */
 case class CLBinaryRuleUpdater(kernels: IndexedSeq[CLKernel], globalSize: Array[Int], wgSize: Array[Int]) {
+
+  def this(kernels: java.util.List[CLKernel], globalSize: Array[Int], wgSize: Array[Int]) = this(kernels.asScala.toIndexedSeq, globalSize, wgSize)
+
   def update(profiler: CLProfiler, parent: CLMatrix[Float], parentPointers: CLBuffer[Int],
              left: CLMatrix[Float], right: CLMatrix[Float],
              masks: CLMatrix[Int], events: CLEvent*)(implicit queue: CLQueue) = synchronized {

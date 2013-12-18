@@ -1,6 +1,7 @@
 package puck.parser.gen
 
-import puck.parser.{RuleSemiring, RuleStructure}
+import puck.parser.{SymId, RuleSemiring, RuleStructure}
+import scala.collection.JavaConverters._
 import puck.linalg.CLMatrix
 import com.nativelibs4java.opencl._
 import org.bridj.Pointer
@@ -94,6 +95,26 @@ object CLMaskKernels {
    #define is_set(mask, bit)  ((mask)->fields[(bit)/32] & (1<<((bit)%32)))
 
                                            """
+  }
+
+
+  def generateCheckMaskString[C, L](structure: RuleStructure[C, L],
+                                    nameOfMaskVariable: String,
+                                    symbols: java.util.Set[SymId[C, L]]): String = {
+    generateCheckMaskString(structure, nameOfMaskVariable, symbols.asScala.toSet)
+  }
+
+  def generateCheckMaskString[C, L](structure: RuleStructure[C, L],
+                               nameOfMaskVariable: String,
+                               symbols: Set[SymId[C, L]]): String = {
+    // set up the mask
+    val maskStrings = for {
+      (field, parentsInField) <- symbols
+        .map(s => structure.refinements.labels.project(s.system))
+        .groupBy(_ / 32)
+    } yield parentsInField.map(p => s"(1<<($p%32))").mkString(s"$nameOfMaskVariable.fields[$field] & (", "|", ")")
+
+    maskStrings.mkString("if (!((", ") | (", ")) ) return;")
   }
 
   def programText[L, C](cellSize: Int, structure: RuleStructure[C, L]): String = {

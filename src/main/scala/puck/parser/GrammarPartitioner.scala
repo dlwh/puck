@@ -3,8 +3,10 @@ package puck.parser
 import epic.trees.{UnaryRule, BinaryRule}
 import breeze.linalg.{SparseVector, Counter}
 import breeze.util.{Encoder, Index}
-import puck.cluster.KMeans
+import puck.cluster.{BalancedKMeans, KMeans}
 import java.util
+import breeze.stats.distributions.{ThreadLocalRandomGenerator, RandBasis}
+import org.apache.commons.math3.random.MersenneTwister
 
 /**
  * TODO
@@ -31,6 +33,7 @@ class KMeansGrammarPartitioner[C, L](k: Int) extends GrammarPartitioner[C, L] {
     for( (pair, vector) <- rules zip asVectors) {
       ident.put(vector, pair)
     }
+    implicit val basis = new RandBasis(new ThreadLocalRandomGenerator(new MersenneTwister(0)))
     val clusters = new KMeans[SparseVector[Double]](k).cluster(asVectors)
     clusters.map(_ map (ident.get(_)))
   }

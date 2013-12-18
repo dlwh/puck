@@ -8,6 +8,7 @@ import epic.trees.BinaryRule
 import epic.trees.UnaryRule
 import puck.parser.SymId
 import puck.parser.RuleStructure
+import java.io.{PrintStream, FileOutputStream}
 
 /**
  * TODO
@@ -24,15 +25,18 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
 
     val partitions  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(rules).toIndexedSeq
     assert(partitions.map(_.length).sum == rules.length)
+    
 
 
     val kernelTexts = partitions.zipWithIndex.map { case (rulePartition, partitionIndex) =>
 
-      val subpartitions = rulePartition.groupBy(_._1.parent.gpu % 8).map{case (subId, subpart) => subId -> doSingleRow(s"${name}_${partitionIndex}_$subId", subpart)}
+      
+      val subpartitions = rulePartition.groupBy(_._1.parent.gpu % 8)
+      val subpartitionsKernels = subpartitions.map{case (subId, subpart) => subId -> doSingleRow(s"${name}_${partitionIndex}_$subId", subpart)}
 
       s"""
 
-      ${subpartitions.values.map(_._2).mkString("\n\n")}
+      ${subpartitionsKernels.values.map(_._2).mkString("\n\n")}
 
  __attribute__((reqd_work_group_size(${wgSize.mkString(", ")})))
     __kernel void ${name}_$partitionIndex(__global volatile float* parents, __global int* parentIndex, __global float* left, __global float* right, __global const mask_t* masks, int numRows, int cellsToDo) {
@@ -41,7 +45,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
         for(int row = get_global_id(0); row < cellsToDo; row += numWorkers) {
           const mask_t mask = masks[parentIndex[row]];
           switch(grammarSubPartition) {
-            ${subpartitions.map {case  (id, (fnname, _)) => s"case $id: $fnname(mask, parents, row, left, right, numRows); continue;" }.mkString("\n            ")}
+            ${subpartitionsKernels.map {case  (id, (fnname, _)) => s"case $id: $fnname(mask, parents, row, left, right, numRows); continue;" }.mkString("\n            ")}
             default: continue;
           }
         }
@@ -51,6 +55,11 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
 
     }
     val text = CLMaskKernels.maskHeader(structure) + "\n" + writeParent + "\n" + kernelTexts.mkString("\n\n")
+//    val out = new PrintStream(new FileOutputStream(s"$name.cl"))
+//    out.print(text)
+//
+//    out.close()
+
     val prog = cl.createProgram(text)
     logger.info(s"Compiling $name")
     println(s"Compiling $name")
@@ -60,19 +69,11 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
 
   private def doSingleRow(name: String, rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)]):(String, String) = {
     val parents = rulePartition.map(_._1.parent).toSet
-      // set up the mask
-      val maskStrings = for {
-        (field, parentsInField) <- parents
-          .map(s => structure.refinements.labels.project(s.system))
-          .groupBy(_ / 32)
-      } yield parentsInField.map(p => s"(1<<($p%32))").mkString(s"mask.fields[$field] & (","|",")")
-
-      val checkMaskString = maskStrings.mkString("if (!((", ") | (", ")) ) return;")
-
+    val checkMaskString = CLMaskKernels.generateCheckMaskString(structure, "mask", parents)
 
     val parentVariables: Map[Int, Variable] = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
     name -> s"""
-void $name(const mask_t mask, __global volatile float* parents, int row, __global float* left, __global float* right, int numRows) {
+static void $name(const mask_t mask, __global volatile float* parents, int row, __global float* left, __global float* right, int numRows) {
     $checkMaskString
     ${parentVariables.values.map(_.declare).mkString("\n        ")}
     ${coreRuleLoop(rulePartition, parentVariables)}
@@ -168,11 +169,10 @@ void $name(const mask_t mask, __global volatile float* parents, int row, __globa
       |  *loc = value;//old.oldf;
       |}
     """.stripMargin
-
   }
 
-//  def clusterer:GrammarPartitioner[C, L] = new AgglomerativeGrammarPartitioner(numRestarts = 100, maxPartitionLabelSize = 100)//55)//new ILPGrammarClusterer(12, 55)
-  def clusterer:GrammarPartitioner[C, L] = new KMeansGrammarPartitioner(k = 2)//55)//new ILPGrammarClusterer(12, 55)
+//  def postClusterer:GrammarPartitioner[C, L] = new AgglomerativeGrammarPartitioner(numRestarts = 20, maxPartitionLabelSize = 20)//55)//new ILPGrammarClusterer(12, 55)
+  def clusterer:GrammarPartitioner[C, L] = new KMeansGrammarPartitioner(k = 20)//55)//new ILPGrammarClusterer(12, 55)
   def unaryClusterer:GrammarPartitioner[C, L] = new AgglomerativeGrammarPartitioner(numRestarts = 100, maxPartitionLabelSize = 200)//55)//new ILPGrammarClusterer(12, 55)
 
 }

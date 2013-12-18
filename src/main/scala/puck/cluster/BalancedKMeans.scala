@@ -11,19 +11,10 @@ import breeze.util._
 import breeze.numerics._
 
 
-/**
- *
- *
- * @author dlwh
- */
-trait Clusterer[T] {
-
-  def cluster(points: IndexedSeq[T]):IndexedSeq[IndexedSeq[T]]
-
-}
 
 
-class KMeans[T](k: Int, tolerance: Double = 1E-4, distance: Optional[(T,T)=>Double] = NotProvided)(implicit random: RandBasis = Rand, innerProductSpace: InnerProductSpace[T, Double]) extends Clusterer[T] {
+
+class BalancedKMeans[T](k: Int, tolerance: Double = 1E-4, distance: Optional[(T,T)=>Double] = NotProvided)(implicit random: RandBasis = Rand, innerProductSpace: InnerProductSpace[T, Double]) extends Clusterer[T] {
   private val ensured = MutablizingAdaptor.ensureMutable(innerProductSpace)
   import ensured.{wrap, unwrap}
   import ensured.Wrapper
@@ -31,7 +22,7 @@ class KMeans[T](k: Int, tolerance: Double = 1E-4, distance: Optional[(T,T)=>Doub
   private val metric = distance.getOrElse( (a:T,b:T) => math.pow(norm(wrap(a) - wrap(b)), 2))
 
   case class State(means: IndexedSeq[T], clusters: IndexedSeq[IndexedSeq[T]], error: Double, previousError: Double=Double.PositiveInfinity) {
-    def converged = closeTo(error,previousError,tolerance)
+    def converged = previousError <= error * (1.0001)
   }
 
 
@@ -45,14 +36,18 @@ class KMeans[T](k: Int, tolerance: Double = 1E-4, distance: Optional[(T,T)=>Doub
     else {
       Iterator.iterate(initialState(points)){ current =>
         val distances = points.par.map { x =>
-          val distances = current.means.map{m => metric(x,m)}
+          val clusterSizes = if(current.clusters eq null) Array.fill(current.means.size)(1.0/k) else current.clusters.map(_.size.toDouble / points.length).toArray
+          val distances = (current.means.zipWithIndex).map{ case(m,i) => (clusterSizes(i) + 1) * metric(x,m) - math.log(clusterSizes(i)+1)}
           val minPoint = distances.argmin // which cluster minimizes euclidean distance
           (x, minPoint,distances(minPoint))
         }
 
+      println(distances.map(_._2))
         val newClusters = distances.groupBy(_._2).seq.values.map{_.map(_._1)}
+      println(newClusters.map(_.size))
+
         val newMeans = newClusters.par.map(clust => clust.foldLeft(zeros(wrap(clust.head)))(_ += wrap(_)) /= clust.size.toDouble)
-        val error = distances.map(_._3).sum
+        val error = distances.map(tuple =>tuple._3).sum
 
         println(current.error, error)
 

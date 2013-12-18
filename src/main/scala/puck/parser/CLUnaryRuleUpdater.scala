@@ -1,6 +1,7 @@
 package puck.parser
 
 import puck._
+import scala.collection.JavaConverters._
 import com.nativelibs4java.opencl.{CLContext, CLQueue, CLEvent, CLKernel}
 import puck.linalg.CLMatrix
 import scala.Array
@@ -13,6 +14,8 @@ import puck.util._
  * @author dlwh
  */
 case class CLUnaryRuleUpdater(kernels: IndexedSeq[CLKernel]) {
+  def this(kernels: java.util.List[CLKernel]) = this(kernels.asScala.toIndexedSeq)
+
   def update(profiler: CLProfiler,
              parent: CLMatrix[Float],
              child: CLMatrix[Float],  events: CLEvent*)(implicit queue: CLQueue) = synchronized {
