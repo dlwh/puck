@@ -36,7 +36,7 @@ public class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, 
         kernelTexts.add(binaryKernelText(name, indexedBinaryRules));
 
         List<CLKernel> kernels = compileKernels(context, kernelTexts);
-        int[] globalSize = {32 * 40, 1, 8};
+        int[] globalSize = {32 * 40, 1, 1};
         int[] wgSize = {32, 1, 1};
 
         return new CLBinaryRuleUpdater(kernels, globalSize, wgSize);
