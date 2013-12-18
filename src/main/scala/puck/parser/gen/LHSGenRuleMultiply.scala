@@ -26,11 +26,7 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
     val partitions  : IndexedSeq[IndexedSeq[(BinaryRule[SymId[C, L]], Int)]] = clusterer.partition(rules).toIndexedSeq
     assert(partitions.map(_.length).sum == rules.length)
     
-
-
     val kernelTexts = partitions.zipWithIndex.map { case (rulePartition, partitionIndex) =>
-
-      
       val subpartitions = rulePartition.groupBy(_._1.parent.gpu % 8)
       val subpartitionsKernels = subpartitions.map{case (subId, subpart) => subId -> doSingleRow(s"${name}_${partitionIndex}_$subId", subpart)}
 
@@ -55,10 +51,6 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
 
     }
     val text = CLMaskKernels.maskHeader(structure) + "\n" + writeParent + "\n" + kernelTexts.mkString("\n\n")
-//    val out = new PrintStream(new FileOutputStream(s"$name.cl"))
-//    out.print(text)
-//
-//    out.close()
 
     val prog = cl.createProgram(text)
     logger.info(s"Compiling $name")
@@ -69,12 +61,12 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
 
   private def doSingleRow(name: String, rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)]):(String, String) = {
     val parents = rulePartition.map(_._1.parent).toSet
-    val checkMaskString = CLMaskKernels.generateCheckMaskString(structure, "mask", parents)
+    val checkMaskString = CLMaskKernels.genCheckIfMaskIsEmpty(structure, "mask", parents)
 
     val parentVariables: Map[Int, Variable] = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
     name -> s"""
 static void $name(const mask_t mask, __global volatile float* parents, int row, __global float* left, __global float* right, int numRows) {
-    $checkMaskString
+    if($checkMaskString) return;
     ${parentVariables.values.map(_.declare).mkString("\n        ")}
     ${coreRuleLoop(rulePartition, parentVariables)}
     ${{for( (id,v) <- parentVariables) yield s"write_parent(parents + numRows * $id + row, ${v.repr});"}.mkString("\n        ")}

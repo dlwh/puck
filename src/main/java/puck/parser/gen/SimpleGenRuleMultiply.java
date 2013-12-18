@@ -126,7 +126,7 @@ public class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, 
                 "    for (int row = get_global_id(0); row < cellsToDo; row += numWorkers) {\n" +
                 "      const mask_t mask = masks[parentIndex[row]];\n", name));
 
-        sb.append(CLMaskKernels.generateCheckMaskString(structure, "mask", getParents(partition)));
+        sb.append(String.format("    if (%s) continue;", CLMaskKernels.genCheckIfMaskIsEmpty(structure, "mask", getParents(partition))));
 
         sb.append("\n\n");
 

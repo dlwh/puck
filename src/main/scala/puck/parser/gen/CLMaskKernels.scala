@@ -98,13 +98,13 @@ object CLMaskKernels {
   }
 
 
-  def generateCheckMaskString[C, L](structure: RuleStructure[C, L],
+  def genCheckIfMaskIsEmpty[C, L](structure: RuleStructure[C, L],
                                     nameOfMaskVariable: String,
                                     symbols: java.util.Set[SymId[C, L]]): String = {
-    generateCheckMaskString(structure, nameOfMaskVariable, symbols.asScala.toSet)
+    genCheckIfMaskIsEmpty(structure, nameOfMaskVariable, symbols.asScala.toSet)
   }
 
-  def generateCheckMaskString[C, L](structure: RuleStructure[C, L],
+  def genCheckIfMaskIsEmpty[C, L](structure: RuleStructure[C, L],
                                nameOfMaskVariable: String,
                                symbols: Set[SymId[C, L]]): String = {
     // set up the mask
@@ -114,7 +114,7 @@ object CLMaskKernels {
         .groupBy(_ / 32)
     } yield parentsInField.map(p => s"(1<<($p%32))").mkString(s"$nameOfMaskVariable.fields[$field] & (", "|", ")")
 
-    maskStrings.mkString("if (!((", ") | (", ")) ) return;")
+    maskStrings.mkString("(!((", ") | (", ")) )")
   }
 
   def programText[L, C](cellSize: Int, structure: RuleStructure[C, L]): String = {
