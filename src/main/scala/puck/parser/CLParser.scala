@@ -38,6 +38,7 @@ import scala.collection.parallel.immutable.ParSeq
 class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         maxAllocSize: Long = 1<<30, // 1 gig
                         maxSentencesPerBatch: Long = 400,
+                        doEmptySpans: Boolean = false,
                         profile: Boolean = true)(implicit val context: CLContext) extends Logging {
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
@@ -605,19 +606,15 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       lastParent = -1
 
       val allSpans = if (batch.hasMasks) {
-        import BitHacks.OrderBitVectors.OrderingBitVectors
         val allSpans = for {
           sent <- 0 until batch.numSentences
           start <- 0 to batch.sentences(sent).length - span
           _ = total += 1
-          mask <-  batch.maskFor(sent, start, start + span)
-          if {val x = mask.any; if(!x) pruned += 1; x }
+          mask <- batch.maskFor(sent, start, start + span)
+          if {val x = mask.any; if(!x) pruned += 1; x || doEmptySpans }
         } yield (sent, start, start+span, mask)
-        val ordered = allSpans.sortBy(_._4)
-//        println(s"Sorting $span took " + (out - in)/1000.0)
-//        println(ordered.mkString("{\t","\n\t","\n}"))
+        val ordered = orderSpansBySimilarity(allSpans)
         ordered
-//        allSpans
       } else {
          for {
           sent <- 0 until batch.numSentences
@@ -627,7 +624,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       for {
         (sent, start, end, _) <- allSpans
-      //  if batch.isAllowedSpan(sent,start,start+span)
         split <- ranger(start, start + span, batch.sentences(sent).length)
         if split >= 0 && split <= batch.sentences(sent).length
       } {
@@ -636,7 +632,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val leftChildAllowed = if (split < start) batch.isAllowedSpan(sent,split, start) else batch.isAllowedSpan(sent, start, split)
         val rightChildAllowed = if (split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
 
-        if (leftChildAllowed && rightChildAllowed) {
+        if (doEmptySpans || (leftChildAllowed && rightChildAllowed)) {
           val leftChild = if (split < start) leftChart(batch, sent).cellOffset(split,start) else leftChart(batch, sent).cellOffset(start, split)
           val rightChild = if (split < end) rightChart(batch, sent).cellOffset(split,end) else rightChart(batch, sent).cellOffset(end, split)
           ev = enqueue(batch, span, parentTi, leftChild, rightChild, ev)
@@ -652,6 +648,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev.head
     }
 
+  }
+
+
+  // Sentence, Begin, End, BitMask
+  def orderSpansBySimilarity(spans: IndexedSeq[(Int, Int, Int, DenseVector[Int])]): IndexedSeq[(Int, Int, Int, DenseVector[Int])] = {
+    import BitHacks.OrderBitVectors.OrderingBitVectors
+    spans.sortBy(_._4)
   }
 
   private class UnaryUpdateManager(parser: ActualParser,
