@@ -440,7 +440,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         recTop(0, length)
 
       } catch {
-        case ex: Throwable => ex.printStackTrace(); null
+        case ex: Throwable => /*ex.printStackTrace();*/ null
       }
       val out = if (profile) System.currentTimeMillis() else 0L
       masks.data.waitUnmap()
@@ -730,7 +730,7 @@ object CLParser extends Logging {
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = Xbarize(),
                     prune: Boolean = false,
                     useGPU: Boolean = true, profile: Boolean = false,
-                    numToParse: Int = 1000, codeCache: File = new File("grammar.grz"),
+                    numToParse: Int = 1000, codeCache: File = new File("grammar.grz"), cache: Boolean = true,
                     maxParseLength: Int = 10000,
                     jvmParse: Boolean = false, parseTwice: Boolean = false,
                     textGrammarPrefix: String = null, checkPartitions: Boolean = false)
@@ -770,7 +770,7 @@ object CLParser extends Logging {
     }
     println(context)
 
-    var parserData:CLParserData[AnnotatedLabel, AnnotatedLabel, String] = if (codeCache != null && codeCache.exists()) {
+    var parserData:CLParserData[AnnotatedLabel, AnnotatedLabel, String] = if (cache && codeCache != null && codeCache.exists()) {
       CLParserData.read(new ZipFile(codeCache))
     } else {
       null
@@ -779,7 +779,7 @@ object CLParser extends Logging {
     if (parserData == null || parserData.grammar.signature != grammar.signature) {
       println("Regenerating parser data")
       parserData = CLParserData.make(grammar)
-      if (codeCache != null) {
+      if (cache && codeCache != null) {
         parserData.write(new BufferedOutputStream(new FileOutputStream(codeCache)))
       }
     }
