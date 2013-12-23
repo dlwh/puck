@@ -19,9 +19,12 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[CLKernel], globalSize: Array[
   private val buffer = extra.map(arr => kernels.head.getProgram.getContext.createIntBuffer(CLMem.Usage.Input, Pointer.pointerToInts(arr:_*), true))
 
   def update(profiler: CLProfiler, parent: CLMatrix[Float], parentPointers: CLBuffer[Int],
-             left: CLMatrix[Float], right: CLMatrix[Float],
+             left: CLMatrix[Float],  leftPointers: CLBuffer[Int],
+             right: CLMatrix[Float],  rightPointers: CLBuffer[Int],
              masks: CLMatrix[Int], events: CLEvent*)(implicit queue: CLQueue) = synchronized {
     require(parent.rows <= parentPointers.getElementCount)
+    require(left.rows <= leftPointers.getElementCount)
+    require(right.rows <= rightPointers.getElementCount)
     require(parent.rows == left.rows)
     require(parent.cols == left.cols)
     require(parent.majorStride == left.majorStride)
@@ -30,7 +33,8 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[CLKernel], globalSize: Array[
     require(parent.majorStride == right.majorStride)
     kernels.foldLeft(events) { (ev, k) =>
       k.setArgs(parent.data.safeBuffer, parentPointers,
-        left.data.safeBuffer, right.data.safeBuffer,
+        left.data.safeBuffer, leftPointers,
+        right.data.safeBuffer,  rightPointers,
         masks.data.safeBuffer,
         Integer.valueOf(parent.majorStride), Integer.valueOf(parent.rows) )
       buffer.foreach(buf => k.setArg(7, buf))

@@ -583,8 +583,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val evWriteDevSplitPoint = devSplitPointOffsets.writeArray(queue, splitPointOffsets, splitPointOffset + 1, ev:_*) profileIn hdTransferEvents
 
         val zeroParent = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
-        val kEvents = updater.update(binaryEvents, devParent(0 until offset, ::), devParentPtrs,
-          devLeft(0 until offset, ::), devRight(0 until offset, ::),
+        val kEvents = updater.update(binaryEvents,
+          devParent(0 until offset, ::), devParentPtrs,
+          devLeft(0 until offset, ::),   devLeftPtrs,
+          devRight(0 until offset, ::),  devRightPtrs,
           maskCharts, evTransLeft, evTransRight, zeroParent, evWriteDevParent)
 
         val sumEv = parser.data.util.sumSplitPoints(devParent,

@@ -1,17 +1,7 @@
 package puck.parser.gen
 
 import puck.parser._
-import epic.trees.{UnaryRule, BinaryRule}
 import com.nativelibs4java.opencl.CLContext
-import epic.trees.BinaryRule
-import epic.trees.UnaryRule
-import scala.Some
-import epic.trees.BinaryRule
-import epic.trees.UnaryRule
-import scala.Some
-import epic.trees.BinaryRule
-import epic.trees.UnaryRule
-import scala.Some
 import epic.trees.BinaryRule
 import epic.trees.UnaryRule
 import puck.parser.SymId
@@ -39,7 +29,9 @@ class NoninlinedRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semi
        | #define RULES_PER_BLOCK 64
        |
        |__kernel void $name(__global float* parents, __global int* parentIndex,
-       |                   __global float* left, __global float* right, __global const mask_t* masks,
+       |                   __global float* left, __global int* leftIndex,
+       |                    __global float* right, __global int* rightIndex,
+       |                    __global const mask_t* masks,
        |                   int numRows, int cellsToDo, __global const binary_rule* rules) {
        |    int numWorkers = get_global_size(0);
        |    __local binary_rule block[RULES_PER_BLOCK];

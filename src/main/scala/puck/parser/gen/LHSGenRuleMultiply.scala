@@ -1,14 +1,13 @@
 package puck.parser.gen
 
-import epic.trees.{UnaryRule, BinaryRule}
-import com.nativelibs4java.opencl.{CLKernel, CLContext}
+import com.nativelibs4java.opencl.CLContext
 import puck.parser._
 import com.typesafe.scalalogging.slf4j.Logging
 import epic.trees.BinaryRule
 import epic.trees.UnaryRule
 import puck.parser.SymId
 import puck.parser.RuleStructure
-import java.io.{PrintStream, FileOutputStream}
+import scala.collection.mutable.ArrayBuffer
 
 /**
  * TODO
@@ -16,7 +15,9 @@ import java.io.{PrintStream, FileOutputStream}
  * @author dlwh
  **/
 
-class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring: RuleSemiring) extends GenRuleMultiply[C, L] with Logging {
+class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L], checkParent: Boolean = true,
+                               checkLeft: Boolean = false,
+                               checkRight: Boolean = false)(implicit semiring: RuleSemiring) extends GenRuleMultiply[C, L] with Logging {
 
   def binaryRuleApplication(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLBinaryRuleUpdater = {
 
@@ -35,13 +36,22 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
       ${subpartitionsKernels.values.map(_._2).mkString("\n\n")}
 
  __attribute__((reqd_work_group_size(${wgSize.mkString(", ")})))
-    __kernel void ${name}_$partitionIndex(__global volatile float* parents, __global int* parentIndex, __global float* left, __global float* right, __global const mask_t* masks, int numRows, int cellsToDo) {
+    __kernel void ${name}_$partitionIndex(__global volatile float* parents,
+                                          __global int* parentIndex,
+                                          __global float* left,
+                                          __global int* leftIndex,
+                                          __global float* right,
+                                          __global int* rightIndex,
+                                          __global const mask_t* masks,
+                                          int numRows, int cellsToDo) {
         int numWorkers = get_global_size(0);
         int grammarSubPartition = get_group_id(1);
         for(int row = get_global_id(0); row < cellsToDo; row += numWorkers) {
           const mask_t mask = masks[parentIndex[row]];
+          const mask_t leftMask = masks[leftIndex[row]];
+          const mask_t rightMask = masks[rightIndex[row]];
           switch(grammarSubPartition) {
-            ${subpartitionsKernels.map {case  (id, (fnname, _)) => s"case $id: $fnname(mask, parents, row, left, right, numRows); continue;" }.mkString("\n            ")}
+            ${subpartitionsKernels.map {case  (id, (fnname, _)) => s"case $id: $fnname(mask, leftMask, rightMask, parents, row, left, right, numRows); continue;" }.mkString("\n            ")}
             default: continue;
           }
         }
@@ -61,12 +71,25 @@ class LHSGenRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring
 
   private def doSingleRow(name: String, rulePartition: IndexedSeq[(BinaryRule[SymId[C, L]], Int)]):(String, String) = {
     val parents = rulePartition.map(_._1.parent).toSet
-    val checkMaskString = CLMaskKernels.genCheckIfMaskIsEmpty(structure, "mask", parents)
+    var checkMasks = ArrayBuffer[String]()
+    if(checkParent)
+      checkMasks += CLMaskKernels.genCheckIfMaskIsEmpty(structure, "mask", parents)
+    if(checkLeft)
+      checkMasks += CLMaskKernels.genCheckIfMaskIsEmpty(structure, "leftMask", rulePartition.map(_._1.left).toSet)
+    if(checkRight)
+      checkMasks += CLMaskKernels.genCheckIfMaskIsEmpty(structure, "rightMask", rulePartition.map(_._1.right).toSet)
+
+    val checkMaskString = if(checkMasks.isEmpty) {
+      ""
+    } else {
+      checkMasks.mkString("if(", "||", ") return;" )
+    }
+
 
     val parentVariables: Map[Int, Variable] = parents.iterator.map(p => p.gpu -> Variable(s"parent_${p.gpu}", p.fineSym.toString)).toMap
     name -> s"""
-static void $name(const mask_t mask, __global volatile float* parents, int row, __global float* left, __global float* right, int numRows) {
-    if($checkMaskString) return;
+static void $name(const mask_t mask, const mask_t leftMask, const mask_t rightMask, __global volatile float* parents, int row, __global float* left, __global float* right, int numRows) {
+    $checkMaskString
     ${parentVariables.values.map(_.declare).mkString("\n        ")}
     ${coreRuleLoop(rulePartition, parentVariables)}
     ${{for( (id,v) <- parentVariables) yield s"write_parent(parents + numRows * $id + row, ${v.repr});"}.mkString("\n        ")}

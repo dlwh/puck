@@ -120,7 +120,11 @@ public class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, 
         sb.append("\n\n");
 
         sb.append(String.format(
-                " __kernel void %s(__global volatile float* parents, __global int* parentIndex, __global float* left, __global float* right, __global const mask_t* masks, int numRows, int cellsToDo) {\n" +
+                " __kernel void %s(__global volatile float* parents," +
+                "                  __global int* parentIndex, " +
+                "                  __global float* left, __global int* leftIndex, " +
+                "                  __global float* right, __global int* rightIndex," +
+                "                  __global const mask_t* masks, int numRows, int cellsToDo) {\n" +
                 "    int numWorkers = get_global_size(0);\n" +
                 "    int grammarSubPartition = get_group_id(1);\n" +
                 "    for (int row = get_global_id(0); row < cellsToDo; row += numWorkers) {\n" +
