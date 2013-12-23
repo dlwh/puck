@@ -29,6 +29,8 @@ import epic.parser.SimpleRefinedGrammar.CloseUnaries
 import epic.parser.projections.{ParserChartConstraintsFactory, ConstraintCoreGrammarAdaptor}
 import epic.lexicon.SimpleLexicon
 import scala.collection.parallel.immutable.ParSeq
+import java.util
+import java.util.Collections
 
 /**
  * TODO
@@ -729,7 +731,8 @@ object CLParser extends Logging {
 
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = Xbarize(),
                     prune: Boolean = false,
-                    useGPU: Boolean = true, profile: Boolean = false,
+                    device: String = "nvidia",
+                    profile: Boolean = false,
                     numToParse: Int = 1000, codeCache: File = new File("grammar.grz"), cache: Boolean = true,
                     maxParseLength: Int = 10000,
                     jvmParse: Boolean = false, parseTwice: Boolean = false,
@@ -741,6 +744,21 @@ object CLParser extends Logging {
     val params = CommandLineParser.readIn[JointParams[Params]](args)
     val myParams:Params = params.trainer
     import myParams._
+
+
+    implicit val context: CLContext = {
+      val (good, bad) = JavaCL.listPlatforms().flatMap(_.listAllDevices(true)).partition(d => device.r.findFirstIn(d.toString.toLowerCase()).nonEmpty)
+      println(good.toIndexedSeq)
+      println(bad.toIndexedSeq)
+      if(good.isEmpty) {
+        JavaCL.createContext(Collections.emptyMap(), bad.sortBy(d => d.toString.toLowerCase().contains("geforce")).last)
+      } else {
+        JavaCL.createContext(Collections.emptyMap(), good.head)
+      }
+
+    }
+    println(context)
+
     println("Training Parser...")
     println(params)
     val transformed = params.treebank.copy(binarization="left", keepUnaryChainsFromTrain = false).trainTrees
@@ -759,16 +777,6 @@ object CLParser extends Logging {
     out.println(xbarGrammar.refinements.rules.toString())
     out.close()
 
-    implicit val context = if (useGPU) {
-      val gpu = JavaCL.listPlatforms.flatMap(_.listGPUDevices(true)).sortBy(d => d.toString.contains("GeForce") || d.toString.toLowerCase.contains("nvidia")).last
-      JavaCL.createContext(new java.util.HashMap(), gpu)
-    } else {
-      //      val gpu = JavaCL.listPlatforms.flatMap(_.listGPUDevices(true)).last
-      //      JavaCL.createContext(new java.util.HashMap(), gpu)
-      val cpuPlatform:CLPlatform = JavaCL.listPlatforms().filter(_.listCPUDevices(true).nonEmpty).head
-      cpuPlatform.createContext(new java.util.HashMap(), cpuPlatform.listCPUDevices(true):_*)
-    }
-    println(context)
 
     var parserData:CLParserData[AnnotatedLabel, AnnotatedLabel, String] = if (cache && codeCache != null && codeCache.exists()) {
       CLParserData.read(new ZipFile(codeCache))
