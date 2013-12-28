@@ -764,7 +764,8 @@ object CLParser extends Logging {
     println("Training Parser...")
     println(params)
     val transformed = params.treebank.copy(binarization="left", keepUnaryChainsFromTrain = false).trainTrees
-    val toParse =  params.treebank.trainTrees.filter(_.words.length <= maxParseLength).map(_.words).take(numToParse)
+    val gold = params.treebank.trainTrees.filter(_.words.length <= maxParseLength).take(numToParse)
+    val toParse =  gold.map(_.words)
 
     val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = if (textGrammarPrefix == null) {
       GenerativeParser.annotated(annotator, transformed)
@@ -819,6 +820,7 @@ object CLParser extends Logging {
     if (parseTwice) {
       timeIn = System.currentTimeMillis()
       val parts2 = kern.parse(toParse)
+      println(eval(parts2 zip gold.map(_.tree)))
       timeOut = System.currentTimeMillis()
       //println(parts2 zip train map {case (k,v) => k render v})
       println(s"CL Parsing took x2: ${(timeOut-timeIn)/1000.0}")
@@ -842,9 +844,10 @@ object CLParser extends Logging {
         */
         m -> w
       }
+      println(eval(margs.map(_._1) zip gold.map(_.tree)))
       timeOut = System.currentTimeMillis()
       println(s"Scala Parsing took: ${(timeOut-timeIn)/1000.0}")
-      println(margs.map{case (m ,w) => m render w})
+     // println(margs.map{case (m ,w) => m render w})
     }
 
     kern.release()
@@ -866,6 +869,17 @@ object CLParser extends Logging {
   def fromParserDatas[L, L2, W](data: IndexedSeq[CLParserData[L, L2, W]], profile: Boolean)(implicit context: CLContext): CLParser[L, L2, W] = {
     val kern = new CLParser[L, L2, W](data, profile = profile)
     kern
+  }
+
+  def eval(trees: IndexedSeq[(BinarizedTree[AnnotatedLabel], BinarizedTree[AnnotatedLabel])]) = {
+    val chainReplacer = AnnotatedLabelChainReplacer
+    val eval: ParseEval[String] = new ParseEval(Set("","''", "``", ".", ":", ",", "TOP"))
+    trees map { case (guess, gold) =>
+      val tree: Tree[String] = chainReplacer.replaceUnaries(guess).map(_.label)
+      val guessTree = Trees.debinarize(Trees.deannotate(tree))
+      val deBgold: Tree[String] = Trees.debinarize(Trees.deannotate(chainReplacer.replaceUnaries(gold).map(_.label)))
+      eval.apply(guessTree, deBgold)
+    } reduceLeft (_ + _)
   }
 
 
