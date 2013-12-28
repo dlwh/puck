@@ -810,14 +810,16 @@ object CLParser extends Logging {
     val trees = kern.parse(toParse)
     var timeOut = System.currentTimeMillis()
     println(trees zip toParse map {case (k,v) if k != null => k render v; case (k,v) => ":("})
-    println(s"CL Parsing took: ${(timeOut-timeIn)/1000.0}")
+    var parseDuration = (timeOut-timeIn)/1000.0
+    println(f"CL Parsing took: ${parseDuration} (${toParse.length/parseDuration}%.3f sent/sec)")
     if (parseTwice) {
       timeIn = System.currentTimeMillis()
       val parts2 = kern.parse(toParse)
       println(eval(parts2 zip gold.map(_.tree)))
       timeOut = System.currentTimeMillis()
       //println(parts2 zip train map {case (k,v) => k render v})
-      println(s"CL Parsing took x2: ${(timeOut-timeIn)/1000.0}")
+      parseDuration = (timeOut-timeIn)/1000.0
+      println(f"CL Parsing took x2: ${parseDuration} (${toParse.length/parseDuration}%.3f sent/sec)")
     }
     if (jvmParse) {
       val parser = if(prune) {
@@ -840,7 +842,8 @@ object CLParser extends Logging {
       }
       println(eval(margs.map(_._1) zip gold.map(_.tree)))
       timeOut = System.currentTimeMillis()
-      println(s"Scala Parsing took: ${(timeOut-timeIn)/1000.0}")
+      parseDuration = (timeOut-timeIn)/1000.0
+      println(f"Scala parsing took ${parseDuration} (${toParse.length/parseDuration}%.3f sent/sec)")
      // println(margs.map{case (m ,w) => m render w})
     }
 
