@@ -775,12 +775,6 @@ object CLParser extends Logging {
 
     lazy val xbarGrammar = GenerativeParser.annotated(grammar.grammar, grammar.lexicon, Xbarize(), transformed)
 
-    grammar.prettyPrint(new FileWriter("grammar.out"))
-    val out = new PrintStream(new FileOutputStream("refs.txt"))
-    out.println(xbarGrammar.refinements.rules.toString())
-    out.close()
-
-
     var parserData:CLParserData[AnnotatedLabel, AnnotatedLabel, String] = if (cache && codeCache != null && codeCache.exists()) {
       CLParserData.read(new ZipFile(codeCache))
     } else {
