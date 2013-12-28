@@ -2,14 +2,17 @@ package puck.parser.gen;
 
 import com.nativelibs4java.opencl.CLContext;
 import com.nativelibs4java.opencl.CLKernel;
+
 import puck.parser.CLBinaryRuleUpdater;
 import puck.parser.CLUnaryRuleUpdater;
 import puck.parser.RuleStructure;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 
 /**
  * TODO
@@ -33,8 +36,13 @@ public class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, 
 
         // todo: partition the grammar
 
-        kernelTexts.add(binaryKernelText(name, indexedBinaryRules));
-
+//        kernelTexts.add(binaryKernelText(name, indexedBinaryRules));
+        
+        List<IndexedBinaryRule<C, L>>[] splits = randomSplit(indexedBinaryRules, 24, new Random(0));
+        for (int s=0; s<splits.length; s++) {
+        	kernelTexts.add(binaryKernelText(name+s, splits[s]));
+        }
+        
         List<CLKernel> kernels = compileKernels(context, kernelTexts);
         int[] globalSize = {32 * 40, 1, 1};
         int[] wgSize = {32, 1, 1};
@@ -42,13 +50,29 @@ public class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, 
         return new CLBinaryRuleUpdater(kernels, globalSize, wgSize);
     }
 
+    
+    public static <T> List<T>[] randomSplit(List<T> list, int numSegs, Random rand) {
+    	List<T> shuffledList = new ArrayList<T>(list);
+    	Collections.shuffle(shuffledList, rand);
+    	List<T>[] result = new List[numSegs];
+        int segSize = (int) Math.ceil(((double) shuffledList.size()) / numSegs);
+        for (int s=0; s<numSegs; ++s) {
+        	result[s] = shuffledList.subList(s*segSize, Math.min((s+1)*segSize, shuffledList.size()));
+        }
+    	return result;
+    }
 
 
     @Override
     public CLUnaryRuleUpdater javaUnaryRuleApplication(List<IndexedUnaryRule<C, L>> indexedUnaryRules, String name, CLContext context) {
         ArrayList<String> kernelTexts = new ArrayList<String>();
 
-        kernelTexts.add(unaryKernelText(name, indexedUnaryRules));
+//        kernelTexts.add(unaryKernelText(name, indexedUnaryRules));
+      
+        List<IndexedUnaryRule<C, L>>[] splits = randomSplit(indexedUnaryRules, 24, new Random(0));
+        for (int s=0; s<splits.length; s++) {
+        	kernelTexts.add(unaryKernelText(name+s, splits[s]));
+        }
 
         List<CLKernel> kernels = compileKernels(context, kernelTexts);
 
