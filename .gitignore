@@ -20,3 +20,9 @@ project/user.sbt
 .idea_modules/
 
 .*.swp
+/bin
+/.settings
+/grammar.grz
+/.cache
+/grammar.out
+/refs.txt
