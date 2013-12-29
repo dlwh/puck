@@ -678,9 +678,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   // Sentence, Begin, End, BitMask
   def orderSpansBySimilarity(spans: IndexedSeq[(Int, Int, Int, DenseVector[Int])]): IndexedSeq[(Int, Int, Int, DenseVector[Int])] = {
     import BitHacks.OrderBitVectors.OrderingBitVectors
-    //spans.sortBy(_._4)
     val in = System.currentTimeMillis()
-    val res = spans.groupBy(_._4.toString).values.flatten.toIndexedSeq
+    val res = spans.sortBy(_._4)
+    //val res = spans.groupBy(v =>v._4.toArray.toIndexedSeq).values.flatten.toIndexedSeq
     val out = System.currentTimeMillis()
     sortTime += (out - in)
     res
