@@ -68,7 +68,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
 
       ev = parsers.last.inside(finalBatch, ev)
-      ev = parsers.last.outside(finalBatch, ev)
+     // ev = parsers.last.outside(finalBatch, ev)
       ev.waitFor()
       for ( i <- 0 until batch.numSentences) yield {
         (batch.insideCharts(i).top(0, batch.sentences(i).length, data.last.structure.root))
