@@ -4,6 +4,7 @@ import epic.parser.projections.GrammarRefinements
 import epic.parser.BaseGrammar
 import epic.trees.{BinaryRule, UnaryRule}
 import breeze.util.Index
+import scala.io.Source
 
 /**
  *
@@ -13,6 +14,7 @@ import breeze.util.Index
 case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: BaseGrammar[L], scores: Array[Float]) {
 
   def numCoarseSyms = refinements.labels.coarseIndex.size
+
 
 
   val (
@@ -26,6 +28,17 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   unaryTermRules,
   identityTermUnaries,
   root: Int) = {
+
+    val preferredSymbolOrdering = {
+      val pairs = for {
+        line <- Source.fromInputStream(this.getClass.getResourceAsStream("/symbols_dump")).getLines()
+      } yield {
+        val Array(index, id) = line.split(" ")
+        id -> index.toInt
+      }
+      pairs.toMap.withDefaultValue(-1)
+    }
+
     val rules = grammar.index.zipWithIndex.toIndexedSeq
     // jesus
     val termIndex, nontermIndex = Index[L]()
@@ -41,7 +54,7 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
       case (rule@UnaryRule(p,c,_),_) => Iterator.empty
     }.toSet
 
-    val syms = nonterms ++ rhsSyms
+    val syms = (nonterms ++ rhsSyms).toIndexedSeq.sortBy(sym => preferredSymbolOrdering(sym.toString))
 
     val idedSyms = {
       for(sym <- syms) yield {
