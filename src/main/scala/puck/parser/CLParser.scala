@@ -832,12 +832,6 @@ object CLParser extends Logging {
       timeIn = System.currentTimeMillis()
       val margs = toParse.map { w =>
         val m = parser.apply(w)
-        /*
-        printChart(m, true, false)
-        printChart(m, false, false)
-        printChart(m, true, true)
-        printChart(m, false, true)
-        */
         m -> w
       }
       println(eval(margs.map(_._1) zip gold.map(_.tree)))
@@ -859,8 +853,7 @@ object CLParser extends Logging {
 
 
   def fromParserData[L, L2, W](data: CLParserData[L, L2, W], profile: Boolean)(implicit context: CLContext): CLParser[L, L2, W] = {
-    val kern = new CLParser[L, L2, W](IndexedSeq(data), profile = profile)
-    kern
+    fromParserDatas(IndexedSeq(data), profile)
   }
 
   def fromParserDatas[L, L2, W](data: IndexedSeq[CLParserData[L, L2, W]], profile: Boolean)(implicit context: CLContext): CLParser[L, L2, W] = {
