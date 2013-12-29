@@ -171,6 +171,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val parsers = data.map(new ActualParser(_))
   var pruned = 0
   var total = 0
+  var sortTime = 0L
 
   private class ActualParser(val data: CLParserData[C, L, W]) {
     import data._
@@ -183,6 +184,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       allProfilers.foreach(_.tick())
       pruned = 0
       total = 0
+      sortTime = 0
 
       val evZeroCharts = zmk.fillMemory(devInside.data, _zero, events:_*) profileIn initMemFillEvents
       val evZeroOutside = zmk.fillMemory(devOutside.data, _zero, events:_*) profileIn initMemFillEvents
@@ -202,6 +204,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         allProfilers.foreach(_.tock())
         allProfilers.foreach(p => println(s"Inside $p"))
         println(f"Time accounted for: ${allProfilers.map(_.processingTime).sum}%.3f")
+        println("Sorting took: " + sortTime/1000.0)
+
       }
       println(s"Pruned $pruned/$total")
 
@@ -242,6 +246,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         Thread.sleep(15)
         allProfilers.foreach(p => println(s"Outside $p"))
         println(f"Time accounted for: ${allProfilers.map(_.processingTime).sum}%.3f")
+        println("Sorting took: " + sortTime/1000.0)
       }
       println(s"Pruned $pruned/$total")
 
@@ -663,7 +668,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   // Sentence, Begin, End, BitMask
   def orderSpansBySimilarity(spans: IndexedSeq[(Int, Int, Int, DenseVector[Int])]): IndexedSeq[(Int, Int, Int, DenseVector[Int])] = {
     import BitHacks.OrderBitVectors.OrderingBitVectors
-    spans.sortBy(_._4)
+    //spans.sortBy(_._4)
+    val in = System.currentTimeMillis()
+    val res = spans.groupBy(_._4.toString).values.flatten.toIndexedSeq
+    val out = System.currentTimeMillis()
+    sortTime += (out - in)
+    res
   }
 
   private class UnaryUpdateManager(parser: ActualParser,
