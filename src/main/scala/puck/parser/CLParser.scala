@@ -447,7 +447,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         recTop(0, length)
 
       } catch {
-        case ex: Throwable => /*ex.printStackTrace();*/ null
+        case ex: Throwable => ex.printStackTrace(); null
       }
       val out = if (profile) System.currentTimeMillis() else 0L
       masks.data.waitUnmap()
@@ -757,7 +757,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 object CLParser extends Logging {
 
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = Xbarize(),
-                    prune: Boolean = false,
                     device: String = "nvidia",
                     profile: Boolean = false,
                     numToParse: Int = 1000, codeCache: File = new File("grammar.grz"), cache: Boolean = true,
@@ -792,13 +791,14 @@ object CLParser extends Logging {
     val gold = params.treebank.trainTrees.filter(_.words.length <= maxParseLength).take(numToParse)
     val toParse =  gold.map(_.words)
 
-    val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = if (textGrammarPrefix == null) {
-      GenerativeParser.annotated(annotator, transformed)
+    val grammars: IndexedSeq[SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String]] = if (textGrammarPrefix == null) {
+      IndexedSeq(GenerativeParser.annotated(annotator, transformed))
     } else {
-      SimpleRefinedGrammar.parseBerkeleyText(textGrammarPrefix, -12, CloseUnaries.None)
+      textGrammarPrefix.split(":").map(SimpleRefinedGrammar.parseBerkeleyText(_, -12, CloseUnaries.None))
     }
 
-    lazy val xbarGrammar = GenerativeParser.annotated(grammar.grammar, grammar.lexicon, Xbarize(), transformed)
+    val grammar = grammars.last
+
 
     var parserData:CLParserData[AnnotatedLabel, AnnotatedLabel, String] = if (cache && codeCache != null && codeCache.exists()) {
       CLParserData.read(new ZipFile(codeCache))
@@ -814,13 +814,11 @@ object CLParser extends Logging {
       }
     }
 
-    val kern = if (prune) {
-      val genData = CLParserData.make(xbarGrammar)
-      fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](IndexedSeq(genData, parserData), profile)
-    } else {
-      fromParserData[AnnotatedLabel, AnnotatedLabel, String](parserData, profile)
-    }
+    val allData = grammars.dropRight(1).map(CLParserData.make(_)) :+ parserData
 
+    val kern = {
+      fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](allData, profile)
+    }
 
     if (checkPartitions) {
       val partsX = kern.partitions(toParse)
@@ -848,8 +846,8 @@ object CLParser extends Logging {
       println(f"CL Parsing took x2: ${parseDuration} (${toParse.length/parseDuration}%.3f sent/sec)")
     }
     if (jvmParse) {
-      val parser = if(prune) {
-        Parser(new ConstraintCoreGrammarAdaptor(xbarGrammar.grammar, xbarGrammar.lexicon, new ParserChartConstraintsFactory(Parser(xbarGrammar, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate)),
+      val parser = if(grammars.length > 1) {
+        Parser(new ConstraintCoreGrammarAdaptor(grammar.grammar, grammar.lexicon, new ParserChartConstraintsFactory(Parser(grammars.head, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate)),
           grammar,
           if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
       } else {
@@ -890,7 +888,7 @@ object CLParser extends Logging {
   def eval(trees: IndexedSeq[(BinarizedTree[AnnotatedLabel], BinarizedTree[AnnotatedLabel])]) = {
     val chainReplacer = AnnotatedLabelChainReplacer
     val eval: ParseEval[String] = new ParseEval(Set("","''", "``", ".", ":", ",", "TOP"))
-    trees map { case (guess, gold) =>
+    trees filter (_._1 ne null) map { case (guess, gold) =>
       val tree: Tree[String] = chainReplacer.replaceUnaries(guess).map(_.label)
       val guessTree = Trees.debinarize(Trees.deannotate(tree))
       val deBgold: Tree[String] = Trees.debinarize(Trees.deannotate(chainReplacer.replaceUnaries(gold).map(_.label)))
