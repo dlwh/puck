@@ -809,7 +809,8 @@ object CLParser extends Logging {
     var timeIn = System.currentTimeMillis()
     val trees = kern.parse(toParse)
     var timeOut = System.currentTimeMillis()
-    println(trees zip toParse map {case (k,v) if k != null => k render v; case (k,v) => ":("})
+      println(eval(trees zip gold.map(_.tree)))
+    //println(trees zip toParse map {case (k,v) if k != null => k render v; case (k,v) => ":("})
     var parseDuration = (timeOut-timeIn)/1000.0
     println(f"CL Parsing took: ${parseDuration} (${toParse.length/parseDuration}%.3f sent/sec)")
     if (parseTwice) {
