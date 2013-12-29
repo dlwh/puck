@@ -626,20 +626,25 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         } yield (sent, start, start+span, null)
       }
 
-      for {
-        (sent, start, end, _) <- allSpans
-        split <- ranger(start, start + span, batch.sentences(sent).length)
-        if split >= 0 && split <= batch.sentences(sent).length
-      } {
-        val end = start + span
-        val parentTi = parentChart(batch, sent).cellOffset(start,end)
-        val leftChildAllowed = if (split < start) batch.isAllowedSpan(sent,split, start) else batch.isAllowedSpan(sent, start, split)
-        val rightChildAllowed = if (split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
+      for ( (sent, start, end, _) <- allSpans ) {
+        val splitRange = ranger(start, start + span, batch.sentences(sent).length)
+        var split =  splitRange.start
+        val terminal = splitRange.terminalElement
+        val step = splitRange.step
+        while (split != terminal) {
+          if (split >= 0 && split <= batch.sentences(sent).length) {
+            val end = start + span
+            val parentTi = parentChart(batch, sent).cellOffset(start,end)
+            val leftChildAllowed = if (split < start) batch.isAllowedSpan(sent,split, start) else batch.isAllowedSpan(sent, start, split)
+            val rightChildAllowed = if (split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
 
-        if (doEmptySpans || (leftChildAllowed && rightChildAllowed)) {
-          val leftChild = if (split < start) leftChart(batch, sent).cellOffset(split,start) else leftChart(batch, sent).cellOffset(start, split)
-          val rightChild = if (split < end) rightChart(batch, sent).cellOffset(split,end) else rightChart(batch, sent).cellOffset(end, split)
-          ev = enqueue(batch, span, parentTi, leftChild, rightChild, ev)
+            if (doEmptySpans || (leftChildAllowed && rightChildAllowed)) {
+              val leftChild = if (split < start) leftChart(batch, sent).cellOffset(split,start) else leftChart(batch, sent).cellOffset(start, split)
+              val rightChild = if (split < end) rightChart(batch, sent).cellOffset(split,end) else rightChart(batch, sent).cellOffset(end, split)
+              ev = enqueue(batch, span, parentTi, leftChild, rightChild, ev)
+            }
+          }
+          split += step
         }
 
       }
@@ -833,12 +838,6 @@ object CLParser extends Logging {
       timeIn = System.currentTimeMillis()
       val margs = toParse.map { w =>
         val m = parser.apply(w)
-        /*
-        printChart(m, true, false)
-        printChart(m, false, false)
-        printChart(m, true, true)
-        printChart(m, false, true)
-        */
         m -> w
       }
       println(eval(margs.map(_._1) zip gold.map(_.tree)))
@@ -860,8 +859,7 @@ object CLParser extends Logging {
 
 
   def fromParserData[L, L2, W](data: CLParserData[L, L2, W], profile: Boolean)(implicit context: CLContext): CLParser[L, L2, W] = {
-    val kern = new CLParser[L, L2, W](IndexedSeq(data), profile = profile)
-    kern
+    fromParserDatas(IndexedSeq(data), profile)
   }
 
   def fromParserDatas[L, L2, W](data: IndexedSeq[CLParserData[L, L2, W]], profile: Boolean)(implicit context: CLContext): CLParser[L, L2, W] = {
