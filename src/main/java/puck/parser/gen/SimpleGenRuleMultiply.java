@@ -8,140 +8,91 @@ import puck.parser.CLUnaryRuleUpdater;
 import puck.parser.RuleStructure;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Random;
 
 /**
  * TODO
  *
  * @author dlwh
  */
-public class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, L> {
-
+public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, L> {
+	
+	public static final int WARP_SIZE = 32;
+	public static final int NUM_WARPS = 48;
+	public static final int NUM_SM = 8;
+	
     private RuleStructure<C, L> structure;
 
     public SimpleGenRuleMultiply(RuleStructure<C, L> structure) {
         this.structure = structure;
     }
+    
+    public abstract List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules);
 
-    @Override
+    public abstract List<IndexedBinaryRule<C, L>>[][] segmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules);
+
     public CLBinaryRuleUpdater javaBinaryRuleApplication(List<IndexedBinaryRule<C, L>> indexedBinaryRules, String name, CLContext context) {
         ArrayList<String> kernelTexts = new ArrayList<String>();
-
-//        if(4 + 4 == 8)
-//            throw new UnsupportedOperationException("Not implemented!");
-
-        // todo: partition the grammar
-
-//        kernelTexts.add(binaryKernelText(name, indexedBinaryRules));
-        
-        List<IndexedBinaryRule<C, L>>[] splits = randomSplit(indexedBinaryRules, 24, new Random(0));
-        for (int s=0; s<splits.length; s++) {
-        	kernelTexts.add(binaryKernelText(name+s, splits[s]));
+        List<IndexedBinaryRule<C, L>>[][] segments = segmentBinaries(indexedBinaryRules);
+        for (int s=0; s<segments.length; s++) {
+        	kernelTexts.add(binaryKernelText(name+s, segments[s]));
         }
-        
         List<CLKernel> kernels = compileKernels(context, kernelTexts);
-        int[] globalSize = {32 * 40, 1, 1};
-        int[] wgSize = {32, 1, 1};
-
+        int[] globalSize = {WARP_SIZE * NUM_WARPS, NUM_SM, 1};
+        int[] wgSize = {WARP_SIZE, 1, 1};
         return new CLBinaryRuleUpdater(kernels, globalSize, wgSize);
     }
-
     
-    public static <T> List<T>[] randomSplit(List<T> list, int numSegs, Random rand) {
-    	List<T> shuffledList = new ArrayList<T>(list);
-    	Collections.shuffle(shuffledList, rand);
-    	List<T>[] result = new List[numSegs];
-        int segSize = (int) Math.ceil(((double) shuffledList.size()) / numSegs);
-        for (int s=0; s<numSegs; ++s) {
-        	result[s] = shuffledList.subList(s*segSize, Math.min((s+1)*segSize, shuffledList.size()));
-        }
-    	return result;
-    }
-
-
-    @Override
-    public CLUnaryRuleUpdater javaUnaryRuleApplication(List<IndexedUnaryRule<C, L>> indexedUnaryRules, String name, CLContext context) {
-        ArrayList<String> kernelTexts = new ArrayList<String>();
-
-//        kernelTexts.add(unaryKernelText(name, indexedUnaryRules));
-      
-        List<IndexedUnaryRule<C, L>>[] splits = randomSplit(indexedUnaryRules, 24, new Random(0));
-        for (int s=0; s<splits.length; s++) {
-        	kernelTexts.add(unaryKernelText(name+s, splits[s]));
-        }
-
-        List<CLKernel> kernels = compileKernels(context, kernelTexts);
-
-        return new CLUnaryRuleUpdater(kernels);
-    }
-
-    private String unaryKernelText(String name, List<IndexedUnaryRule<C, L>> partition) {
-        // todo: subpartition the grammar
+    private String binaryKernelText(String name, List<IndexedBinaryRule<C, L>>[] subsegments) {
         StringBuilder sb = new StringBuilder();
-
-        sb.append(String.format(
-                " __kernel void %s(__global volatile float* parents, __global float* child, int numRows, int cellsToDo) {\n" +
-                "    int numWorkers = get_global_size(0);\n" +
-                "    int grammarSubPartition = get_group_id(1);\n" +
-                "    for (int row = get_global_id(0); row < cellsToDo; row += numWorkers) {\n", name));
-
-
-        sb.append("\n\n");
-
-        Map<Integer,String> declaredParents = new HashMap<Integer, String>(),
-                declaredLeft = new HashMap<Integer, String>();
-
-        // todo: reorder to sensible groupings
-        for(IndexedUnaryRule<C, L> rule: partition) {
-            int parentIndex = rule.rule().parent().gpu();
-            String parent = declaredParents.get(parentIndex);
-            if(parent == null) {
-                parent = "parent_" + parentIndex;
-                sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
-                declaredParents.put(parentIndex, parent);
-            }
-
-            int childIndex = rule.rule().child().gpu();
-            String child = declaredLeft.get(childIndex);
-            if(child == null) {
-                child = "child_" + childIndex;
-                sb.append(String.format("float child_%d = child[%d * numRows + row];\n", childIndex, childIndex));
-                declaredLeft.put(childIndex, child);
-            }
-
-
-            sb.append(String.format("%s = max(%s, %s + %ff);\n", parent, parent, child, structure.scores()[rule.ruleId()]));
-        }
-
-
-        sb.append("// write out\n");
-        for(Map.Entry<Integer, String> e: declaredParents.entrySet()) {
-            sb.append(String.format("parents[%d * numRows + row] = %s;\n", e.getKey(), e.getValue()));
-        }
-
-//        sb.append("      switch(grammarSubPartition) {\n" +
-//              "        ${subpartitionsKernels.map {case  (id, (fnname, _)) => s\"case $id: $fnname(mask, parents, row, child, right, numRows); continue;\" }.mkString(\"\\n            \")}\n" +
-//              "       default: continue;\n" +
-//              "       }\n" +
-//              "}");
-
-        sb.append("    }\n");
-        sb.append("}\n");
-        return sb.toString();
-
-    }
-
-    private String binaryKernelText(String name, List<IndexedBinaryRule<C, L>> partition) {
-        // todo: subpartition the grammar
-        StringBuilder sb = new StringBuilder();
-
-
         sb.append(CLMaskKernels.maskHeader(structure));
         sb.append("\n\n");
+        
+        for (int m=0; m<NUM_SM; ++m) {
+        	sb.append("static void subpart"+m+"(const mask_t mask, __global volatile float* parents, int row, __global float* left, __global float* right, int numRows) {\n");
+        	if (!subsegments[m].isEmpty()) sb.append(String.format("if (%s) return;\n", CLMaskKernels.genCheckIfMaskIsEmpty(structure, "mask", getParents(subsegments[m]))));        	
+        	Map<Integer,String> declaredParents = new HashMap<Integer, String>();
+        	Map<Integer,String> declaredLeft = new HashMap<Integer, String>();
+        	Map<Integer,String>  declaredRight = new HashMap<Integer, String>();
+
+        	// todo: reorder to sensible groupings
+        	for(IndexedBinaryRule<C, L> rule : subsegments[m]) {
+        		int parentIndex = rule.rule().parent().gpu();
+        		String parent = declaredParents.get(parentIndex);
+        		if(parent == null) {
+        			parent = "parent_" + parentIndex;
+        			sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
+        			declaredParents.put(parentIndex, parent);
+        		}
+
+        		int leftIndex = rule.rule().left().gpu();
+        		String left = declaredLeft.get(leftIndex);
+        		if(left == null) {
+        			left = "left_" + leftIndex;
+        			sb.append(String.format("float left_%d = left[%d * numRows + row];\n", leftIndex, leftIndex));
+        			declaredLeft.put(leftIndex, left);
+        		}
+
+        		int rightIndex = rule.rule().right().gpu();
+        		String right = declaredRight.get(rightIndex);
+        		if(right == null) {
+        			right = "right_" + rightIndex;
+        			sb.append(String.format("float right_%d = right[%d * numRows + row];\n", rightIndex, rightIndex));
+        			declaredRight.put(rightIndex, right);
+        		}
+
+        		sb.append(String.format("%s = max(%s, %s + %s + %ff);\n", parent, parent, left, right, structure.scores()[rule.ruleId()]));
+        	}
+
+
+        	sb.append("// write out\n");
+        	for(Map.Entry<Integer, String> e: declaredParents.entrySet()) {
+        		sb.append(String.format("parents[%d * numRows + row] = %s;\n", e.getKey(), e.getValue()));
+        	}
+        	sb.append("}\n\n");
+        }
 
         sb.append(String.format(
                 " __kernel void %s(__global volatile float* parents," +
@@ -153,63 +104,72 @@ public class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, 
                 "    int grammarSubPartition = get_group_id(1);\n" +
                 "    for (int row = get_global_id(0); row < cellsToDo; row += numWorkers) {\n" +
                 "      const mask_t mask = masks[parentIndex[row]];\n", name));
+        sb.append("\n\n");
+        
+        sb.append("switch (grammarSubPartition) {\n");
+        for (int m=0; m<NUM_SM; ++m) {
+        	sb.append("case "+m+": subpart"+m+"(mask, parents, row, left, right, numRows); continue;\n");
+        }
+        sb.append("default: continue;\n");
+        sb.append("}\n");
 
-        sb.append(String.format("    if (%s) continue;", CLMaskKernels.genCheckIfMaskIsEmpty(structure, "mask", getParents(partition))));
+        sb.append("}\n");
+        sb.append("}\n");
+        return sb.toString();
+    }
 
+    public CLUnaryRuleUpdater javaUnaryRuleApplication(List<IndexedUnaryRule<C, L>> indexedUnaryRules, String name, CLContext context) {
+        ArrayList<String> kernelTexts = new ArrayList<String>();
+        List<IndexedUnaryRule<C, L>>[] segments = segmentUnaries(indexedUnaryRules);
+        for (int s=0; s<segments.length; s++) {
+        	kernelTexts.add(unaryKernelText(name+s, segments[s]));
+        }
+        List<CLKernel> kernels = compileKernels(context, kernelTexts);
+        return new CLUnaryRuleUpdater(kernels);
+    }
+
+    private String unaryKernelText(String name, List<IndexedUnaryRule<C, L>> segment) {
+        StringBuilder sb = new StringBuilder();
+        sb.append(String.format(
+                " __kernel void %s(__global volatile float* parents, __global float* child, int numRows, int cellsToDo) {\n" +
+                "    int numWorkers = get_global_size(0);\n" +
+                "    int grammarSubPartition = get_group_id(1);\n" +
+                "    for (int row = get_global_id(0); row < cellsToDo; row += numWorkers) {\n", name));
         sb.append("\n\n");
 
         Map<Integer,String> declaredParents = new HashMap<Integer, String>(),
-                declaredLeft = new HashMap<Integer, String>(),
-                declaredRight = new HashMap<Integer, String>();
+                declaredLeft = new HashMap<Integer, String>();
 
         // todo: reorder to sensible groupings
-        for(IndexedBinaryRule<C, L> rule: partition) {
-            int parentIndex = rule.rule().parent().gpu();
-            String parent = declaredParents.get(parentIndex);
-            if(parent == null) {
-                parent = "parent_" + parentIndex;
-                sb.append(String.format("    float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
-                declaredParents.put(parentIndex, parent);
-            }
-
-            int leftIndex = rule.rule().left().gpu();
-            String left = declaredLeft.get(leftIndex);
-            if(left == null) {
-                left = "left_" + leftIndex;
-                sb.append(String.format("    float left_%d = left[%d * numRows + row];\n", leftIndex, leftIndex));
-                declaredLeft.put(leftIndex, left);
-            }
-
-            int rightIndex = rule.rule().right().gpu();
-            String right = declaredRight.get(rightIndex);
-            if(right == null) {
-                right = "right_" + rightIndex;
-                sb.append(String.format("    float right_%d = right[%d * numRows + row];\n", rightIndex, rightIndex));
-                declaredRight.put(rightIndex, right);
-            }
-
-            sb.append(String.format("     %s = max(%s, %s + %s + %ff);\n", parent, parent, left, right, structure.scores()[rule.ruleId()]));
+        for(IndexedUnaryRule<C, L> rule : segment) {
+        	int parentIndex = rule.rule().parent().gpu();
+        	String parent = declaredParents.get(parentIndex);
+        	if(parent == null) {
+        		parent = "parent_" + parentIndex;
+        		sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
+        		declaredParents.put(parentIndex, parent);
+        	}
+        	
+        	int childIndex = rule.rule().child().gpu();
+        	String child = declaredLeft.get(childIndex);
+        	if(child == null) {
+        		child = "child_" + childIndex;
+        		sb.append(String.format("float child_%d = child[%d * numRows + row];\n", childIndex, childIndex));
+        		declaredLeft.put(childIndex, child);
+        	}
+        	
+        	
+        	sb.append(String.format("%s = max(%s, %s + %ff);\n", parent, parent, child, structure.scores()[rule.ruleId()]));
         }
 
-
-        sb.append("     // write out\n");
+        sb.append("// write out\n");
         for(Map.Entry<Integer, String> e: declaredParents.entrySet()) {
-            sb.append(String.format("    parents[%d * numRows + row] = %s;\n", e.getKey(), e.getValue()));
+            sb.append(String.format("parents[%d * numRows + row] = %s;\n", e.getKey(), e.getValue()));
         }
 
-//        sb.append("      switch(grammarSubPartition) {\n" +
-//              "        ${subpartitionsKernels.map {case  (id, (fnname, _)) => s\"case $id: $fnname(mask, parents, row, left, right, numRows); continue;\" }.mkString(\"\\n            \")}\n" +
-//              "       default: continue;\n" +
-//              "       }\n" +
-//              "}");
-
-        sb.append("    }\n");
         sb.append("}\n");
-
+        sb.append("}\n");
         return sb.toString();
-
     }
-
-
 
 }

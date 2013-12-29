@@ -38,7 +38,8 @@ import java.util.Collections
  * @author dlwh
  **/
 class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
-                        maxAllocSize: Long = 1<<30, // 1 gig
+                        maxAllocSize: Long = 1L<<30, // 1 gig
+//                        maxAllocSize: Long = 1L<<31, // 2 gig
                         maxSentencesPerBatch: Long = 400,
                         doEmptySpans: Boolean = false,
                         profile: Boolean = true)(implicit val context: CLContext) extends Logging {
@@ -120,6 +121,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   val (numWorkCells:Int, numChartCells: Int) = {
     val sizeOfFloat = 4
     val fractionOfMemoryToUse = 0.7 // slack!
+//    val fractionOfMemoryToUse = 0.9 // slack!
     val amountOfMemory = ((context.getDevices.head.getGlobalMemSize min maxAllocSize) * fractionOfMemoryToUse).toInt  - maxSentencesPerBatch * 3 * 4;
     val maxPossibleNumberOfCells = ((amountOfMemory / sizeOfFloat) / (cellSize + 4 + maskSize)).toInt // + 4 for each kind of offset
     // We want numGPUCells and numGPUChartCells to be divisible by 16, so that we get aligned strided access:
