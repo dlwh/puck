@@ -454,6 +454,16 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   }
 
+  def any(x: DenseVector[Int]) = {
+    var i = 0
+    var any = false
+    while(i < x.length && !any) {
+      any = x(i) != 0
+      i += 1
+    }
+    any
+  }
+
   private case class Batch(lengthTotals: Array[Int],
                            cellOffsets: Array[Int],
                            sentences: IndexedSeq[IndexedSeq[W]],
@@ -463,7 +473,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     val maxLength = sentences.map(_.length).max
     assert(cellOffsets.last <= devInside.cols)
 
-    def isAllowedSpan(sent: Int, begin: Int, end: Int) = maskFor(sent, begin, end).forall(_.any)
+    def isAllowedSpan(sent: Int, begin: Int, end: Int) = maskFor(sent, begin, end).forall(any)
 
     def maskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).bot.cellOffset(begin, end)))
 
@@ -615,7 +625,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           start <- 0 to batch.sentences(sent).length - span
           _ = total += 1
           mask <- batch.maskFor(sent, start, start + span)
-          if {val x = mask.any; if(!x) pruned += 1; x || doEmptySpans }
+          if {val x = any(mask); if(!x) pruned += 1; x || doEmptySpans }
         } yield (sent, start, start+span, mask)
         val ordered = orderSpansBySimilarity(allSpans)
         ordered
