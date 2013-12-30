@@ -20,7 +20,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 	public static final int NUM_WARPS = 48;
 	public static final int NUM_SM = 8;
 	
-    private RuleStructure<C, L> structure;
+    public RuleStructure<C, L> structure;
 
     public SimpleGenRuleMultiply(RuleStructure<C, L> structure) {
         this.structure = structure;
@@ -70,7 +70,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         	if (!subsegments[m].isEmpty()) sb.append(String.format("if (%s) return;\n", CLMaskKernels.genCheckIfMaskIsEmpty(structure, "mask", getParents(subsegments[m]))));        	
         	Map<Integer,String> declaredParents = new HashMap<Integer, String>();
         	Map<Integer,String> declaredLeft = new HashMap<Integer, String>();
-        	Map<Integer,String>  declaredRight = new HashMap<Integer, String>();
+        	Map<Integer,String> declaredRight = new HashMap<Integer, String>();
 
         	Map<Integer,Integer> parentCounts = new HashMap<Integer,Integer>();
         	for(IndexedBinaryRule<C, L> rule : subsegments[m]) { 

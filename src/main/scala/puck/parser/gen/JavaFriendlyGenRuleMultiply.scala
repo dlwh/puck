@@ -37,6 +37,7 @@ abstract class JavaFriendlyGenRuleMultiply[C, L] extends GenRuleMultiply[C, L] {
   def getParents(partition: util.List[IndexedBinaryRule[C, L]] ): util.Set[SymId[C, L]] = {
     partition.asScala.map(_.rule.parent).toSet.asJava
   }
+
 }
 
 case class IndexedBinaryRule[C, L](rule: BinaryRule[SymId[C, L]], ruleId: Int)

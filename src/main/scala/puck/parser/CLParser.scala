@@ -38,8 +38,8 @@ import java.util.Collections
  * @author dlwh
  **/
 class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
-                        maxAllocSize: Long = 1L<<30, // 1 gig
-//                        maxAllocSize: Long = 1L<<31, // 2 gig
+//                        maxAllocSize: Long = 1L<<30, // 1 gig
+                        maxAllocSize: Long = 1L<<32, // 4 gig
                         maxSentencesPerBatch: Long = 400,
                         doEmptySpans: Boolean = false,
                         profile: Boolean = true)(implicit val context: CLContext) extends Logging {
