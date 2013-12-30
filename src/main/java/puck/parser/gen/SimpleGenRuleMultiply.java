@@ -72,7 +72,17 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         	Map<Integer,String> declaredLeft = new HashMap<Integer, String>();
         	Map<Integer,String>  declaredRight = new HashMap<Integer, String>();
 
-        	// todo: reorder to sensible groupings
+        	Map<Integer,Integer> parentCounts = new HashMap<Integer,Integer>();
+        	for(IndexedBinaryRule<C, L> rule : subsegments[m]) { 
+        		int parentIndex = rule.rule().parent().gpu();
+        		Integer count = parentCounts.get(parentIndex);
+        		if (count == null) {
+        			count = 0;
+        		}
+        		count++;
+        		parentCounts.put(parentIndex, count);
+        	}
+        	
         	for(IndexedBinaryRule<C, L> rule : subsegments[m]) {
         		int parentIndex = rule.rule().parent().gpu();
         		String parent = declaredParents.get(parentIndex);
@@ -99,13 +109,18 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         		}
 
         		sb.append(String.format("%s = max(%s, %s + %s + %ff);\n", parent, parent, left, right, structure.scores()[rule.ruleId()]));
+        		
+        		parentCounts.put(parentIndex, parentCounts.get(parentIndex)-1);
+        		if (parentCounts.get(parentIndex) == 0) {
+        			sb.append(String.format("parents[%d * numRows + row] = %s;\n", parentIndex, parent));
+        		}
         	}
 
-
-        	sb.append("// write out\n");
-        	for(Map.Entry<Integer, String> e: declaredParents.entrySet()) {
-        		sb.append(String.format("parents[%d * numRows + row] = %s;\n", e.getKey(), e.getValue()));
-        	}
+//        	sb.append("// write out\n");
+//        	for(Map.Entry<Integer, String> e: declaredParents.entrySet()) {
+//        		sb.append(String.format("parents[%d * numRows + row] = %s;\n", e.getKey(), e.getValue()));
+//        	}
+        	
         	sb.append("}\n\n");
         }
 
