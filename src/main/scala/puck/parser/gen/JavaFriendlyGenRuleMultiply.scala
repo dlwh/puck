@@ -27,8 +27,12 @@ abstract class JavaFriendlyGenRuleMultiply[C, L] extends GenRuleMultiply[C, L] {
 
   def compileKernels(context: CLContext, texts: java.util.List[String]):java.util.List[CLKernel] = {
     val programs = texts.asScala.map(context.createProgram(_))
-    if(context.getDevices.head.toString.toLowerCase.contains("nvidia") && !context.getDevices.head.toString.toLowerCase.contains("apple") )
+    programs.foreach(_.setFastRelaxedMath())
+    if(context.getDevices.head.toString.toLowerCase.contains("nvidia") && !context.getDevices.head.toString.toLowerCase.contains("apple") ) {
       programs.foreach(_.addBuildOption("-cl-nv-verbose"))
+      //programs.foreach(_.addBuildOption("-cl-nv-arch"))
+      //programs.foreach(_.addBuildOption("sm_30"))
+    }
 
 //    programs.par.flatMap(_.createKernels()).seq.asJava
     programs.flatMap(_.createKernels()).asJava
