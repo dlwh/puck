@@ -5,6 +5,7 @@ import epic.parser.BaseGrammar
 import epic.trees.{BinaryRule, UnaryRule}
 import breeze.util.Index
 import scala.io.Source
+import java.io.{FileNotFoundException, FileInputStream}
 
 /**
  *
@@ -30,8 +31,15 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
   root: Int) = {
 
     val preferredSymbolOrdering = {
+      var stream = this.getClass.getResourceAsStream("/symbols_dump")
+      if(stream eq null) {
+        stream = new FileInputStream("src/main/resources/symbols_dump")
+      }
+      if(stream eq null) {
+        throw new FileNotFoundException("Can't find symbols_dump!")
+      }
       val pairs = for {
-        line <- Source.fromInputStream(this.getClass.getResourceAsStream("/symbols_dump")).getLines()
+        line <- Source.fromInputStream(stream).getLines()
       } yield {
         val Array(index, id) = line.split(" ")
         id -> index.toInt
