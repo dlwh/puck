@@ -37,6 +37,12 @@ abstract class JavaFriendlyGenRuleMultiply[C, L] extends GenRuleMultiply[C, L] {
   def getParents(partition: util.List[IndexedBinaryRule[C, L]] ): util.Set[SymId[C, L]] = {
     partition.asScala.map(_.rule.parent).toSet.asJava
   }
+
+  def supportsExtendedAtomics(context: CLContext) = {
+    val ok = context.getDevices.forall(_.getExtensions.contains("cl_khr_global_int32_extended_atomics"))
+    // apple can go fuck itself
+    ok && !context.toString.contains("Apple")
+  }
 }
 
 case class IndexedBinaryRule[C, L](rule: BinaryRule[SymId[C, L]], ruleId: Int)
