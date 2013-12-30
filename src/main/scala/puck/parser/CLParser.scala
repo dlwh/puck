@@ -755,7 +755,9 @@ object CLParser extends Logging {
                     numToParse: Int = 1000, codeCache: File = new File("grammar.grz"), cache: Boolean = true,
                     maxParseLength: Int = 10000,
                     jvmParse: Boolean = false, parseTwice: Boolean = false,
-                    textGrammarPrefix: String = null, checkPartitions: Boolean = false)
+                    textGrammarPrefix: String = null,
+                    checkPartitions: Boolean = false,
+                    justInsides: Boolean = false)
 
   def main(args: Array[String]) = {
     import ParserParams.JointParams
@@ -813,6 +815,16 @@ object CLParser extends Logging {
       fromParserData[AnnotatedLabel, AnnotatedLabel, String](parserData, profile)
     }
 
+
+    if (justInsides) {
+      val timeIn = System.currentTimeMillis()
+      val partsX = kern.partitions(toParse)
+      val timeOut = System.currentTimeMillis()
+      val parseDuration = (timeOut-timeIn)/1000.0
+      println(partsX)
+      println(f"CL Insides: $parseDuration (${toParse.length/parseDuration}%.3f sent/sec)")
+      System.exit(0)
+    }
 
     if (checkPartitions) {
       val partsX = kern.partitions(toParse)
