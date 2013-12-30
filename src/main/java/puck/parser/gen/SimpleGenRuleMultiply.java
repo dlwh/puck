@@ -6,6 +6,7 @@ import com.nativelibs4java.opencl.CLKernel;
 import puck.parser.CLBinaryRuleUpdater;
 import puck.parser.CLUnaryRuleUpdater;
 import puck.parser.RuleStructure;
+import puck.parser.SymId;
 
 import java.util.*;
 
@@ -33,18 +34,41 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
     public CLBinaryRuleUpdater javaBinaryRuleApplication(List<IndexedBinaryRule<C, L>> indexedBinaryRules, String name, CLContext context) {
         ArrayList<String> kernelTexts = new ArrayList<String>();
         List<IndexedBinaryRule<C, L>>[][] segments = segmentBinaries(indexedBinaryRules);
+        boolean supportsExtendedAtomics =  supportsExtendedAtomics(context);
         for (int s=0; s<segments.length; s++) {
-        	kernelTexts.add(binaryKernelText(name+s, segments[s]));
+        	kernelTexts.add(binaryKernelText(name+s, segments[s], supportsExtendedAtomics));
         }
+
         List<CLKernel> kernels = compileKernels(context, kernelTexts);
         int[] globalSize = {WARP_SIZE * NUM_WARPS, NUM_SM, 1};
         int[] wgSize = {WARP_SIZE, 1, 1};
         return new CLBinaryRuleUpdater(kernels, globalSize, wgSize);
     }
-    
-    private String binaryKernelText(String name, List<IndexedBinaryRule<C, L>>[] subsegments) {
-        StringBuilder sb = new StringBuilder();
+
+
+    private String binaryKernelText(String name, List<IndexedBinaryRule<C, L>>[] subsegments, boolean supportsExtendedAtomics) {
+      StringBuilder sb = new StringBuilder();
+
+      // determine duplicate parents
+      Set<Integer> allParents = new HashSet<Integer>();
+      Set<Integer> dupParents = new HashSet<Integer>();
+      for(int m = 0; m < NUM_SM; ++m) {
+        for(SymId<C, L> sym: getParents(subsegments[m])) {
+          if(allParents.contains(sym.gpu())) {
+            dupParents.add(sym.gpu());
+          } else {
+            allParents.add(sym.gpu());
+          }
+        }
+      }
+
+        if(!dupParents.isEmpty() && supportsExtendedAtomics) {
+            sb.append("#pragma OPENCL EXTENSION cl_khr_global_int32_extended_atomics : enable\n");
+        }
+
+        sb.append(WRITE_PARENT_ATOMIC);
         sb.append(CLMaskKernels.maskHeader(structure));
+
         sb.append("\n\n");
 
         // Sort so that LHS priority, then RHS
@@ -64,6 +88,8 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
             });
 
         }
+
+      
 
         for (int m=0; m<NUM_SM; ++m) {
         	sb.append("static void subpart"+m+"(const mask_t mask, __global volatile float* parents, int row, __global float* left, __global float* right, int numRows) {\n");
@@ -112,15 +138,21 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         		
         		parentCounts.put(parentIndex, parentCounts.get(parentIndex)-1);
         		if (parentCounts.get(parentIndex) == 0) {
-        			sb.append(String.format("parents[%d * numRows + row] = %s;\n", parentIndex, parent));
+//        			sb.append(String.format("parents[%d * numRows + row] = %s;\n", parentIndex, parent));
+                    String dest = String.format("parents[%d * numRows + row]", parentIndex);
+                    String src = parent;
+                    sb.append(genWriteSymbol(dest, src, !dupParents.contains(parentIndex), supportsExtendedAtomics));
         		}
         	}
+
 
 //        	sb.append("// write out\n");
 //        	for(Map.Entry<Integer, String> e: declaredParents.entrySet()) {
 //        		sb.append(String.format("parents[%d * numRows + row] = %s;\n", e.getKey(), e.getValue()));
+//                String dest = String.format("parents[%d * numRows + row]", e.getKey());
+//                String src = e.getValue();
+//                sb.append(genWriteSymbol(dest, src, !dupParents.contains(e.getKey()), supportsExtendedAtomics));
 //        	}
-        	
         	sb.append("}\n\n");
         }
 
@@ -201,5 +233,37 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         sb.append("}\n");
         return sb.toString();
     }
+
+    public static boolean GRAMMAR_IS_GENERATIVE = false;
+
+    public String genWriteSymbol(String dest, String src, boolean symIsUniqueToSubsegmentation, boolean supportsExtendedAtomics) {
+        if(symIsUniqueToSubsegmentation) {
+            return String.format("%s = %s;\n", dest, src);
+        } else if(GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics) {
+            return String.format("write_parent_gen_atomic(&%s, %s);\n", dest, src);
+        } else {
+            return String.format("write_parent_atomic(&%s, %s);\n", dest, src);
+        }
+
+    }
+
+    // floats < 0 are well ordered such that if max(float1, float2) = float1, then min(*(int*)&float1,*(int*)&float2) = *(int*)&float1
+    // note inversion of min and max
+    // this is for write_atomic_min (because all floats are same sign)
+    // there's a problem if one float is 0.0, but eh.
+    private static final String WRITE_PARENT_ATOMIC = "" +
+            "     typedef union { int old; float oldf; } intbox;\n" +
+            "     \n" +
+            "     inline void write_parent_atomic_gen(volatile __global float* loc, float value) {\n" +
+            "        atomic_min((volatile __global int*)loc, *(int*)&value);\n" +
+            "      }\n"+
+            "     \n" +
+            "     inline void write_parent_atomic(volatile __global float* loc, float value) {\n" +
+            "       intbox old;\n" +
+            "       value = max(*loc, value);\n" +
+            "       old.oldf = value;\n" +
+            "     \n" +
+            "       while((old.old = atomic_cmpxchg((volatile __global int*)loc, old.old, *(int*)&value)) !=  *(int*)&value) value = max(value, old.oldf);\n" +
+            "     }\n\n\n";
 
 }

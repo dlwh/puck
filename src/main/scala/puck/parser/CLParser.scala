@@ -173,6 +173,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val parsers = data.map(new ActualParser(_))
   var pruned = 0
   var total = 0
+  var sortTime = 0L
 
   private class ActualParser(val data: CLParserData[C, L, W]) {
     import data._
@@ -185,6 +186,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       allProfilers.foreach(_.tick())
       pruned = 0
       total = 0
+      sortTime = 0
 
       val evZeroCharts = zmk.fillMemory(devInside.data, _zero, events:_*) profileIn initMemFillEvents
       val evZeroOutside = zmk.fillMemory(devOutside.data, _zero, events:_*) profileIn initMemFillEvents
@@ -204,6 +206,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         allProfilers.foreach(_.tock())
         allProfilers.foreach(p => println(s"Inside $p"))
         println(f"Time accounted for: ${allProfilers.map(_.processingTime).sum}%.3f")
+        println("Sorting took: " + sortTime/1000.0)
+
       }
       println(s"Pruned $pruned/$total")
 
@@ -244,6 +248,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         Thread.sleep(15)
         allProfilers.foreach(p => println(s"Outside $p"))
         println(f"Time accounted for: ${allProfilers.map(_.processingTime).sum}%.3f")
+        println("Sorting took: " + sortTime/1000.0)
       }
       println(s"Pruned $pruned/$total")
 
@@ -444,7 +449,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         recTop(0, length)
 
       } catch {
-        case ex: Throwable => /*ex.printStackTrace();*/ null
+        case ex: Throwable => ex.printStackTrace(); null
       }
       val out = if (profile) System.currentTimeMillis() else 0L
       masks.data.waitUnmap()
@@ -675,7 +680,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   // Sentence, Begin, End, BitMask
   def orderSpansBySimilarity(spans: IndexedSeq[(Int, Int, Int, DenseVector[Int])]): IndexedSeq[(Int, Int, Int, DenseVector[Int])] = {
     import BitHacks.OrderBitVectors.OrderingBitVectors
-    spans.sortBy(_._4)
+    val in = System.currentTimeMillis()
+    val res = spans.sortBy(_._4)
+    //val res = spans.groupBy(v =>v._4.toArray.toIndexedSeq).values.flatten.toIndexedSeq
+    val out = System.currentTimeMillis()
+    sortTime += (out - in)
+    res
   }
 
   private class UnaryUpdateManager(parser: ActualParser,
@@ -749,7 +759,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 object CLParser extends Logging {
 
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = Xbarize(),
-                    prune: Boolean = false,
                     device: String = "nvidia",
                     profile: Boolean = false,
                     numToParse: Int = 1000, codeCache: File = new File("grammar.grz"), cache: Boolean = true,
@@ -786,13 +795,14 @@ object CLParser extends Logging {
     val gold = params.treebank.trainTrees.filter(_.words.length <= maxParseLength).take(numToParse)
     val toParse =  gold.map(_.words)
 
-    val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = if (textGrammarPrefix == null) {
-      GenerativeParser.annotated(annotator, transformed)
+    val grammars: IndexedSeq[SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String]] = if (textGrammarPrefix == null) {
+      IndexedSeq(GenerativeParser.annotated(annotator, transformed))
     } else {
-      SimpleRefinedGrammar.parseBerkeleyText(textGrammarPrefix, -12, CloseUnaries.None)
+      textGrammarPrefix.split(":").map(SimpleRefinedGrammar.parseBerkeleyText(_, -12, CloseUnaries.None))
     }
 
-    lazy val xbarGrammar = GenerativeParser.annotated(grammar.grammar, grammar.lexicon, Xbarize(), transformed)
+    val grammar = grammars.last
+
 
     var parserData:CLParserData[AnnotatedLabel, AnnotatedLabel, String] = if (cache && codeCache != null && codeCache.exists()) {
       CLParserData.read(new ZipFile(codeCache))
@@ -808,13 +818,11 @@ object CLParser extends Logging {
       }
     }
 
-    val kern = if (prune) {
-      val genData = CLParserData.make(xbarGrammar)
-      fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](IndexedSeq(genData, parserData), profile)
-    } else {
-      fromParserData[AnnotatedLabel, AnnotatedLabel, String](parserData, profile)
-    }
+    val allData = grammars.dropRight(1).map(CLParserData.make(_)) :+ parserData
 
+    val kern = {
+      fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](allData, profile)
+    }
 
     if (justInsides) {
       val timeIn = System.currentTimeMillis()
@@ -838,7 +846,8 @@ object CLParser extends Logging {
     var timeIn = System.currentTimeMillis()
     val trees = kern.parse(toParse)
     var timeOut = System.currentTimeMillis()
-    println(trees zip toParse map {case (k,v) if k != null => k render v; case (k,v) => ":("})
+      println(eval(trees zip gold.map(_.tree)))
+    //println(trees zip toParse map {case (k,v) if k != null => k render v; case (k,v) => ":("})
     var parseDuration = (timeOut-timeIn)/1000.0
     println(f"CL Parsing took: ${parseDuration} (${toParse.length/parseDuration}%.3f sent/sec)")
     if (parseTwice) {
@@ -851,8 +860,8 @@ object CLParser extends Logging {
       println(f"CL Parsing took x2: ${parseDuration} (${toParse.length/parseDuration}%.3f sent/sec)")
     }
     if (jvmParse) {
-      val parser = if(prune) {
-        Parser(new ConstraintCoreGrammarAdaptor(xbarGrammar.grammar, xbarGrammar.lexicon, new ParserChartConstraintsFactory(Parser(xbarGrammar, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate)),
+      val parser = if(grammars.length > 1) {
+        Parser(new ConstraintCoreGrammarAdaptor(grammar.grammar, grammar.lexicon, new ParserChartConstraintsFactory(Parser(grammars.head, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate)),
           grammar,
           if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
       } else {
@@ -893,7 +902,7 @@ object CLParser extends Logging {
   def eval(trees: IndexedSeq[(BinarizedTree[AnnotatedLabel], BinarizedTree[AnnotatedLabel])]) = {
     val chainReplacer = AnnotatedLabelChainReplacer
     val eval: ParseEval[String] = new ParseEval(Set("","''", "``", ".", ":", ",", "TOP"))
-    trees map { case (guess, gold) =>
+    trees filter (_._1 ne null) map { case (guess, gold) =>
       val tree: Tree[String] = chainReplacer.replaceUnaries(guess).map(_.label)
       val guessTree = Trees.debinarize(Trees.deannotate(tree))
       val deBgold: Tree[String] = Trees.debinarize(Trees.deannotate(chainReplacer.replaceUnaries(gold).map(_.label)))
