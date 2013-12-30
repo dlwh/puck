@@ -47,7 +47,25 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 
 
     private String binaryKernelText(String name, List<IndexedBinaryRule<C, L>>[] subsegments, boolean supportsExtendedAtomics) {
-        StringBuilder sb = new StringBuilder();
+      StringBuilder sb = new StringBuilder();
+
+      // determine duplicate parents
+      Set<Integer> allParents = new HashSet<Integer>();
+      Set<Integer> dupParents = new HashSet<Integer>();
+      for(int m = 0; m < NUM_SM; ++m) {
+        for(SymId<C, L> sym: getParents(subsegments[m])) {
+          if(allParents.contains(sym.gpu())) {
+            dupParents.add(sym.gpu());
+          } else {
+            allParents.add(sym.gpu());
+          }
+        }
+      }
+
+        if(!dupParents.isEmpty() && supportsExtendedAtomics) {
+            sb.append("#pragma OPENCL EXTENSION cl_khr_global_int32_extended_atomics : enable\n");
+        }
+
         sb.append(WRITE_PARENT_ATOMIC);
         sb.append(CLMaskKernels.maskHeader(structure));
 
@@ -71,21 +89,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 
         }
 
-        Set<Integer> allParents = new HashSet<Integer>();
-        Set<Integer> dupParents = new HashSet<Integer>();
-        for(int m = 0; m < NUM_SM; ++m) {
-            for(SymId<C, L> sym: getParents(subsegments[m])) {
-                if(allParents.contains(sym.gpu())) {
-                    dupParents.add(sym.gpu());
-                } else {
-                    allParents.add(sym.gpu());
-                }
-            }
-        }
-
-        if(!dupParents.isEmpty() && supportsExtendedAtomics) {
-            sb.append("#pragma OPENCL EXTENSION cl_khr_global_int32_extended_atomics : enable");
-        }
+      
 
         for (int m=0; m<NUM_SM; ++m) {
         	sb.append("static void subpart"+m+"(const mask_t mask, __global volatile float* parents, int row, __global float* left, __global float* right, int numRows) {\n");
@@ -233,7 +237,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
     public static boolean GRAMMAR_IS_GENERATIVE = false;
 
     public String genWriteSymbol(String dest, String src, boolean symIsUniqueToSubsegmentation, boolean supportsExtendedAtomics) {
-        if(false && symIsUniqueToSubsegmentation) {
+        if(symIsUniqueToSubsegmentation) {
             return String.format("%s = %s;\n", dest, src);
         } else if(GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics) {
             return String.format("write_parent_gen_atomic(&%s, %s);\n", dest, src);
@@ -251,7 +255,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
             "     typedef union { int old; float oldf; } intbox;\n" +
             "     \n" +
             "     inline void write_parent_atomic_gen(volatile __global float* loc, float value) {\n" +
-            "       int newValue = atomic_min((volatile __global int*)loc, *(int*)&value);\n" +
+            "        atomic_min((volatile __global int*)loc, *(int*)&value);\n" +
             "      }\n"+
             "     \n" +
             "     inline void write_parent_atomic(volatile __global float* loc, float value) {\n" +
