@@ -33,34 +33,9 @@ public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 	}
 
 	public List<IndexedBinaryRule<C, L>>[][] segmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules) {
-		List<IndexedBinaryRule<C, L>>[] segmentation = balancedGreedySegmentBinariesByParent(indexedBinaryRules, BINARY_NUM_SEGMENTS);
-		double min = Double.POSITIVE_INFINITY;
-		double max = Double.NEGATIVE_INFINITY;
-		for (List segment : segmentation) {
-			min = Math.min(segment.size(), min);
-			max = Math.max(segment.size(), max);
-		}
-		System.out.println("min binary segment size: "+min);
-		System.out.println("max binary segment size: "+max);
-		List<IndexedBinaryRule<C, L>>[][] subsegmentation = new List[segmentation.length][];
-		for (int i=0; i<segmentation.length; ++i) {
-			subsegmentation[i] = balancedGreedySegmentBinariesByParent(indexedBinaryRules, NUM_SM);
-		}
-		return subsegmentation;
+		List<IndexedBinaryRule<C, L>>[][] segmnetation = new List[BINARY_NUM_SEGMENTS][NUM_SM];
+		
+		;
 	}
 
-    private List<IndexedBinaryRule<C, L>>[] balancedGreedySegmentBinariesByParent(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int numSegments) {
-    	List<IndexedBinaryRule<C, L>>[] result = new List[numSegments];
-    	return result;
-    }
-    
-    private List<IndexedBinaryRule<C, L>>[] modSegmentBinariesByParent(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int numSegments) {
-    	List<IndexedBinaryRule<C, L>>[] result = new List[numSegments];
-    	for (int i=0; i<numSegments; ++i) result[i] = new ArrayList<IndexedBinaryRule<C, L>>();
-    	for(IndexedBinaryRule<C, L> rule: indexedBinaryRules) {
-    		result[rule.rule().parent().gpu() % numSegments].add(rule);
-    	}
-    	return result;
-    }
-	
 }
