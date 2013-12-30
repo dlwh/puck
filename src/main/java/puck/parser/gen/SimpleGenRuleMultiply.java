@@ -226,7 +226,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         return sb.toString();
     }
 
-    public static boolean GRAMMAR_IS_GENERATIVE = true;
+    public static boolean GRAMMAR_IS_GENERATIVE = false;
 
     public String genWriteSymbol(String dest, String src, boolean symIsUniqueToSubsegmentation, boolean supportsExtendedAtomics) {
         if(false && symIsUniqueToSubsegmentation) {
@@ -248,7 +248,6 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
             "     \n" +
             "     inline void write_parent_atomic_gen(volatile __global float* loc, float value) {\n" +
             "       int newValue = atomic_min((volatile __global int*)loc, *(int*)&value);\n" +
-            "       printf(\"%f %f %f\\n\", *loc, value, *(float*)&newValue);\n"+
             "      }\n"+
             "     \n" +
             "     inline void write_parent_atomic(volatile __global float* loc, float value) {\n" +
