@@ -33,9 +33,7 @@ public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 	}
 
 	public List<IndexedBinaryRule<C, L>>[][] segmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules) {
-		List<IndexedBinaryRule<C, L>>[][] segmnetation = new List[BINARY_NUM_SEGMENTS][NUM_SM];
-		
-		;
+		return null;
 	}
 
 }
