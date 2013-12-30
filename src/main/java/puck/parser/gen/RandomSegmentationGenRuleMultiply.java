@@ -9,7 +9,7 @@ import puck.parser.RuleStructure;
 
 public class RandomSegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultiply<C, L> {
 
-	public static final int BINARY_SEGMENT_SIZE = 400;
+	public static final int BINARY_SEGMENT_SIZE = 2000;
 	
 	public RandomSegmentationGenRuleMultiply(RuleStructure<C, L> structure) {
 		super(structure);
