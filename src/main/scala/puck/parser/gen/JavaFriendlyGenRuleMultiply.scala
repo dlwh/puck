@@ -42,6 +42,7 @@ abstract class JavaFriendlyGenRuleMultiply[C, L] extends GenRuleMultiply[C, L] {
     val ok = context.getDevices.forall(_.getExtensions.contains("cl_khr_global_int32_extended_atomics"))
     // apple can go fuck itself
     ok && !context.toString.contains("Apple")
+//    ok
   }
 }
 
