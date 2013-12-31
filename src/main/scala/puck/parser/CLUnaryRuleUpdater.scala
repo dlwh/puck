@@ -31,7 +31,7 @@ case class CLUnaryRuleUpdater(kernels: IndexedSeq[RuleKernel]) {
   }
 
   def write(name: String, out: ZipOutputStream) {
-    ZipUtil.serializedEntry(out, "$name/numKernels", Integer.valueOf(kernels.length))
+    ZipUtil.serializedEntry(out, s"$name/numKernels", Integer.valueOf(kernels.length))
     for(i <- 0 until kernels.length) {
       kernels(i).write(s"$name/$i", out)
     }
