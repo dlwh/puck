@@ -42,7 +42,7 @@ case class CLUnaryRuleUpdater(kernels: IndexedSeq[RuleKernel]) {
 object CLUnaryRuleUpdater {
   def read(in: ZipFile, name: String)(implicit ctxt: CLContext) = {
     val x = ZipUtil.deserializeEntry[Integer](in.getInputStream(in.getEntry(s"$name/numKernels")))
-    val kernels = for(i <- 0 until x.intValue()) yield RuleKernel.read(in, s"$name/$i/")
+    val kernels = for(i <- 0 until x.intValue()) yield RuleKernel.read(in, s"$name/$i")
     new CLUnaryRuleUpdater(kernels)
   }
 }
