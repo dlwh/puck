@@ -150,9 +150,8 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
       val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, cols)
       val ev = intBuffer.write(queue, 0, cols, ptr, false, events:_*)
       val res = tc.permuteTransposeCopy(this.t.asInstanceOf[CLMatrix[Float]], b.asInstanceOf[CLMatrix[Float]], intBuffer.asInstanceOf[CLBuffer[Int]], cols, ev)
-      res.invokeUponCompletion(new Runnable() {
-        def run() = { ptr.release(); intBuffer.release() }
-      })
+      PointerFreer.enqueue({ptr.release()}, res)
+      PointerFreer.enqueue({intBuffer.release()}, res)
       res
     }
     if(blocking)

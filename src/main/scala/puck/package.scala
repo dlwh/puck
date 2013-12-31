@@ -1,3 +1,4 @@
+import com.nativelibs4java.opencl.CLEvent.EventCallback
 import org.bridj.{PointerIO, Pointer}
 import com.nativelibs4java.opencl._
 import java.{lang=>jl}
@@ -99,9 +100,8 @@ package object puck {
         Pointer.allocateInts(lengthOfArray).setIntsAtOffset(0, arr, 0, lengthOfArray)
       }
       val ev = buffer.write(queue, ptr, false, events:_*)
-      ev.invokeUponCompletion(new Runnable {
-        def run() = {ptr.release()}
-      })
+
+      PointerFreer.enqueue({ptr.release()}, ev)
 
       ev
     }
