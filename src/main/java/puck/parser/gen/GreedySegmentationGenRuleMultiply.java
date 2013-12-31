@@ -94,8 +94,8 @@ public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 					index++;
 				}
 			}
-			segmentation[i] = modSubsegmentBinariesByParent(segment, NUM_SM);
-//			segmentation[i] = balancedSubsegmentBinariesByParent(segment, NUM_SM);
+//			segmentation[i] = modSubsegmentBinariesByParent(segment, NUM_SM);
+			segmentation[i] = balancedSubsegmentBinariesByParent(segment, NUM_SM);
 		}
 		System.out.println("Done with binary segment.");
 		return segmentation;
@@ -111,7 +111,7 @@ public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
     
     private List<IndexedBinaryRule<C, L>>[] balancedSubsegmentBinariesByParent(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int numSegments) {
     	Set<Integer> activeParents = getParentIndices(indexedBinaryRules); 
-    	IndexingILPWrapper<String> ilp = new IndexingILPWrapper<String>(new CPLEXIntegerLinearProgram(5, 8, false));
+    	IndexingILPWrapper<String> ilp = new IndexingILPWrapper<String>(new CPLEXIntegerLinearProgram(20, 8, false));
     	ilp.addBoundedVar("maxSegmentSize", 0, Integer.MAX_VALUE);
     	ilp.addBoundedVar("maxActiveParents", 0, Integer.MAX_VALUE);
     	for (int segmentId=0; segmentId<numSegments; ++segmentId) {
@@ -172,6 +172,17 @@ public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
     			weights[segmentId] = 1.0;
     		}
     		ilp.addEqualityConstraint(objs, weights, 1.0);
+    	}
+    	
+    	// parent is in at most one segment
+    	for (Integer parentIndex : activeParents) {
+    		String[] objs = new String[numSegments];
+    		double[] weights = new double[numSegments];
+    		for (int segmentId=0; segmentId<numSegments; ++segmentId) {
+    			objs[segmentId] = "parentAssignment"+segmentId+"_"+parentIndex;
+    			weights[segmentId] = 1.0;
+    		}
+    		ilp.addLessThanConstraint(objs, weights, 1.0);
     	}
     	
     	// solve

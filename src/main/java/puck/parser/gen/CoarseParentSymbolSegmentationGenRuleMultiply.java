@@ -45,6 +45,7 @@ public class CoarseParentSymbolSegmentationGenRuleMultiply<C, L> extends SimpleG
 			segmentation[index] = modSubsegmentBinaries(entry.getValue(), NUM_SM);
 			index++;
 		}
+		System.out.println("Done with binary segment.");
 		return segmentation;
 	}
 	
