@@ -8,6 +8,7 @@ import puck.util.{CLProfiler, ZipUtil}
 import scala.collection.JavaConverters._
 import org.bridj.Pointer
 import java.util
+import breeze.linalg.DenseVector
 
 /**
  *
@@ -65,7 +66,7 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
 object CLBinaryRuleUpdater {
   def read(in: ZipFile, name: String)(implicit ctxt: CLContext) = {
     val x = ZipUtil.deserializeEntry[Integer](in.getInputStream(in.getEntry(s"$name/numKernels")))
-    val kernels = for(i <- 0 until x.intValue()) yield RuleKernel.read(in, s"$name/$i/")
+    val kernels = for(i <- 0 until x.intValue()) yield RuleKernel.read(in, s"$name/$i")
 
     val globalSize = ZipUtil.deserializeEntry[Array[Int]](in.getInputStream(in.getEntry(s"$name/globalSize")))
     val wgSize = ZipUtil.deserializeEntry[Array[Int]](in.getInputStream(in.getEntry(s"$name/wgSize")))
@@ -74,10 +75,10 @@ object CLBinaryRuleUpdater {
   }
 }
 
-case class RuleKernel(kernels: IndexedSeq[CLKernel], parents: util.BitSet) {
+case class RuleKernel(kernels: IndexedSeq[CLKernel], parents: DenseVector[Int]) {
   def write(name: String, out: ZipOutputStream) {
-    ZipUtil.addKernelSet(out, s"$name/", kernels)
-    ZipUtil.serializedEntry(out, s"$name-bits", parents)
+    ZipUtil.addKernelSet(out, s"$name", kernels)
+    ZipUtil.serializedEntry(out, s"$name/bits", parents)
   }
 }
 
@@ -85,7 +86,7 @@ object RuleKernel {
 
   def read(in: ZipFile, name: String)(implicit context: CLContext) = {
     val kernels = ZipUtil.readKernelSet(in, name)
-    val parents = ZipUtil.deserializeEntry[util.BitSet](in.getInputStream(in.getEntry(s"$name-bits")))
+    val parents = ZipUtil.deserializeEntry[DenseVector[Int]](in.getInputStream(in.getEntry(s"$name/bits")))
     RuleKernel(kernels, parents)
   }
 }

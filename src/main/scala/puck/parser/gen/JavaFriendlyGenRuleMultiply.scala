@@ -1,20 +1,21 @@
 package puck.parser.gen
 
-import epic.trees.{UnaryRule, BinaryRule}
-import epic.AwesomeScalaBitSet
-import puck.parser.{RuleKernel, CLUnaryRuleUpdater, CLBinaryRuleUpdater, SymId}
-import com.nativelibs4java.opencl.{CLKernel, CLContext}
+import puck.parser._
+import com.nativelibs4java.opencl.CLContext
 
 import scala.collection.JavaConverters._
 import java.util
-import scala.collection.immutable.BitSet
+import epic.trees.BinaryRule
+import epic.trees.UnaryRule
+import puck.parser.SymId
+import breeze.linalg.DenseVector
 
 /**
  * TODO
  *
  * @author dlwh
  **/
-abstract class JavaFriendlyGenRuleMultiply[C, L] extends GenRuleMultiply[C, L] {
+abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L]) extends GenRuleMultiply[C, L] {
   def javaBinaryRuleApplication(rules: util.List[IndexedBinaryRule[C, L]], name: String, context: CLContext):CLBinaryRuleUpdater
   def javaUnaryRuleApplication(rules: util.List[IndexedUnaryRule[C, L]], name: String, context: CLContext):CLUnaryRuleUpdater
 
@@ -40,8 +41,11 @@ abstract class JavaFriendlyGenRuleMultiply[C, L] extends GenRuleMultiply[C, L] {
     }
 
     (programs zip partitions.asScala).map{ case (prog, part) =>
-      val coarseParents = BitSet.empty ++ getParents(part).asScala.map(_.coarse)
-      RuleKernel(prog.createKernels(), coarseParents.toJavaBitSet)
+      val mask = new Array[Int](puck.roundUpToMultipleOf(structure.numCoarseSyms, 32) / 32)
+      for(p <- getParents(part).asScala.map(_.coarse)) {
+        mask(p/32) |= 1<<(p%32)
+      }
+      RuleKernel(prog.createKernels(), new DenseVector(mask))
     }.asJava
   }
 

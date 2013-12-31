@@ -146,9 +146,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     (plrSize * 16, (baseSize * relativeSizeOfChartsToP + extra) * 16)
   }
 
-  println(numWorkCells, numChartCells, (3 * numWorkCells + numChartCells) * cellSize * 4, context.getMaxMemAllocSize)
-
-
   // On the Device side we have 4 Matrices:
   // One is where we calculate P = L * R * rules, for fixed spans and split points (the "bot")
   // One is the L part of the above
@@ -472,6 +469,22 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     any
   }
 
+  def little2big( i: Int) = {
+    ((i&0xff)<<24)+((i&0xff00)<<8)+((i&0xff0000)>>8)+((i>>24)&0xff);
+  }
+
+  def intersects(blockMask: DenseVector[Int], spanMask: DenseVector[Int]):Boolean = {
+    var i = 0
+    assert(blockMask.length == spanMask.length)
+    while(i < blockMask.length) {
+      if( (blockMask(i) & spanMask(i)) != 0) return true
+      i += 1
+    }
+
+    false
+
+  }
+
   private case class Batch(lengthTotals: Array[Int],
                            cellOffsets: Array[Int],
                            sentences: IndexedSeq[IndexedSeq[W]],
@@ -588,7 +601,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       if (offset != 0) {
         splitPointOffsets(splitPointOffset) = offset
 
-
         // copy ptrs to opencl
         val evTLeftPtrs  =  devLeftPtrs.writeArray(queue, lArray, offset, ev:_*) profileIn hdTransferEvents
         val evTRightPtrs = devRightPtrs.writeArray(queue, rArray, offset, ev:_*) profileIn hdTransferEvents
@@ -660,25 +672,30 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val blocks = if(merge) IndexedSeq(0 until numBlocks) else IndexedSeq.tabulate(numBlocks)(i => IndexedSeq(i))
 
       for(block <- blocks) {
-        for ( (sent, start, end, masks) <- allSpans ) {
-          val splitRange = ranger(start, start + span, batch.sentences(sent).length)
-          var split =  splitRange.start
-          val splitEnd = splitRange.terminalElement
-          val step = splitRange.step
-          while (split != splitEnd) {
-            if (split >= 0 && split <= batch.sentences(sent).length) {
-              val end = start + span
-              val parentTi = parentChart(batch, sent).cellOffset(start,end)
-              val leftChildAllowed = if (split < start) batch.isAllowedSpan(sent,split, start) else batch.isAllowedSpan(sent, start, split)
-              val rightChildAllowed = if (split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
+        val blockParents = updater.kernels(block.head).parents
+        for ( (sent, start, end, mask) <- allSpans ) {
+          if(mask == null ||  intersects(blockParents, mask)) {
 
-              if (doEmptySpans || (leftChildAllowed && rightChildAllowed)) {
-                val leftChild = if (split < start) leftChart(batch, sent).cellOffset(split,start) else leftChart(batch, sent).cellOffset(start, split)
-                val rightChild = if (split < end) rightChart(batch, sent).cellOffset(split,end) else rightChart(batch, sent).cellOffset(end, split)
-                ev = enqueue(block, batch, span, parentTi, leftChild, rightChild, ev)
+            val splitRange = ranger(start, start + span, batch.sentences(sent).length)
+            var split =  splitRange.start
+            val splitEnd = splitRange.terminalElement
+            val step = splitRange.step
+            while (split != splitEnd) {
+              if (split >= 0 && split <= batch.sentences(sent).length) {
+                val end = start + span
+                val parentTi = parentChart(batch, sent).cellOffset(start,end)
+                val leftChildAllowed = if (split < start) batch.isAllowedSpan(sent,split, start) else batch.isAllowedSpan(sent, start, split)
+                val rightChildAllowed = if (split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
+
+                if (doEmptySpans || (leftChildAllowed && rightChildAllowed)) {
+                  val leftChild = if (split < start) leftChart(batch, sent).cellOffset(split,start) else leftChart(batch, sent).cellOffset(start, split)
+                  val rightChild = if (split < end) rightChart(batch, sent).cellOffset(split,end) else rightChart(batch, sent).cellOffset(end, split)
+                  ev = enqueue(block, batch, span, parentTi, leftChild, rightChild, ev)
+                }
               }
+              split += step
             }
-            split += step
+
           }
 
         }
@@ -697,13 +714,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   // Sentence, Begin, End, BitMask
   def orderSpansBySimilarity(spans: IndexedSeq[(Int, Int, Int, DenseVector[Int])]): IndexedSeq[(Int, Int, Int, DenseVector[Int])] = {
-    import BitHacks.OrderBitVectors.OrderingBitVectors
-    val in = System.currentTimeMillis()
-    val res = spans.sortBy(_._4)
-    //val res = spans.groupBy(v =>v._4.toArray.toIndexedSeq).values.flatten.toIndexedSeq
-    val out = System.currentTimeMillis()
-    sortTime += (out - in)
-    res
+//    import BitHacks.OrderBitVectors.OrderingBitVectors
+//    val in = System.currentTimeMillis()
+//    val res = spans.sortBy(_._4)
+//    val res = spans.groupBy(v =>v._4.toArray.toIndexedSeq).values.flatten.toIndexedSeq
+//    val out = System.currentTimeMillis()
+//    sortTime += (out - in)
+//    res
+    spans
   }
 
   private class UnaryUpdateManager(parser: ActualParser,

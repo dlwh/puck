@@ -14,7 +14,6 @@ import scala.collection.immutable.BitSet
  * TODO
  *
  * @author dlwh
- **/
 class NoninlinedRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semiring: RuleSemiring) extends GenRuleMultiply[C, L] {
   def binaryRuleApplication(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLBinaryRuleUpdater = {
     val ruleStruct = s"""
@@ -151,3 +150,4 @@ class NoninlinedRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semi
   def unaryClusterer:GrammarPartitioner[C, L] = new AgglomerativeGrammarPartitioner(numRestarts = 100, maxPartitionLabelSize = 200)//55)//new ILPGrammarClusterer(12, 55)
 
 }
+ **/
