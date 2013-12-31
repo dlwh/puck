@@ -1,7 +1,9 @@
 package puck.parser.gen;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import puck.parser.RuleStructure;
 
@@ -25,7 +27,23 @@ public class CoarseParentSymbolSegmentationGenRuleMultiply<C, L> extends SimpleG
 	}
 
 	public List<IndexedBinaryRule<C, L>>[][] segmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules) {
-		return null;
+		Map<Integer,List<IndexedBinaryRule<C, L>>> rulesByCoarseParent = new HashMap<Integer,List<IndexedBinaryRule<C, L>>>();
+		for(IndexedBinaryRule<C, L> rule: indexedBinaryRules) {
+			int coarseParent = rule.parent().coarse();
+			List<IndexedBinaryRule<C, L>> rules = rulesByCoarseParent.get(coarseParent);
+			if (rules == null) {
+				rules = new ArrayList<IndexedBinaryRule<C, L>>();
+				rulesByCoarseParent.put(coarseParent, rules);
+			}
+			rules.add(rule);
+		}
+		List<IndexedBinaryRule<C, L>>[][] segmentation = new List[rulesByCoarseParent.size()][];
+		int index=0;
+		for (Map.Entry<Integer,List<IndexedBinaryRule<C, L>>> entry : rulesByCoarseParent.entrySet()) {
+			segmentation[index] = modSegmentBinaries(entry.getValue(), NUM_SM);
+			index++;
+		}
+		return segmentation;
 	}
 	
     private List<IndexedBinaryRule<C, L>>[] modSegmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int m) {
