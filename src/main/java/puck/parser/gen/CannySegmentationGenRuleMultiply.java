@@ -7,7 +7,7 @@ import org.apache.logging.log4j.core.filter.StructuredDataFilter;
 
 import puck.parser.RuleStructure;
 
-public class CannySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMultiply<C, L> {
+public class CannySegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultiply<C, L> {
 	
 	public static final int BINARY_PARENT_NUM_MAJOR_SEGMENTS = 6;
 	public static final int BINARY_LEFT_NUM_MAJOR_SEGMENTS = 2;
@@ -46,8 +46,8 @@ public class CannySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMultip
 		System.out.println("max binary segment size: "+max);
 		List<IndexedBinaryRule<C, L>>[][] subsegmentation = new List[segmentation.length][];
 		for (int i=0; i<segmentation.length; ++i) {
-			subsegmentation[i] = cubeSegmentBinaries(segmentation[i], BINARY_PARENT_NUM_MINOR_SEGMENTS, BINARY_LEFT_NUM_MINOR_SEGMENTS, BINARY_RIGHT_NUM_MINOR_SEGMENTS);
-//			subsegmentation[i] = modSegmentBinariesByParent(segmentation[i], NUM_SM);
+//			subsegmentation[i] = cubeSegmentBinaries(segmentation[i], BINARY_PARENT_NUM_MINOR_SEGMENTS, BINARY_LEFT_NUM_MINOR_SEGMENTS, BINARY_RIGHT_NUM_MINOR_SEGMENTS);
+			subsegmentation[i] = modSegmentBinariesByParent(segmentation[i], NUM_SM);
 		}
 		return subsegmentation;
 	}

@@ -73,20 +73,16 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
             Collections.sort(rules, new Comparator<IndexedBinaryRule<C, L>>() {
                 @Override
                 public int compare(IndexedBinaryRule<C, L> o1, IndexedBinaryRule<C, L> o2) {
-                    int lhs = Integer.compare(o1.rule().left().gpu(), o2.rule().left().gpu());
-                    if(lhs != 0) return lhs;
-                    int rhs = Integer.compare(o1.rule().right().gpu(), o2.rule().right().gpu());
-                    if(rhs != 0) return rhs;
-
-                    int parent = Integer.compare(o1.rule().parent().gpu(), o2.rule().parent().gpu());
-
-                    return parent;
+    				int parent = Integer.compare(o1.rule().parent().gpu(), o2.rule().parent().gpu());
+    				if(parent != 0) return parent;
+    				int lhs = Integer.compare(o1.rule().left().gpu(), o2.rule().left().gpu());
+    				if(lhs != 0) return lhs;
+    				int rhs = Integer.compare(o1.rule().right().gpu(), o2.rule().right().gpu());
+    				return rhs;
                 }
             });
 
         }
-
-      
 
         for (int m=0; m<NUM_SM; ++m) {
         	sb.append("static void subpart"+m+"(const mask_t mask, __global volatile float* parents, int row, __global float* left, __global float* right, int numRows) {\n");
