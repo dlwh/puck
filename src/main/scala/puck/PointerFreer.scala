@@ -11,9 +11,10 @@ import org.bridj.Pointer
  **/
 object PointerFreer {
   // daemon threads so this exits on done
-  val queue = new ThreadPoolExecutor(5, 10, 1, TimeUnit.SECONDS, new LinkedBlockingDeque[Runnable](), new ThreadFactory() {
+  val queue = new ThreadPoolExecutor(1, 3, 1, TimeUnit.SECONDS, new LinkedBlockingDeque[Runnable](), new ThreadFactory() {
     def newThread(r: Runnable): Thread = {
       val t = new Thread(r)
+      t.setPriority(Thread.MIN_PRIORITY)
       t.setDaemon(true)
       t
     }
