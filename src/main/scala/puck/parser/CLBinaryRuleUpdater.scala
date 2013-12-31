@@ -21,7 +21,9 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
 
   private val buffer = extra.map(arr => kernels.head.kernels.head.getProgram.getContext.createIntBuffer(CLMem.Usage.Input, Pointer.pointerToInts(arr:_*), true))
 
-  def update(profiler: CLProfiler, parent: CLMatrix[Float], parentPointers: CLBuffer[Int],
+  def numKernelBlocks = kernels.length
+
+  def update(block: IndexedSeq[Int], profiler: CLProfiler, parent: CLMatrix[Float], parentPointers: CLBuffer[Int],
              left: CLMatrix[Float],  leftPointers: CLBuffer[Int],
              right: CLMatrix[Float],  rightPointers: CLBuffer[Int],
              masks: CLMatrix[Int], events: CLEvent*)(implicit queue: CLQueue) = synchronized {
@@ -34,7 +36,7 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
     require(parent.rows == right.rows)
     require(parent.cols == right.cols)
     require(parent.majorStride == right.majorStride)
-    kernels.flatMap(_.kernels).foldLeft(events) { (ev, k) =>
+    block.flatMap(kernels(_).kernels).foldLeft(events) { (ev, k) =>
       k.setArgs(parent.data.safeBuffer, parentPointers,
         left.data.safeBuffer, leftPointers,
         right.data.safeBuffer,  rightPointers,

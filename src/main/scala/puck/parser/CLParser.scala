@@ -6,7 +6,7 @@ import com.nativelibs4java.opencl._
 import com.typesafe.scalalogging.slf4j.Logging
 import puck.util.{ZipUtil, BitHacks, ZeroMemoryKernel, CLProfiler}
 import puck.linalg.CLMatrix
-import java.nio.FloatBuffer
+import java.nio.{IntBuffer, ByteBuffer, FloatBuffer}
 import puck.linalg.kernels.{CLMatrixSliceCopy, CLMatrixTransposeCopy}
 import breeze.collection.mutable.TriangularArray
 import breeze.linalg.{Counter2, DenseVector, DenseMatrix}
@@ -31,6 +31,7 @@ import epic.lexicon.SimpleLexicon
 import scala.collection.parallel.immutable.ParSeq
 import java.util
 import java.util.Collections
+import java.security.MessageDigest
 
 /**
  * TODO
@@ -565,7 +566,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     // TODO: ugh, state
     var lastParent = -1
 
-    private def enqueue(batch: Batch, span: Int, parent: Int, left: Int, right: Int, events: Seq[CLEvent]): Seq[CLEvent] = {
+    private def enqueue(block: IndexedSeq[Int], batch: Batch, span: Int, parent: Int, left: Int, right: Int, events: Seq[CLEvent]): Seq[CLEvent] = {
       if (splitPointOffset == 0 || lastParent != parent) {
         splitPointOffsets(splitPointOffset) = offset
         splitPointOffset += 1
@@ -574,17 +575,19 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       pArray(offset) = parent
       lArray(offset) = left
       rArray(offset) = right
+
       offset += 1
       if (offset >= numWorkCells)  {
-        flushQueue(batch, span, events)
+        flushQueue(block, batch, span, events)
       } else {
         events
       }
     }
 
-    private def flushQueue(batch: Batch, span: Int, ev: Seq[CLEvent]): Seq[CLEvent] = {
+    private def flushQueue(block: IndexedSeq[Int], batch: Batch, span: Int, ev: Seq[CLEvent]): Seq[CLEvent] = {
       if (offset != 0) {
         splitPointOffsets(splitPointOffset) = offset
+
 
         // copy ptrs to opencl
         val evTLeftPtrs  =  devLeftPtrs.writeArray(queue, lArray, offset, ev:_*) profileIn hdTransferEvents
@@ -600,17 +603,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val evWriteDevSplitPoint = devSplitPointOffsets.writeArray(queue, splitPointOffsets, splitPointOffset + 1, ev:_*) profileIn hdTransferEvents
 
         val zeroParent = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
-        val kEvents = updater.update(binaryEvents,
+        val kEvents = updater.update(block, binaryEvents,
           devParent(0 until offset, ::), devParentPtrs,
           devLeft(0 until offset, ::),   devLeftPtrs,
           devRight(0 until offset, ::),  devRightPtrs,
           maskCharts, evTransLeft, evTransRight, zeroParent, evWriteDevParent)
 
-        val sumEv = parser.data.util.sumSplitPoints(devParent,
-          parentChartMatrix,
-          devParentPtrs, splitPointOffset,
-          devSplitPointOffsets,
-          32 / span max 1, parser.data.numSyms, Seq(evWriteDevParent, evWriteDevSplitPoint) ++ kEvents:_*) profileIn sumEvents
+        val sumEv: CLEvent = sumSplitPoints(span, Seq(evWriteDevParent, evWriteDevSplitPoint) ++ kEvents: _*)
 
         offset = 0
         splitPointOffset = 0
@@ -620,11 +619,24 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
     }
 
+
+    def sumSplitPoints(span: Int, events: CLEvent*): CLEvent = {
+      val sumEv = parser.data.util.sumSplitPoints(devParent,
+        parentChartMatrix,
+        devParentPtrs, splitPointOffset,
+        devSplitPointOffsets,
+        32 / span max 1, parser.data.numSyms, events:_*) profileIn sumEvents
+      sumEv
+    }
+
     def doUpdates(batch: Batch, span: Int, events: CLEvent*) = {
 
       var ev = events
       splitPointOffset = 0
       lastParent = -1
+
+
+      val merge = !batch.hasMasks
 
       val allSpans = if (batch.hasMasks) {
         val allSpans = for {
@@ -643,31 +655,37 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         } yield (sent, start, start+span, null)
       }
 
-      for ( (sent, start, end, masks) <- allSpans ) {
-        val splitRange = ranger(start, start + span, batch.sentences(sent).length)
-        var split =  splitRange.start
-        val splitEnd = splitRange.terminalElement
-        val step = splitRange.step
-        while (split != splitEnd) {
-          if (split >= 0 && split <= batch.sentences(sent).length) {
-            val end = start + span
-            val parentTi = parentChart(batch, sent).cellOffset(start,end)
-            val leftChildAllowed = if (split < start) batch.isAllowedSpan(sent,split, start) else batch.isAllowedSpan(sent, start, split)
-            val rightChildAllowed = if (split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
+      val numBlocks = updater.numKernelBlocks
 
-            if (doEmptySpans || (leftChildAllowed && rightChildAllowed)) {
-              val leftChild = if (split < start) leftChart(batch, sent).cellOffset(split,start) else leftChart(batch, sent).cellOffset(start, split)
-              val rightChild = if (split < end) rightChart(batch, sent).cellOffset(split,end) else rightChart(batch, sent).cellOffset(end, split)
-              ev = enqueue(batch, span, parentTi, leftChild, rightChild, ev)
+      val blocks = if(merge) IndexedSeq(0 until numBlocks) else IndexedSeq.tabulate(numBlocks)(i => IndexedSeq(i))
+
+      for(block <- blocks) {
+        for ( (sent, start, end, masks) <- allSpans ) {
+          val splitRange = ranger(start, start + span, batch.sentences(sent).length)
+          var split =  splitRange.start
+          val splitEnd = splitRange.terminalElement
+          val step = splitRange.step
+          while (split != splitEnd) {
+            if (split >= 0 && split <= batch.sentences(sent).length) {
+              val end = start + span
+              val parentTi = parentChart(batch, sent).cellOffset(start,end)
+              val leftChildAllowed = if (split < start) batch.isAllowedSpan(sent,split, start) else batch.isAllowedSpan(sent, start, split)
+              val rightChildAllowed = if (split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
+
+              if (doEmptySpans || (leftChildAllowed && rightChildAllowed)) {
+                val leftChild = if (split < start) leftChart(batch, sent).cellOffset(split,start) else leftChart(batch, sent).cellOffset(start, split)
+                val rightChild = if (split < end) rightChart(batch, sent).cellOffset(split,end) else rightChart(batch, sent).cellOffset(end, split)
+                ev = enqueue(block, batch, span, parentTi, leftChild, rightChild, ev)
+              }
             }
+            split += step
           }
-          split += step
+
         }
 
-      }
-
-      if (offset > 0) {
-        ev = flushQueue(batch, span, ev)
+        if (offset > 0) {
+          ev = flushQueue(block, batch, span, ev)
+        }
       }
 
       assert(ev.length == 1)
