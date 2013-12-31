@@ -73,7 +73,8 @@ object CLOutsideKernels {
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
 //    val parserGen = new LHSGenRuleMultiply[C, L](structure)
 //    val parserGen = new RandomSegmentationGenRuleMultiply[C, L](structure)
-    val parserGen = new CannySegmentationGenRuleMultiply[C, L](structure)
+//    val parserGen = new CannySegmentationGenRuleMultiply[C, L](structure)
+    val parserGen = new VariableSizeGreedyGenRuleMultiply[C, L](structure)
 //    val parserGen = new CoarseParentSymbolSegmentationGenRuleMultiply[C, L](structure)
 //	  val parserGen = new GreedySegmentationGenRuleMultiply[C, L](structure)
     val outside_L_NNKernels = parserGen.binaryRuleApplication(structure.nontermRules.map(rotateLeftToParent), "outside_L_nn_binaries")
