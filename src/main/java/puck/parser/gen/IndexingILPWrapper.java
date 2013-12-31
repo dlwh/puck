@@ -6,18 +6,18 @@ import java.util.List;
 import java.util.Map;
 
 
-public class IndexingILPWrapper {
+public class IndexingILPWrapper<T> {
 	
-	Map<Object,Integer> objectToIndex;
+	Map<T,Integer> objectToIndex;
 	IntegerLinearProgram ilp;
 	boolean locked;
 	
 	public IndexingILPWrapper(IntegerLinearProgram ilp) {
 		this.ilp = ilp;
-		this.objectToIndex = new HashMap<Object,Integer>();
+		this.objectToIndex = new HashMap<T,Integer>();
 	}
 	
-	public boolean containsObject(Object obj) {
+	public boolean containsObject(T obj) {
 		return objectToIndex.containsKey(obj);
 	}
 	
@@ -25,7 +25,7 @@ public class IndexingILPWrapper {
 		return objectToIndex.keySet().size();
 	}
 	
-	private int getIndex(Object obj) {
+	private int getIndex(T obj) {
 		if (!containsObject(obj)) {
 			throw new RuntimeException("Object not in indexer.");
 		} else {
@@ -33,7 +33,7 @@ public class IndexingILPWrapper {
 		}
 	}
 	
-	private int[] getIndices(Object[] objs) {
+	private int[] getIndices(T[] objs) {
 		int[] indices = new int[objs.length];
 		for (int i=0; i<indices.length; ++i) {
 			indices[i] = getIndex(objs[i]);
@@ -41,15 +41,15 @@ public class IndexingILPWrapper {
 		return indices;
 	}
 	
-	private List<Integer> getIndices(List<Object> objs) {
+	private List<Integer> getIndices(List<T> objs) {
 		List<Integer> indices = new ArrayList<Integer>();
-		for (Object obj : objs) {
+		for (T obj : objs) {
 			indices.add(getIndex(obj));
 		}
 		return indices;
 	}
 	
-	public int addBoundedIntVar(Object obj, double lower, double upper) {
+	public int addBoundedIntVar(T obj, double lower, double upper) {
 		if (containsObject(obj)) {
 			throw new RuntimeException("Object already added to indexer.");
 		} else {
@@ -67,7 +67,7 @@ public class IndexingILPWrapper {
 		ilp.optimize();
 	}
 	
-	public int addBoundedVar(Object obj, double lower, double upper) {
+	public int addBoundedVar(T obj, double lower, double upper) {
 		if (containsObject(obj)) {
 			throw new RuntimeException("Object already added to indexer.");
 		} else {
@@ -77,11 +77,11 @@ public class IndexingILPWrapper {
 		}
 	}
 
-	public void addLessThanConstraint(Object[] objs, double[] weights, double rhs) {
+	public void addLessThanConstraint(T[] objs, double[] weights, double rhs) {
 		ilp.addLessThanConstraint(getIndices(objs), weights, rhs);
 	}
 
-	public void addObjectiveWeight(Object obj, double val) {
+	public void addObjectiveWeight(T obj, double val) {
 		ilp.addObjectiveWeight(getIndex(obj), val);
 	}
 
@@ -97,48 +97,48 @@ public class IndexingILPWrapper {
 		ilp.clear();
 	}
 
-	public Map<Object,Double> solution() {
-		Map<Object,Double> solution = new HashMap<Object, Double>();
+	public Map<T,Double> solution() {
+		Map<T,Double> solution = new HashMap<T, Double>();
 		double[] solutionByIndex = ilp.solution();
-		for (Object obj : objectToIndex.keySet()) {
+		for (T obj : objectToIndex.keySet()) {
 			solution.put(obj, solutionByIndex[getIndex(obj)]);
 		}
 		return solution;
 	}
 	
-	public void addObjectiveWeights(List<Object> objs, List<Double> weights) {
+	public void addObjectiveWeights(List<T> objs, List<Double> weights) {
 		ilp.addObjectiveWeights(getIndices(objs), weights);
 	}
 	
-	public void addObjectiveWeights(Object[] objs, double[] weights) {
+	public void addObjectiveWeights(T[] objs, double[] weights) {
 		ilp.addObjectiveWeights(getIndices(objs), weights);
 	}
 
-	public void addEqualityConstraint(Object obj, double weight, double rhs) {
+	public void addEqualityConstraint(T obj, double weight, double rhs) {
 		ilp.addEqualityConstraint(getIndex(obj), weight, rhs);
 	}
 
-	public void addEqualityConstraint(Object[] objs, double[] weights, double rhs) {
+	public void addEqualityConstraint(T[] objs, double[] weights, double rhs) {
 		ilp.addEqualityConstraint(getIndices(objs), weights, rhs);
 	}
 	
-	public void addGreaterThanConstraint(Object[] objs, double[] weights, double rhs) {
+	public void addGreaterThanConstraint(T[] objs, double[] weights, double rhs) {
 		ilp.addGreaterThanConstraint(getIndices(objs), weights, rhs);
 	}
 
-	public void addLessThanConstraint(Object obj, double weight, double rhs) {
+	public void addLessThanConstraint(T obj, double weight, double rhs) {
 		ilp.addLessThanConstraint(getIndex(obj), weight, rhs);
 	}
 	
-	public void addGreaterThanConstraint(Object obj, double weight, double rhs) {
+	public void addGreaterThanConstraint(T obj, double weight, double rhs) {
 		ilp.addGreaterThanConstraint(getIndex(obj), weight, rhs);
 	}
 
-	public void addOrConstraint(Object orObj, Object[] objs) {
+	public void addOrConstraint(T orObj, T[] objs) {
 		ilp.addOrConstraint(getIndex(orObj), getIndices(objs));
 	}
 
-	public void addAndConstraint(Object andObj, Object[] objs) {
+	public void addAndConstraint(T andObj, T[] objs) {
 		ilp.addAndConstraint(getIndex(andObj), getIndices(objs));
 	}
 	

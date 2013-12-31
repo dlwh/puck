@@ -1,7 +1,10 @@
 package puck.parser.gen;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import org.apache.logging.log4j.core.filter.StructuredDataFilter;
 
@@ -35,7 +38,7 @@ public class CannySegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultipl
 	}
 
 	public List<IndexedBinaryRule<C, L>>[][] segmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules) {
-		List<IndexedBinaryRule<C, L>>[] segmentation = cubeSegmentBinaries(indexedBinaryRules, BINARY_PARENT_NUM_MAJOR_SEGMENTS, BINARY_LEFT_NUM_MAJOR_SEGMENTS, BINARY_RIGHT_NUM_MAJOR_SEGMENTS);
+		List<IndexedBinaryRule<C, L>>[] segmentation = cubeSubsegmentBinaries(indexedBinaryRules, BINARY_PARENT_NUM_MAJOR_SEGMENTS, BINARY_LEFT_NUM_MAJOR_SEGMENTS, BINARY_RIGHT_NUM_MAJOR_SEGMENTS);
 		double min = Double.POSITIVE_INFINITY;
 		double max = Double.NEGATIVE_INFINITY;
 		for (List segment : segmentation) {
@@ -46,13 +49,13 @@ public class CannySegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultipl
 		System.out.println("max binary segment size: "+max);
 		List<IndexedBinaryRule<C, L>>[][] subsegmentation = new List[segmentation.length][];
 		for (int i=0; i<segmentation.length; ++i) {
-//			subsegmentation[i] = cubeSegmentBinaries(segmentation[i], BINARY_PARENT_NUM_MINOR_SEGMENTS, BINARY_LEFT_NUM_MINOR_SEGMENTS, BINARY_RIGHT_NUM_MINOR_SEGMENTS);
-			subsegmentation[i] = modSegmentBinariesByParent(segmentation[i], NUM_SM);
+			subsegmentation[i] = cubeSubsegmentBinaries(segmentation[i], BINARY_PARENT_NUM_MINOR_SEGMENTS, BINARY_LEFT_NUM_MINOR_SEGMENTS, BINARY_RIGHT_NUM_MINOR_SEGMENTS);
+//			subsegmentation[i] = modSubsegmentBinariesByParent(segmentation[i], NUM_SM);
 		}
 		return subsegmentation;
 	}
 	
-	private List<IndexedBinaryRule<C, L>>[] cubeSegmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int parentNumSeg, int leftNumSeg, int rightNumSeg) {
+	private List<IndexedBinaryRule<C, L>>[] cubeSubsegmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int parentNumSeg, int leftNumSeg, int rightNumSeg) {
 		int ruleNumSeg = parentNumSeg * leftNumSeg * rightNumSeg;
 		int maxParent = 0;
 		int maxLeft = 0;
@@ -79,7 +82,7 @@ public class CannySegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultipl
 		return result;
 	}
 	
-    private List<IndexedBinaryRule<C, L>>[] modSegmentBinariesByParent(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int numSegments) {
+    private List<IndexedBinaryRule<C, L>>[] modSubsegmentBinariesByParent(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int numSegments) {
     	List<IndexedBinaryRule<C, L>>[] result = new List[numSegments];
     	for (int i=0; i<numSegments; ++i) result[i] = new ArrayList<IndexedBinaryRule<C, L>>();
     	for(IndexedBinaryRule<C, L> rule: indexedBinaryRules) {
@@ -87,5 +90,5 @@ public class CannySegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultipl
     	}
     	return result;
     }
-	
+    
 }
