@@ -46,12 +46,20 @@ public class CoarseParentSymbolSegmentationGenRuleMultiply<C, L> extends SimpleG
 		return segmentation;
 	}
 	
-    private List<IndexedBinaryRule<C, L>>[] modSegmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int m) {
-    	List<IndexedBinaryRule<C, L>>[] result = new List[m];
-    	for (int i=0; i<m; ++i) result[i] = new ArrayList<IndexedBinaryRule<C, L>>();
+    private List<IndexedBinaryRule<C, L>>[] modSegmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int numSegments) {
+    	List<IndexedBinaryRule<C, L>>[] result = new List[numSegments];
+    	for (int i=0; i<numSegments; ++i) result[i] = new ArrayList<IndexedBinaryRule<C, L>>();
     	for(IndexedBinaryRule<C, L> rule: indexedBinaryRules) {
-    		result[rule.rule().parent().gpu() % m].add(rule);
+    		result[rule.rule().parent().gpu() % numSegments].add(rule);
     	}
+    	return result;
+    }
+    
+    private List<IndexedBinaryRule<C, L>>[] balancedSegmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int numSegments) {
+    	
+    	
+    	List<IndexedBinaryRule<C, L>>[] result = new List[numSegments];
+    	for (int i=0; i<numSegments; ++i) result[i] = new ArrayList<IndexedBinaryRule<C, L>>();
     	return result;
     }
 

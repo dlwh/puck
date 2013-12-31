@@ -46,8 +46,8 @@ public class CannySegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultipl
 		System.out.println("max binary segment size: "+max);
 		List<IndexedBinaryRule<C, L>>[][] subsegmentation = new List[segmentation.length][];
 		for (int i=0; i<segmentation.length; ++i) {
-//			subsegmentation[i] = cubeSegmentBinaries(segmentation[i], BINARY_PARENT_NUM_MINOR_SEGMENTS, BINARY_LEFT_NUM_MINOR_SEGMENTS, BINARY_RIGHT_NUM_MINOR_SEGMENTS);
-			subsegmentation[i] = modSegmentBinariesByParent(segmentation[i], NUM_SM);
+			subsegmentation[i] = cubeSegmentBinaries(segmentation[i], BINARY_PARENT_NUM_MINOR_SEGMENTS, BINARY_LEFT_NUM_MINOR_SEGMENTS, BINARY_RIGHT_NUM_MINOR_SEGMENTS);
+//			subsegmentation[i] = modSegmentBinariesByParent(segmentation[i], NUM_SM);
 		}
 		return subsegmentation;
 	}
