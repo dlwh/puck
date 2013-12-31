@@ -27,7 +27,7 @@ public class IndexingILPWrapper<T> {
 	
 	private int getIndex(T obj) {
 		if (!containsObject(obj)) {
-			throw new RuntimeException("T not in indexer.");
+			throw new RuntimeException("Object not in indexer.");
 		} else {
 			return objectToIndex.get(obj);
 		}
@@ -51,7 +51,7 @@ public class IndexingILPWrapper<T> {
 	
 	public int addBoundedIntVar(T obj, double lower, double upper) {
 		if (containsObject(obj)) {
-			throw new RuntimeException("T already added to indexer.");
+			throw new RuntimeException("Object already added to indexer.");
 		} else {
 			int index = ilp.addBoundedIntVar(lower, upper);
 			objectToIndex.put(obj, index);
@@ -69,7 +69,7 @@ public class IndexingILPWrapper<T> {
 	
 	public int addBoundedVar(T obj, double lower, double upper) {
 		if (containsObject(obj)) {
-			throw new RuntimeException("T already added to indexer.");
+			throw new RuntimeException("Object already added to indexer.");
 		} else {
 			int index = ilp.addBoundedVar(lower, upper);
 			objectToIndex.put(obj, index);

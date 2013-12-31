@@ -42,13 +42,13 @@ public class CoarseParentSymbolSegmentationGenRuleMultiply<C, L> extends SimpleG
 		List<IndexedBinaryRule<C, L>>[][] segmentation = new List[rulesByCoarseParent.size()][];
 		int index=0;
 		for (Map.Entry<Integer,List<IndexedBinaryRule<C, L>>> entry : rulesByCoarseParent.entrySet()) {
-			segmentation[index] = modSegmentBinaries(entry.getValue(), NUM_SM);
+			segmentation[index] = modSubsegmentBinaries(entry.getValue(), NUM_SM);
 			index++;
 		}
 		return segmentation;
 	}
 	
-    private List<IndexedBinaryRule<C, L>>[] modSegmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int numSegments) {
+    private List<IndexedBinaryRule<C, L>>[] modSubsegmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int numSegments) {
     	List<IndexedBinaryRule<C, L>>[] result = new List[numSegments];
     	for (int i=0; i<numSegments; ++i) result[i] = new ArrayList<IndexedBinaryRule<C, L>>();
     	for(IndexedBinaryRule<C, L> rule: indexedBinaryRules) {
@@ -57,26 +57,4 @@ public class CoarseParentSymbolSegmentationGenRuleMultiply<C, L> extends SimpleG
     	return result;
     }
     
-    private Set<Integer> getParentIndices(List<IndexedBinaryRule<C, L>> indexedBinaryRules) {
-    	Set<Integer> parents = new HashSet<Integer>();
-    	for (IndexedBinaryRule<C, L> rule : indexedBinaryRules) {
-    		parents.add(rule.parent().gpu());
-    	}
-    	return parents;
-    }
-    
-    private List<IndexedBinaryRule<C, L>>[] balancedSegmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int numSegments) {
-    	IndexingILPWrapper<String> ilp = new IndexingILPWrapper<String>(new CPLEXIntegerLinearProgram(1, false));
-    	ilp.addBoundedVar("maxSegmentSize", 0, Integer.MAX_VALUE);
-    	for (int segmentId=0; segmentId<numSegments; ++segmentId) {
-    		for (int ruleId=0; ruleId<indexedBinaryRules.size(); ++ruleId) {
-    			ilp.addBoundedIntVar("ruleAssignment"+segmentId+"_"+ruleId, 0, Integer.MAX_VALUE);
-    		}
-    	}
-    	
-    	List<IndexedBinaryRule<C, L>>[] result = new List[numSegments];
-    	for (int i=0; i<numSegments; ++i) result[i] = new ArrayList<IndexedBinaryRule<C, L>>();
-    	return result;
-    }
-
 }
