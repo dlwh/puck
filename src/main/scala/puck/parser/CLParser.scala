@@ -643,12 +643,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         } yield (sent, start, start+span, null)
       }
 
-      for ( (sent, start, end, _) <- allSpans ) {
+      for ( (sent, start, end, masks) <- allSpans ) {
         val splitRange = ranger(start, start + span, batch.sentences(sent).length)
         var split =  splitRange.start
-        val terminal = splitRange.terminalElement
+        val splitEnd = splitRange.terminalElement
         val step = splitRange.step
-        while (split != terminal) {
+        while (split != splitEnd) {
           if (split >= 0 && split <= batch.sentences(sent).length) {
             val end = start + span
             val parentTi = parentChart(batch, sent).cellOffset(start,end)

@@ -68,9 +68,9 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
       for(sym <- syms) yield {
         val isTerm = !nonterms.contains(sym)
         if(isTerm) {
-          sym -> SymId(refinements.labels.project(sym), sym, grammar.labelIndex(sym), termIndex.index(sym), isTerm)
+          sym -> SymId(refinements.labels.project(sym), sym, refinements.labels.project(grammar.labelIndex(sym)), grammar.labelIndex(sym), termIndex.index(sym), isTerm)
         } else {
-          sym -> SymId(refinements.labels.project(sym), sym, grammar.labelIndex(sym), nontermIndex.index(sym), isTerm)
+          sym -> SymId(refinements.labels.project(sym), sym,  refinements.labels.project(grammar.labelIndex(sym)), grammar.labelIndex(sym), nontermIndex.index(sym), isTerm)
         }
       }
     }.toMap
@@ -127,4 +127,4 @@ case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: B
 
 }
 
-final case class SymId[C, L](coarseSym: C, fineSym: L, system: Int, gpu: Int, isTerminal: Boolean)
+final case class SymId[C, L](coarseSym: C, fineSym: L, coarse: Int, system: Int, gpu: Int, isTerminal: Boolean)

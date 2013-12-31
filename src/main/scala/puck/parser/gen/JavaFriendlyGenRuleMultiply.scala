@@ -1,11 +1,13 @@
 package puck.parser.gen
 
 import epic.trees.{UnaryRule, BinaryRule}
-import puck.parser.{CLUnaryRuleUpdater, CLBinaryRuleUpdater, SymId}
+import epic.AwesomeScalaBitSet
+import puck.parser.{RuleKernel, CLUnaryRuleUpdater, CLBinaryRuleUpdater, SymId}
 import com.nativelibs4java.opencl.{CLKernel, CLContext}
 
 import scala.collection.JavaConverters._
 import java.util
+import scala.collection.immutable.BitSet
 
 /**
  * TODO
@@ -25,7 +27,10 @@ abstract class JavaFriendlyGenRuleMultiply[C, L] extends GenRuleMultiply[C, L] {
     javaUnaryRuleApplication(rules.map((IndexedUnaryRule[C, L] _).tupled).asJava, name, cl)
   }
 
-  def compileKernels(context: CLContext, texts: java.util.List[String]):java.util.List[CLKernel] = {
+  def compileKernels[T <: HasParent[C, L]](context: CLContext,
+                     partitions: java.util.List[java.util.List[T]],
+                     texts: java.util.List[String]):java.util.List[RuleKernel] = {
+    require(partitions.size == texts.size)
     val programs = texts.asScala.map(context.createProgram(_))
     programs.foreach(_.setFastRelaxedMath())
     if(context.getDevices.head.toString.toLowerCase.contains("nvidia") && !context.getDevices.head.toString.toLowerCase.contains("apple") ) {
@@ -34,12 +39,14 @@ abstract class JavaFriendlyGenRuleMultiply[C, L] extends GenRuleMultiply[C, L] {
       //programs.foreach(_.addBuildOption("sm_30"))
     }
 
-//    programs.par.flatMap(_.createKernels()).seq.asJava
-    programs.flatMap(_.createKernels()).asJava
+    (programs zip partitions.asScala).map{ case (prog, part) =>
+      val coarseParents = BitSet.empty ++ getParents(part).asScala.map(_.coarse)
+      RuleKernel(prog.createKernels(), coarseParents.toJavaBitSet)
+    }.asJava
   }
 
-  def getParents(partition: util.List[IndexedBinaryRule[C, L]] ): util.Set[SymId[C, L]] = {
-    partition.asScala.map(_.rule.parent).toSet.asJava
+  def getParents(partition: util.List[_ <: HasParent[C, L]] ): util.Set[SymId[C, L]] = {
+    partition.asScala.map(_.parent).toSet.asJava
   }
 
   def supportsExtendedAtomics(context: CLContext) = {
@@ -48,9 +55,17 @@ abstract class JavaFriendlyGenRuleMultiply[C, L] extends GenRuleMultiply[C, L] {
     ok && !context.toString.contains("Apple")
 //    ok
   }
+
+  def flatten(arr: Array[Array[util.List[IndexedBinaryRule[C, L]]]]) = arr.map(_.map(_.asScala).toIndexedSeq.flatten.asJava).toIndexedSeq.asJava
+  def flattenU(arr: Array[Array[util.List[IndexedUnaryRule[C, L]]]]) = arr.map(_.map(_.asScala).toIndexedSeq.flatten.asJava).toIndexedSeq.asJava
 }
 
-case class IndexedBinaryRule[C, L](rule: BinaryRule[SymId[C, L]], ruleId: Int) extends java.lang.Comparable[IndexedBinaryRule[C, L]] {
+trait HasParent[C, L] {
+  def parent: SymId[C, L]
+}
+
+case class IndexedBinaryRule[C, L](rule: BinaryRule[SymId[C, L]], ruleId: Int) extends java.lang.Comparable[IndexedBinaryRule[C, L]] with HasParent[C,L] {
+  def parent = rule.parent
   def compareTo(o2: IndexedBinaryRule[C, L]):Int = {
     val lhs = Integer.compare(rule.left.gpu, o2.rule.left.gpu)
     if(lhs != 0) return lhs
@@ -63,7 +78,8 @@ case class IndexedBinaryRule[C, L](rule: BinaryRule[SymId[C, L]], ruleId: Int) e
   }
 }
 
-case class IndexedUnaryRule[C, L](rule: UnaryRule[SymId[C, L]], ruleId: Int) extends java.lang.Comparable[IndexedUnaryRule[C, L]] {
+case class IndexedUnaryRule[C, L](rule: UnaryRule[SymId[C, L]], ruleId: Int) extends java.lang.Comparable[IndexedUnaryRule[C, L]] with HasParent[C, L] {
+  def parent = rule.parent
   def compareTo(o2: IndexedUnaryRule[C, L]):Int = {
     val lhs = Integer.compare(rule.child.gpu, o2.rule.child.gpu)
     if(lhs != 0) return lhs
