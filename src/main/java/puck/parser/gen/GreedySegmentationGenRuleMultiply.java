@@ -35,7 +35,7 @@ public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 				segmentation[i][j] = new ArrayList<IndexedBinaryRule<C, L>>();
 			}
 		}
-		List<IndexedBinaryRule<C, L>> sortedBinaryRules = new ArrayList<IndexedBinaryRule<C, L>>();
+		List<IndexedBinaryRule<C, L>> sortedBinaryRules = new ArrayList<IndexedBinaryRule<C, L>>(indexedBinaryRules);
 		Collections.sort(sortedBinaryRules, new Comparator<IndexedBinaryRule<C, L>>() {
 			public int compare(IndexedBinaryRule<C, L> o1, IndexedBinaryRule<C, L> o2) {
 				int parent = Integer.compare(o1.rule().parent().gpu(), o2.rule().parent().gpu());
@@ -59,6 +59,7 @@ public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 				}
 			}
 		}
+        if(index != sortedBinaryRules.size()) throw new RuntimeException();
 		return segmentation;
 	}
 
