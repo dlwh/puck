@@ -24,6 +24,32 @@ case class CLInsideKernels(insideNNKernels: CLBinaryRuleUpdater,
   }
 }
 
+trait GenType {
+  def generator[C, L](structure: RuleStructure[C, L]):GenRuleMultiply[C, L]
+}
+
+object GenType {
+  object VariableLength extends GenType {
+    def generator[C, L](structure: RuleStructure[C, L]): GenRuleMultiply[C, L] = new VariableSizeGreedyGenRuleMultiply(structure)
+  }
+  object Canny extends GenType {
+    def generator[C, L](structure: RuleStructure[C, L]): GenRuleMultiply[C, L] = new CannySegmentationGenRuleMultiply(structure)
+  }
+
+  object Random extends GenType {
+    def generator[C, L](structure: RuleStructure[C, L]): GenRuleMultiply[C, L] = new RandomSegmentationGenRuleMultiply(structure)
+  }
+
+  object CoarseParent extends GenType {
+    def generator[C, L](structure: RuleStructure[C, L]): GenRuleMultiply[C, L] = new CoarseParentSymbolSegmentationGenRuleMultiply(structure)
+  }
+
+
+  object Greedy extends GenType {
+    def generator[C, L](structure: RuleStructure[C, L]): GenRuleMultiply[C, L] = new GreedySegmentationGenRuleMultiply(structure)
+  }
+}
+
 object CLInsideKernels {
   def read(in: ZipFile)(implicit context: CLContext) = {
     val insideNT = CLBinaryRuleUpdater.read(in, "insideNT")
@@ -36,11 +62,12 @@ object CLInsideKernels {
   }
 
 
-  def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
+
+  def make[C, L](structure: RuleStructure[C, L], genType: GenType = GenType.VariableLength)(implicit context: CLContext, semiring: RuleSemiring) = {
 //    val parserGen = new LHSGenRuleMultiply[C, L](structure)
 //    val parserGen = new RandomSegmentationGenRuleMultiply[C, L](structure)
 //    val parserGen = new CannySegmentationGenRuleMultiply[C, L](structure)
-    val parserGen = new VariableSizeGreedyGenRuleMultiply[C, L](structure)
+    val parserGen = genType.generator(structure)
 //    val parserGen = new CoarseParentSymbolSegmentationGenRuleMultiply[C, L](structure)
 //	  val parserGen = new GreedySegmentationGenRuleMultiply[C, L](structure)
 //    val parserGen = new NoninlinedRuleMultiply(structure)

@@ -851,15 +851,18 @@ object CLParser extends Logging {
       null
     }
 
+    val defaultGenerator = GenType.VariableLength
+
     if (parserData == null || parserData.grammar.signature != grammar.signature) {
       println("Regenerating parser data")
-      parserData = CLParserData.make(grammar)
+      val gen = if(grammars.length > 1) GenType.CoarseParent else GenType.VariableLength
+      parserData =  CLParserData.make(grammar, gen)
       if (cache && codeCache != null) {
         parserData.write(new BufferedOutputStream(new FileOutputStream(codeCache)))
       }
     }
 
-    val allData = grammars.dropRight(1).map(CLParserData.make(_)) :+ parserData
+    val allData = grammars.dropRight(1).map(CLParserData.make(_, defaultGenerator)) :+ parserData
 
     val kern = {
       fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](allData, profile)
@@ -925,11 +928,6 @@ object CLParser extends Logging {
 
   }
 
-  def fromSimpleGrammar[L, L2, W](grammar: SimpleRefinedGrammar[L, L2, W], profile: Boolean = false)(implicit context: CLContext) = {
-    val data: CLParserData[L, L2, W] = CLParserData.make(grammar)
-    fromParserData(data, profile)
-  }
-
 
   def fromParserData[L, L2, W](data: CLParserData[L, L2, W], profile: Boolean)(implicit context: CLContext): CLParser[L, L2, W] = {
     fromParserDatas(IndexedSeq(data), profile)
@@ -981,15 +979,15 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 }
 
 object CLParserData {
-  def make[C, L, W](grammar: SimpleRefinedGrammar[C, L, W])(implicit context: CLContext) = {
+  def make[C, L, W](grammar: SimpleRefinedGrammar[C, L, W], genType: GenType)(implicit context: CLContext) = {
     implicit val viterbi = ViterbiRuleSemiring
     val ruleScores: Array[Float] = Array.tabulate(grammar.refinedGrammar.index.size){r =>
       val score = grammar.ruleScoreArray(grammar.refinements.rules.project(r))(grammar.refinements.rules.localize(r))
       viterbi.fromLogSpace(score.toFloat)
     }
     val structure = new RuleStructure(grammar.refinements, grammar.refinedGrammar, ruleScores)
-    val inside = CLInsideKernels.make(structure)
-    val outside =  CLOutsideKernels.make(structure)
+    val inside = CLInsideKernels.make(structure, genType)
+    val outside =  CLOutsideKernels.make(structure, genType)
     val util = CLParserUtils.make(structure)
     val masks = CLMaskKernels.make(structure)
 
