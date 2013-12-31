@@ -71,7 +71,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       ev = parsers.last.inside(finalBatch, ev)
      // ev = parsers.last.outside(finalBatch, ev)
-      ev.waitFor()
+      Option(ev).foreach(_.waitFor())
       for ( i <- 0 until batch.numSentences) yield {
         (batch.insideCharts(i).top(0, batch.sentences(i).length, data.last.structure.root))
 //        (batch.insideCharts(i).bot(2, 3)
@@ -606,22 +606,22 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val evTRightPtrs =  if(batch.hasMasks) null else  devRightPtrs.writeArray(queue, rArray, offset, ev:_*) profileIn hdTransferEvents
 
         // do transpose based on ptrs
-        val evTransLeft  = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), leftChartMatrix, devLeftPtrs, offset, evTLeftPtrs) profileIn transferEvents
-        val evTransRight = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), rightChartMatrix, devRightPtrs, offset, evTRightPtrs) profileIn transferEvents
+        val evTransLeft  = if(batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), leftChartMatrix, devLeftPtrs, offset, evTLeftPtrs) profileIn transferEvents
+        val evTransRight = if(batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), rightChartMatrix, devRightPtrs, offset, evTRightPtrs) profileIn transferEvents
 
         // copy parent pointers
         val evWriteDevParent =  if(batch.hasMasks) null else devParentPtrs.writeArray(queue, pArray, offset, ev:_*) profileIn hdTransferEvents
         // corresponding splits
         val evWriteDevSplitPoint =  if(batch.hasMasks) null else devSplitPointOffsets.writeArray(queue, splitPointOffsets, splitPointOffset + 1, ev:_*) profileIn hdTransferEvents
 
-        val zeroParent = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
+        val zeroParent = if(batch.hasMasks) null else zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
         val kEvents = updater.update(block, binaryEvents,
           devParent(0 until offset, ::), devParentPtrs,
           devLeft(0 until offset, ::),   devLeftPtrs,
           devRight(0 until offset, ::),  devRightPtrs,
           maskCharts, evTransLeft, evTransRight, zeroParent, evWriteDevParent)
 
-        val sumEv: CLEvent = sumSplitPoints(span, Seq(evWriteDevParent, evWriteDevSplitPoint) ++ kEvents: _*)
+        val sumEv: CLEvent = if(batch.hasMasks) null else sumSplitPoints(span, Seq(evWriteDevParent, evWriteDevSplitPoint) ++ kEvents: _*)
 
         offset = 0
         splitPointOffset = 0
