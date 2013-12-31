@@ -21,6 +21,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
     public RuleStructure<C, L> structure;
 
     public SimpleGenRuleMultiply(RuleStructure<C, L> structure) {
+        super(structure);
         this.structure = structure;
     }
     
