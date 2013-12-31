@@ -7,16 +7,19 @@ import java.util.zip.{ZipFile, ZipInputStream, ZipOutputStream}
 import puck.util.{CLProfiler, ZipUtil}
 import scala.collection.JavaConverters._
 import org.bridj.Pointer
+import java.util
 
 /**
  *
  *
  * @author dlwh
  */
-case class CLBinaryRuleUpdater(kernels: IndexedSeq[CLKernel], globalSize: Array[Int], wgSize: Array[Int], extra: Option[Array[Int]] = None) {
-  def this(kernels: java.util.List[CLKernel], globalSize: Array[Int], wgSize: Array[Int]) = this(kernels.asScala.toIndexedSeq, globalSize, wgSize)
+case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
+                               globalSize: Array[Int],
+                               wgSize: Array[Int], extra: Option[Array[Int]] = None) {
+  def this(kernels: java.util.List[RuleKernel], globalSize: Array[Int], wgSize: Array[Int]) = this(kernels.asScala.toIndexedSeq, globalSize, wgSize)
 
-  private val buffer = extra.map(arr => kernels.head.getProgram.getContext.createIntBuffer(CLMem.Usage.Input, Pointer.pointerToInts(arr:_*), true))
+  private val buffer = extra.map(arr => kernels.head.kernels.head.getProgram.getContext.createIntBuffer(CLMem.Usage.Input, Pointer.pointerToInts(arr:_*), true))
 
   def update(profiler: CLProfiler, parent: CLMatrix[Float], parentPointers: CLBuffer[Int],
              left: CLMatrix[Float],  leftPointers: CLBuffer[Int],
@@ -31,7 +34,7 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[CLKernel], globalSize: Array[
     require(parent.rows == right.rows)
     require(parent.cols == right.cols)
     require(parent.majorStride == right.majorStride)
-    kernels.foldLeft(events) { (ev, k) =>
+    kernels.flatMap(_.kernels).foldLeft(events) { (ev, k) =>
       k.setArgs(parent.data.safeBuffer, parentPointers,
         left.data.safeBuffer, leftPointers,
         right.data.safeBuffer,  rightPointers,
@@ -46,7 +49,10 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[CLKernel], globalSize: Array[
   }
 
   def write(name: String, out: ZipOutputStream) {
-    ZipUtil.addKernelSet(out, name, kernels)
+    ZipUtil.serializedEntry(out, "$name/numKernels", Integer.valueOf(kernels.length))
+    for(i <- 0 until kernels.length) {
+      kernels(i).write(s"$name/$i", out)
+    }
     ZipUtil.serializedEntry(out, s"$name/globalSize", globalSize)
     ZipUtil.serializedEntry(out, s"$name/wgSize", wgSize)
     ZipUtil.serializedEntry(out, s"$name/extra", extra)
@@ -56,9 +62,28 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[CLKernel], globalSize: Array[
 
 object CLBinaryRuleUpdater {
   def read(in: ZipFile, name: String)(implicit ctxt: CLContext) = {
+    val x = ZipUtil.deserializeEntry[Integer](in.getInputStream(in.getEntry(s"$name/numKernels")))
+    val kernels = for(i <- 0 until x.intValue()) yield RuleKernel.read(in, s"$name/$i/")
+
     val globalSize = ZipUtil.deserializeEntry[Array[Int]](in.getInputStream(in.getEntry(s"$name/globalSize")))
     val wgSize = ZipUtil.deserializeEntry[Array[Int]](in.getInputStream(in.getEntry(s"$name/wgSize")))
     val extra = ZipUtil.deserializeEntry[Option[Array[Int]]](in.getInputStream(in.getEntry(s"$name/extra")))
-    CLBinaryRuleUpdater(ZipUtil.readKernelSet(in, name), globalSize, wgSize, extra)
+    CLBinaryRuleUpdater(kernels, globalSize, wgSize, extra)
+  }
+}
+
+case class RuleKernel(kernels: IndexedSeq[CLKernel], parents: util.BitSet) {
+  def write(name: String, out: ZipOutputStream) {
+    ZipUtil.addKernelSet(out, s"$name/", kernels)
+    ZipUtil.serializedEntry(out, s"$name-bits", parents)
+  }
+}
+
+object RuleKernel {
+
+  def read(in: ZipFile, name: String)(implicit context: CLContext) = {
+    val kernels = ZipUtil.readKernelSet(in, name)
+    val parents = ZipUtil.deserializeEntry[util.BitSet](in.getInputStream(in.getEntry(s"$name-bits")))
+    RuleKernel(kernels, parents)
   }
 }

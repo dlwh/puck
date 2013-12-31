@@ -1,12 +1,14 @@
 package puck.parser.gen
 
 import puck.parser._
+import epic.AwesomeScalaBitSet
 import com.nativelibs4java.opencl.CLContext
 import epic.trees.BinaryRule
 import epic.trees.UnaryRule
 import puck.parser.SymId
 import scala.Some
 import puck.parser.RuleStructure
+import scala.collection.immutable.BitSet
 
 /**
  * TODO
@@ -73,7 +75,8 @@ class NoninlinedRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semi
       """.stripMargin
 
     val kernels = cl.createProgram(kernel).createKernels()
-    CLBinaryRuleUpdater(kernels, Array(32 * 40, 1, 1), Array(32, 1, 1), Some(ints))
+    val parents = (BitSet.empty ++ rules.map(_._1.parent.coarse)).toJavaBitSet
+    CLBinaryRuleUpdater(IndexedSeq(new RuleKernel(kernels, parents)), Array(32 * 40, 1, 1), Array(32, 1, 1), Some(ints))
   }
 
 
@@ -96,7 +99,8 @@ class NoninlinedRuleMultiply[C, L](structure: RuleStructure[C, L])(implicit semi
     }
     val text = texts.mkString("\n\n")
     val kernels = cl.createProgram(text).build().createKernels
-    CLUnaryRuleUpdater(kernels)
+    val parents = (BitSet.empty ++ rules.map(_._1.parent.coarse)).toJavaBitSet
+    CLUnaryRuleUpdater(IndexedSeq(new RuleKernel(kernels, parents)))
   }
 
   private def coreUnaryRuleLoop(rulePartition: IndexedSeq[(UnaryRule[SymId[C, L]], Int)], accumulator: Map[Int, Variable])(implicit cl: CLContext) = {

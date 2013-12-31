@@ -3,10 +3,7 @@ package puck.parser.gen;
 import com.nativelibs4java.opencl.CLContext;
 import com.nativelibs4java.opencl.CLKernel;
 
-import puck.parser.CLBinaryRuleUpdater;
-import puck.parser.CLUnaryRuleUpdater;
-import puck.parser.RuleStructure;
-import puck.parser.SymId;
+import puck.parser.*;
 
 import java.util.*;
 
@@ -39,7 +36,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         	kernelTexts.add(binaryKernelText(name+s, segments[s], supportsExtendedAtomics));
         }
 
-        List<CLKernel> kernels = compileKernels(context, kernelTexts);
+        List<RuleKernel> kernels = compileKernels(context, this.<IndexedBinaryRule<C, L>>flatten(segments), kernelTexts);
         int[] globalSize = {WARP_SIZE * NUM_WARPS, NUM_SM, 1};
         int[] wgSize = {WARP_SIZE, 1, 1};
         return new CLBinaryRuleUpdater(kernels, globalSize, wgSize);
@@ -186,7 +183,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         for (int s=0; s<segments.length; s++) {
         	kernelTexts.add(unaryKernelText(name+s, segments[s]));
         }
-        List<CLKernel> kernels = compileKernels(context, kernelTexts);
+        List<RuleKernel> kernels = compileKernels(context, Arrays.asList(segments), kernelTexts);
         return new CLUnaryRuleUpdater(kernels);
     }
 
