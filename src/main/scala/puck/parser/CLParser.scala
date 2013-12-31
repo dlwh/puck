@@ -71,7 +71,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       ev = parsers.last.inside(finalBatch, ev)
      // ev = parsers.last.outside(finalBatch, ev)
-      ev.waitFor()
+      Option(ev).foreach(_.waitFor())
       for ( i <- 0 until batch.numSentences) yield {
         (batch.insideCharts(i).top(0, batch.sentences(i).length, data.last.structure.root))
 //        (batch.insideCharts(i).bot(2, 3)
@@ -602,26 +602,26 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         splitPointOffsets(splitPointOffset) = offset
 
         // copy ptrs to opencl
-        val evTLeftPtrs  =  devLeftPtrs.writeArray(queue, lArray, offset, ev:_*) profileIn hdTransferEvents
-        val evTRightPtrs = devRightPtrs.writeArray(queue, rArray, offset, ev:_*) profileIn hdTransferEvents
+        val evTLeftPtrs  = if(batch.hasMasks) null else devLeftPtrs.writeArray(queue, lArray, offset, ev:_*) profileIn hdTransferEvents
+        val evTRightPtrs =  if(batch.hasMasks) null else  devRightPtrs.writeArray(queue, rArray, offset, ev:_*) profileIn hdTransferEvents
 
         // do transpose based on ptrs
-        val evTransLeft  = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), leftChartMatrix, devLeftPtrs, offset, evTLeftPtrs) profileIn transferEvents
-        val evTransRight = transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), rightChartMatrix, devRightPtrs, offset, evTRightPtrs) profileIn transferEvents
+        val evTransLeft  = if(batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), leftChartMatrix, devLeftPtrs, offset, evTLeftPtrs) profileIn transferEvents
+        val evTransRight = if(batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), rightChartMatrix, devRightPtrs, offset, evTRightPtrs) profileIn transferEvents
 
         // copy parent pointers
-        val evWriteDevParent = devParentPtrs.writeArray(queue, pArray, offset, ev:_*) profileIn hdTransferEvents
+        val evWriteDevParent =  if(batch.hasMasks) null else devParentPtrs.writeArray(queue, pArray, offset, ev:_*) profileIn hdTransferEvents
         // corresponding splits
-        val evWriteDevSplitPoint = devSplitPointOffsets.writeArray(queue, splitPointOffsets, splitPointOffset + 1, ev:_*) profileIn hdTransferEvents
+        val evWriteDevSplitPoint =  if(batch.hasMasks) null else devSplitPointOffsets.writeArray(queue, splitPointOffsets, splitPointOffset + 1, ev:_*) profileIn hdTransferEvents
 
-        val zeroParent = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
+        val zeroParent = if(batch.hasMasks) null else zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
         val kEvents = updater.update(block, binaryEvents,
           devParent(0 until offset, ::), devParentPtrs,
           devLeft(0 until offset, ::),   devLeftPtrs,
           devRight(0 until offset, ::),  devRightPtrs,
           maskCharts, evTransLeft, evTransRight, zeroParent, evWriteDevParent)
 
-        val sumEv: CLEvent = sumSplitPoints(span, Seq(evWriteDevParent, evWriteDevSplitPoint) ++ kEvents: _*)
+        val sumEv: CLEvent = if(batch.hasMasks) null else sumSplitPoints(span, Seq(evWriteDevParent, evWriteDevSplitPoint) ++ kEvents: _*)
 
         offset = 0
         splitPointOffset = 0
@@ -673,6 +673,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       for(block <- blocks) {
         val blockParents = updater.kernels(block.head).parents
+//        if(allSpans.head._4 != null)
+//          println(BitHacks.asBitSet(blockParents).cardinality)
         for ( (sent, start, end, mask) <- allSpans ) {
           if(mask == null ||  intersects(blockParents, mask)) {
 
@@ -732,23 +734,24 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     var offset = 0 // number of cells used so far.
 
-    private def enqueue(span: Int, parent: Int, left: Int, events: Seq[CLEvent]) = {
+
+    private def enqueue(batch: Batch, span: Int, parent: Int, left: Int, events: Seq[CLEvent]) = {
       lArray(offset) = left
       pArray(offset) = parent
       offset += 1
       if (offset >= numWorkCells)  {
         logger.debug(s"flush unaries!")
-        flushQueue(span, events)
+        flushQueue(batch, span, events)
       } else {
         events
       }
     }
 
-    private def flushQueue(span: Int, ev: Seq[CLEvent]) = {
+    private def flushQueue(batch: Batch, span: Int, ev: Seq[CLEvent]) = {
       if (offset != 0) {
         val zz = zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
 
-        val wevl = devLeftPtrs.writeArray(queue, lArray, offset, ev:_*) profileIn hdTransferEvents
+        val wevl =  if(batch.hasMasks) null else devLeftPtrs.writeArray(queue, lArray, offset, ev:_*) profileIn hdTransferEvents
 
         val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), scoreMatrix, devLeftPtrs, offset, wevl) profileIn transferEvents
 
@@ -778,11 +781,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val parentTi = parentChart(batch, sent).cellOffset(start,end)
         val child = childChart(batch, sent).cellOffset(start,end)
 
-        ev = enqueue(span, parentTi, child, ev)
+        ev = enqueue(batch, span, parentTi, child, ev)
       }
 
       if (offset > 0) {
-        flushQueue(span, ev)
+        flushQueue(batch, span, ev)
       }
 
       assert(ev.length == 1)

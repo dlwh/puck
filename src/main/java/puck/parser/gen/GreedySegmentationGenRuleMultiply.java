@@ -67,6 +67,7 @@ public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 				}
 			}
 		}
+        if(index != sortedBinaryRules.size()) throw new RuntimeException();
 		return segmentation;
 	}
 	
