@@ -7,7 +7,7 @@ import org.apache.logging.log4j.core.filter.StructuredDataFilter;
 
 import puck.parser.RuleStructure;
 
-public class CannySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMultiply<C, L> {
+public class CannySegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultiply<C, L> {
 	
 	public static final int BINARY_PARENT_NUM_MAJOR_SEGMENTS = 6;
 	public static final int BINARY_LEFT_NUM_MAJOR_SEGMENTS = 2;

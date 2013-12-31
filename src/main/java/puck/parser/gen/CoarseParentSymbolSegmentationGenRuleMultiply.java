@@ -1,14 +1,13 @@
 package puck.parser.gen;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import puck.parser.RuleStructure;
 
-public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMultiply<C, L> {
+public class CoarseParentSymbolSegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultiply<C, L> {
 
-	public static final int BINARY_NUM_SEGMENTS = 24;
-	
-	public GreedySegmentationGenRuleMultiply(RuleStructure<C, L> structure) {
+	public CoarseParentSymbolSegmentationGenRuleMultiply(RuleStructure<C, L> structure) {
 		super(structure);
 	}
 
@@ -28,5 +27,14 @@ public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 	public List<IndexedBinaryRule<C, L>>[][] segmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules) {
 		return null;
 	}
+	
+    private List<IndexedBinaryRule<C, L>>[] modSegmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int m) {
+    	List<IndexedBinaryRule<C, L>>[] result = new List[m];
+    	for (int i=0; i<m; ++i) result[i] = new ArrayList<IndexedBinaryRule<C, L>>();
+    	for(IndexedBinaryRule<C, L> rule: indexedBinaryRules) {
+    		result[rule.rule().parent().gpu() % m].add(rule);
+    	}
+    	return result;
+    }
 
 }
