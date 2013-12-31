@@ -157,8 +157,6 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
     if(blocking)
       ev.waitFor()
 
-
-
     ev
 
   }
