@@ -521,7 +521,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val botEnd = botBegin + numCells
         val topBegin = botEnd
         val topEnd = topBegin + numCells
-        assert(topEnd < devOutside.cols)
+        assert(topEnd <= devOutside.cols)
         val chart = new ParseChart(sentences(i).length, devOutside(::, botBegin until botEnd), devOutside(::, topBegin until topEnd))
         chart
       }
