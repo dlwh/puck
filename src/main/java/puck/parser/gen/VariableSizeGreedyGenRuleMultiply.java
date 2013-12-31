@@ -113,3 +113,4 @@ public class VariableSizeGreedyGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 
 
 }
+
