@@ -40,11 +40,13 @@ import java.security.MessageDigest
  **/
 class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 //                        maxAllocSize: Long = 1L<<30, // 1 gig
-                        maxAllocSize: Long = 1L<<32, // 4 gig
+//                        maxAllocSize: Long = 1L<<32, // 4 gig
+                        maxAllocSize: Long = 5L<<28, //1.25 G
                         maxSentencesPerBatch: Long = 400,
                         doEmptySpans: Boolean = false,
-                        profile: Boolean = true)(implicit val context: CLContext) extends Logging {
-    val skipFineWork = false
+                        profile: Boolean = true,
+                        oldPruning: Boolean = false)(implicit val context: CLContext) extends Logging {
+  val skipFineWork = false
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
     getBatches(sentences).iterator.flatMap{ batch =>
@@ -650,7 +652,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       lastParent = -1
 
 
-      val merge = !batch.hasMasks
+      val merge = !batch.hasMasks || oldPruning
 
       val allSpans = if (batch.hasMasks) {
         val allSpans = for {
@@ -678,7 +680,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 //        if(allSpans.head._4 != null)
 //          println(BitHacks.asBitSet(blockParents).cardinality)
         for ( (sent, start, end, mask) <- allSpans ) {
-          if(mask == null ||  intersects(blockParents, mask)) {
+          if(mask == null || oldPruning || intersects(blockParents, mask)) {
 
             val splitRange = ranger(start, start + span, batch.sentences(sent).length)
             var split =  splitRange.start
@@ -718,14 +720,19 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   // Sentence, Begin, End, BitMask
   def orderSpansBySimilarity(spans: IndexedSeq[(Int, Int, Int, DenseVector[Int])]): IndexedSeq[(Int, Int, Int, DenseVector[Int])] = {
-//    import BitHacks.OrderBitVectors.OrderingBitVectors
-//    val in = System.currentTimeMillis()
-//    val res = spans.sortBy(_._4)
 //    val res = spans.groupBy(v =>v._4.toArray.toIndexedSeq).values.flatten.toIndexedSeq
-//    val out = System.currentTimeMillis()
-//    sortTime += (out - in)
 //    res
-    spans
+    if(oldPruning) {
+      import BitHacks.OrderBitVectors.OrderingBitVectors
+      val in = System.currentTimeMillis()
+      val res = spans.sortBy(_._4)
+      val out = System.currentTimeMillis()
+      sortTime += (out - in)
+      res
+    } else {
+      spans
+
+    }
   }
 
   private class UnaryUpdateManager(parser: ActualParser,
@@ -855,7 +862,7 @@ object CLParser extends Logging {
 
     if (parserData == null || parserData.grammar.signature != grammar.signature) {
       println("Regenerating parser data")
-      val gen = if(grammars.length > 1) GenType.CoarseParent else GenType.VariableLength
+      val gen = if(grammars.length > 1) GenType.VariableLength else GenType.VariableLength
       parserData =  CLParserData.make(grammar, gen)
       if (cache && codeCache != null) {
         parserData.write(new BufferedOutputStream(new FileOutputStream(codeCache)))
