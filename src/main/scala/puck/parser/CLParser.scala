@@ -199,7 +199,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       for (span <- 2 to batch.maxLength) {
         print(s"$span ")
         ev = insideBinaryPass(batch, span, ev)
+//        queue.finish()
+//        println(batch.insideCharts.head.bot.toString(structure, _zero))
         ev = insideNU.doUpdates(batch, span, ev)
+
       }
 
       if (profile) {
@@ -613,15 +616,15 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val evTransLeft  = if(skipFineWork && batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), leftChartMatrix, devLeftPtrs, offset, evTLeftPtrs) profileIn transferEvents
         val evTransRight = if(skipFineWork && batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), rightChartMatrix, devRightPtrs, offset, evTRightPtrs) profileIn transferEvents
 
+        val updateDirectToChart = true
         // copy parent pointers
         val evWriteDevParent =  if(skipFineWork && batch.hasMasks) null else devParentPtrs.writeArray(queue, pArray, offset, ev:_*) profileIn hdTransferEvents
         // corresponding splits
-        val evWriteDevSplitPoint =  if(skipFineWork && batch.hasMasks) null else devSplitPointOffsets.writeArray(queue, splitPointOffsets, splitPointOffset + 1, ev:_*) profileIn hdTransferEvents
+        val evWriteDevSplitPoint =  if ((skipFineWork && batch.hasMasks) || updateDirectToChart) null else devSplitPointOffsets.writeArray(queue, splitPointOffsets, splitPointOffset + 1, ev:_*) profileIn hdTransferEvents
 
-        val zeroParent = if(skipFineWork && batch.hasMasks) null else zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
+        val zeroParent = if((skipFineWork && batch.hasMasks) || updateDirectToChart) null else zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
        
 //        val updateDirectToChart = batch.hasMasks
-        val updateDirectToChart = true
         val targetChart = if(updateDirectToChart) parentChartMatrix else devParent(0 until offset, ::)
         val kEvents = updater.update(block, binaryEvents,
           targetChart, devParentPtrs,

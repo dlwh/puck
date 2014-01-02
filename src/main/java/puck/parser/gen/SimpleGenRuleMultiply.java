@@ -3,6 +3,7 @@ package puck.parser.gen;
 import com.nativelibs4java.opencl.CLContext;
 import com.nativelibs4java.opencl.CLKernel;
 
+import puck.package$;
 import puck.parser.*;
 
 import java.util.*;
@@ -103,7 +104,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         		parentCounts.put(parentIndex, count);
         	}
         	
-        	int cellSize = (int)Math.max(structure.numNonTerms(), structure.numTerms());
+        	int cellSize = package$.MODULE$.roundUpToMultipleOf(Math.max(structure.numNonTerms(), structure.numTerms()), 32);
         	for(IndexedBinaryRule<C, L> rule : subsegments[m]) {
         		int parentIndex = rule.rule().parent().gpu();
         		String parent = declaredParents.get(parentIndex);
