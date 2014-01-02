@@ -11,6 +11,7 @@ class ParseChart(val length: Int, botMat: CLMatrix[Float], topMat: CLMatrix[Floa
 class ChartHalf(val length: Int, val matrix: CLMatrix[Float], isBot: Boolean) {
   val globalRowOffset = matrix.offset / matrix.rows
 
+
   def apply(begin: Int, end: Int, label: Int) = {
     matrix(label, ChartHalf.chartIndex(begin, end, length))
   }
@@ -39,9 +40,12 @@ class ChartHalf(val length: Int, val matrix: CLMatrix[Float], isBot: Boolean) {
     matrix(::, r).iterator.collect { case ((k, _),v)  if(v != zero) => 
       if(isBot && k == structure.root && span > 1)
         println("What is the root doing in the bot chart?" + k + " " + v + " " + (begin, end))
-      if(span == 1 && isBot) 
-        structure.termIndex.get(k) -> v
-      else 
+      if(span == 1 && isBot)
+        if(k >= structure.termIndex.size)
+          "OUB" -> v
+        else
+          structure.termIndex.get(k) -> v
+      else
         structure.nontermIndex.get(k) -> v
     }.mkString(s"$r ${cellOffset(begin, end)} ($begin,$end) ${if(isBot) "bot" else "top"} {",", ", "}")
 

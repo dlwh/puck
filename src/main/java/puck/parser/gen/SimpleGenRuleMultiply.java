@@ -3,6 +3,7 @@ package puck.parser.gen;
 import com.nativelibs4java.opencl.CLContext;
 import com.nativelibs4java.opencl.CLKernel;
 
+import puck.package$;
 import puck.parser.*;
 
 import java.util.*;
@@ -87,7 +88,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         }
 
         for (int m=0; m<NUM_SM; ++m) {
-        	sb.append("static void subpart"+m+"(const mask_t mask, __global volatile float* parents, int row, __global float* left, __global float* right, int numRows) {\n");
+        	sb.append("static void subpart"+m+"(const mask_t mask, __global volatile float* parents, __global int* parentIndex, int row, __global float* left, __global float* right, int numRows) {\n");
 //        	if (!subsegments[m].isEmpty()) sb.append(String.format("if (%s) return;\n", CLMaskKernels.genCheckIfMaskIsEmpty(structure, "mask", getParents(subsegments[m]))));
         	Map<Integer,String> declaredParents = new HashMap<Integer, String>();
         	Map<Integer,String> declaredLeft = new HashMap<Integer, String>();
@@ -104,12 +105,16 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         		parentCounts.put(parentIndex, count);
         	}
         	
+        	int cellSize = package$.MODULE$.roundUpToMultipleOf(Math.max(structure.numNonTerms(), structure.numTerms()), 32);
         	for(IndexedBinaryRule<C, L> rule : subsegments[m]) {
         		int parentIndex = rule.rule().parent().gpu();
         		String parent = declaredParents.get(parentIndex);
         		if(parent == null) {
         			parent = "parent_" + parentIndex;
-        			sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
+//        			sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
+        			
+        			sb.append(String.format("float parent_%d = parents[parentIndex[row] * "+cellSize+" + %d];\n", parentIndex, parentIndex));
+        			
         			declaredParents.put(parentIndex, parent);
         		}
 
@@ -134,9 +139,14 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         		parentCounts.put(parentIndex, parentCounts.get(parentIndex)-1);
         		if (parentCounts.get(parentIndex) == 0) {
 //        			sb.append(String.format("parents[%d * numRows + row] = %s;\n", parentIndex, parent));
-                    String dest = String.format("parents[%d * numRows + row]", parentIndex);
+
+//                    String dest = String.format("parents[%d * numRows + row]", parentIndex);
+//                    String src = parent;
+//                    sb.append(genWriteSymbol(dest, src, !dupParents.contains(parentIndex), supportsExtendedAtomics));
+
+        			String dest = String.format("parents[parentIndex[row] * "+cellSize+" + %d]", parentIndex);
                     String src = parent;
-                    sb.append(genWriteSymbol(dest, src, !dupParents.contains(parentIndex), supportsExtendedAtomics));
+                    sb.append(genWriteSymbol(dest, src, false, supportsExtendedAtomics));
         		}
         	}
 
@@ -165,7 +175,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         
         sb.append("switch (grammarSubPartition) {\n");
         for (int m=0; m<NUM_SM; ++m) {
-        	sb.append("case "+m+": subpart"+m+"(mask, parents, row, left, right, numRows); continue;\n");
+        	sb.append("case "+m+": subpart"+m+"(mask, parents, parentIndex, row, left, right, numRows); continue;\n");
         }
         sb.append("default: continue;\n");
         sb.append("}\n");

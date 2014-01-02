@@ -28,21 +28,23 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
              left: CLMatrix[Float],  leftPointers: CLBuffer[Int],
              right: CLMatrix[Float],  rightPointers: CLBuffer[Int],
              masks: CLMatrix[Int], events: CLEvent*)(implicit queue: CLQueue) = synchronized {
-    require(parent.rows <= parentPointers.getElementCount)
+//    require(parent.rows <= parentPointers.getElementCount)
     require(left.rows <= leftPointers.getElementCount)
     require(right.rows <= rightPointers.getElementCount)
-    require(parent.rows == left.rows)
-    require(parent.cols == left.cols)
-    require(parent.majorStride == left.majorStride)
-    require(parent.rows == right.rows)
-    require(parent.cols == right.cols)
-    require(parent.majorStride == right.majorStride)
+    require(parent.rows == left.cols)
+    require(parent.cols > parentPointers.read(queue).toArray.take(left.rows).map(_.toInt).max)
+//    require(parent.rows == left.rows)
+//    require(parent.cols == left.cols)
+//    require(parent.majorStride == left.majorStride)
+    require(left.rows == right.rows)
+    require(left.cols == right.cols)
+    require(left.majorStride == right.majorStride)
     block.flatMap(kernels(_).kernels).foldLeft(events) { (ev, k) =>
       k.setArgs(parent.data.safeBuffer, parentPointers,
         left.data.safeBuffer, leftPointers,
         right.data.safeBuffer,  rightPointers,
         masks.data.safeBuffer,
-        Integer.valueOf(parent.majorStride), Integer.valueOf(parent.rows) )
+        Integer.valueOf(left.majorStride), Integer.valueOf(left.rows) )
       buffer.foreach(buf => k.setArg(7, buf))
 
       val evv = k.enqueueNDRange(queue, globalSize, wgSize, ev:_*) profileIn profiler
