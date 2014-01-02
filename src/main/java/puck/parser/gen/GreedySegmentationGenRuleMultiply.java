@@ -94,8 +94,8 @@ public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 					index++;
 				}
 			}
-//			segmentation[i] = modSubsegmentBinariesByParent(segment, NUM_SM);
-			segmentation[i] = balancedSubsegmentBinariesByParent(segment, NUM_SM);
+			segmentation[i] = modSubsegmentBinariesByParent(segment, NUM_SM);
+//			segmentation[i] = balancedSubsegmentBinariesByParent(segment, NUM_SM);
 		}
 		System.out.println("Done with binary segment.");
 		return segmentation;
