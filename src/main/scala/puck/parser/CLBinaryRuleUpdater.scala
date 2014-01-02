@@ -28,15 +28,15 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
              left: CLMatrix[Float],  leftPointers: CLBuffer[Int],
              right: CLMatrix[Float],  rightPointers: CLBuffer[Int],
              masks: CLMatrix[Int], events: CLEvent*)(implicit queue: CLQueue) = synchronized {
-    require(parent.rows <= parentPointers.getElementCount)
+//    require(parent.rows <= parentPointers.getElementCount)
     require(left.rows <= leftPointers.getElementCount)
     require(right.rows <= rightPointers.getElementCount)
-    require(parent.rows == left.rows)
-    require(parent.cols == left.cols)
-    require(parent.majorStride == left.majorStride)
-    require(parent.rows == right.rows)
-    require(parent.cols == right.cols)
-    require(parent.majorStride == right.majorStride)
+//    require(parent.rows == left.rows)
+//    require(parent.cols == left.cols)
+//    require(parent.majorStride == left.majorStride)
+//    require(parent.rows == right.rows)
+//    require(parent.cols == right.cols)
+//    require(parent.majorStride == right.majorStride)
     block.flatMap(kernels(_).kernels).foldLeft(events) { (ev, k) =>
       k.setArgs(parent.data.safeBuffer, parentPointers,
         left.data.safeBuffer, leftPointers,

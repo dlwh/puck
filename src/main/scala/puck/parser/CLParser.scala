@@ -619,13 +619,17 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val evWriteDevSplitPoint =  if(skipFineWork && batch.hasMasks) null else devSplitPointOffsets.writeArray(queue, splitPointOffsets, splitPointOffset + 1, ev:_*) profileIn hdTransferEvents
 
         val zeroParent = if(skipFineWork && batch.hasMasks) null else zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
+       
+//        val updateDirectToChart = batch.hasMasks
+        val updateDirectToChart = true
+        val targetChart = if(updateDirectToChart) parentChartMatrix else devParent(0 until offset, ::)
         val kEvents = updater.update(block, binaryEvents,
-          devParent(0 until offset, ::), devParentPtrs,
+          targetChart, devParentPtrs,
           devLeft(0 until offset, ::),   devLeftPtrs,
           devRight(0 until offset, ::),  devRightPtrs,
           maskCharts, evTransLeft, evTransRight, zeroParent, evWriteDevParent)
 
-        val sumEv: CLEvent = if(skipFineWork && batch.hasMasks) null else sumSplitPoints(span, Seq(evWriteDevParent, evWriteDevSplitPoint) ++ kEvents: _*)
+        val sumEv: CLEvent = if((skipFineWork && batch.hasMasks) || updateDirectToChart) null else sumSplitPoints(span, Seq(evWriteDevParent, evWriteDevSplitPoint) ++ kEvents: _*)
 
         offset = 0
         splitPointOffset = 0
