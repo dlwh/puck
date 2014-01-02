@@ -6,11 +6,10 @@ import com.nativelibs4java.opencl._
 import com.typesafe.scalalogging.slf4j.Logging
 import puck.util.{ZipUtil, BitHacks, ZeroMemoryKernel, CLProfiler}
 import puck.linalg.CLMatrix
-import java.nio.{IntBuffer, ByteBuffer, FloatBuffer}
 import puck.linalg.kernels.{CLMatrixSliceCopy, CLMatrixTransposeCopy}
 import breeze.collection.mutable.TriangularArray
-import breeze.linalg.{Counter2, DenseVector, DenseMatrix}
-import epic.trees.annotations.{Xbarize, TreeAnnotator}
+import breeze.linalg.{DenseVector, DenseMatrix}
+import epic.trees.annotations.TreeAnnotator
 import epic.parser._
 import breeze.config.CommandLineParser
 import epic.trees._
@@ -27,11 +26,8 @@ import epic.trees.annotations.Xbarize
 import epic.trees.Span
 import epic.parser.SimpleRefinedGrammar.CloseUnaries
 import epic.parser.projections.{ParserChartConstraintsFactory, ConstraintCoreGrammarAdaptor}
-import epic.lexicon.SimpleLexicon
 import scala.collection.parallel.immutable.ParSeq
-import java.util
 import java.util.Collections
-import java.security.MessageDigest
 
 /**
  * TODO
@@ -748,7 +744,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
          val numBlocks = updater.numKernelBlocks
 
-         val blocks = if(merge) IndexedSeq(0 until numBlocks) else IndexedSeq.tabulate(numBlocks)(i => IndexedSeq(i))
+         val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).groupBy(updater.kernels(_).parents).values.toIndexedSeq
 
          for(block <- blocks) {
            val blockParents = updater.kernels(block.head).parents
