@@ -4,11 +4,13 @@ import puck.parser._
 import com.nativelibs4java.opencl.CLContext
 
 import scala.collection.JavaConverters._
+import epic.AwesomeBitSet
 import java.util
 import epic.trees.BinaryRule
 import epic.trees.UnaryRule
 import puck.parser.SymId
 import breeze.linalg.DenseVector
+import puck.util.BitHacks
 
 /**
  * TODO
@@ -40,13 +42,22 @@ abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L])
       //programs.foreach(_.addBuildOption("sm_30"))
     }
 
-    (programs zip partitions.asScala).map{ case (prog, part) =>
+    val result = (programs zip partitions.asScala).map{ case (prog, part) =>
       val mask = new Array[Int](puck.roundUpToMultipleOf(structure.numCoarseSyms, 32) / 32)
       for(p <- getParents(part).asScala.map(_.coarse)) {
         mask(p/32) |= 1<<(p%32)
       }
-      RuleKernel(prog.createKernels(), new DenseVector(mask))
+      RuleKernel(prog.createKernels(), part.asScala.toIndexedSeq, new DenseVector(mask))
     }.asJava
+
+    for(r <- result.asScala) {
+      val names = r.kernels.map(_.getFunctionName)
+      val parents = BitHacks.asBitSet(r.parents).iterator.map(structure.refinements.labels.coarseIndex.get(_:Int)).toSet
+      val ruleCounts = r.rules.length
+      println(names,parents,ruleCounts)
+    }
+
+    result
   }
 
   def getParents(partition: util.List[_ <: HasParent[C, L]] ): util.Set[SymId[C, L]] = {
