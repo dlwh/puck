@@ -32,7 +32,7 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
     require(left.rows <= leftPointers.getElementCount)
     require(right.rows <= rightPointers.getElementCount)
     require(parent.rows == left.cols)
-    require(parent.cols > parentPointers.read(queue).toArray.take(left.rows).map(_.toInt).max)
+//    require(parent.cols > parentPointers.read(queue).toArray.take(left.rows).map(_.toInt).max)
 //    require(parent.rows == left.rows)
 //    require(parent.cols == left.cols)
 //    require(parent.majorStride == left.majorStride)
