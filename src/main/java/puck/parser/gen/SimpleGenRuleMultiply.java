@@ -60,6 +60,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         }
       }
 
+
         if(!dupParents.isEmpty() && supportsExtendedAtomics) {
             sb.append("#pragma OPENCL EXTENSION cl_khr_global_int32_extended_atomics : enable\n");
         }
@@ -87,7 +88,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 
         for (int m=0; m<NUM_SM; ++m) {
         	sb.append("static void subpart"+m+"(const mask_t mask, __global volatile float* parents, int row, __global float* left, __global float* right, int numRows) {\n");
-        	if (!subsegments[m].isEmpty()) sb.append(String.format("if (%s) return;\n", CLMaskKernels.genCheckIfMaskIsEmpty(structure, "mask", getParents(subsegments[m]))));        	
+//        	if (!subsegments[m].isEmpty()) sb.append(String.format("if (%s) return;\n", CLMaskKernels.genCheckIfMaskIsEmpty(structure, "mask", getParents(subsegments[m]))));
         	Map<Integer,String> declaredParents = new HashMap<Integer, String>();
         	Map<Integer,String> declaredLeft = new HashMap<Integer, String>();
         	Map<Integer,String> declaredRight = new HashMap<Integer, String>();
