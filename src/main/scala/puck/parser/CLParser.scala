@@ -704,8 +704,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
            val targetChart = if(updateDirectToChart) parentChartMatrix else devParent(0 until offset, ::)
            val kEvents = updater.update(block, binaryEvents,
              targetChart, devParentPtrs,
-             devLeft(0 until offset, ::),   devLeftPtrs,
-             devRight(0 until offset, ::),  devRightPtrs,
+             devLeft(0 until offset, ::),
+             devRight(0 until offset, ::),
              maskCharts, evTransLeft, evTransRight, evWriteDevParent)
 
            val sumEv: CLEvent = if((skipFineWork && batch.hasMasks) || updateDirectToChart) null else sumSplitPoints(span, Seq(evWriteDevParent, evWriteDevSplitPoint) ++ kEvents: _*)
