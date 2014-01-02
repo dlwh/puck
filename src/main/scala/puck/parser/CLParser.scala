@@ -123,7 +123,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     // in a fixed sentence is (n/2)^2= n^2/4.
     // Take n = 32, then we want our P/L/R arrays to be of the ratio (3 * 256):992 \approx 3/4 (3/4 exaclty if we exclude the - n term)
     // doesn't quite work the way we want (outside), so we'll bump the number to 4/5
-    val relativeSizeOfChartsToP = 4
+    val relativeSizeOfChartsToP = 8
     val baseSize = numberOfUnitsOf16 / (3 + relativeSizeOfChartsToP)
     val extra = numberOfUnitsOf16 % (3 + relativeSizeOfChartsToP)
     val plrSize = baseSize
@@ -661,6 +661,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
          offset += 1
          if (offset >= numWorkCells)  {
+           println("flush?")
            flushQueue(block, batch, span, events)
          } else {
            events
