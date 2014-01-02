@@ -16,7 +16,7 @@ class CLMatrixTransposeCopy private(wgSize: Array[Int], kernel: CLKernel, kernel
     val ptr = Pointer.pointerToArray[java.lang.Integer](srcColumnPointers)
     val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, numCols)
     val ev = intBuffer.write(queue, 0, numCols, ptr, false, events: _*)
-    val res = this.permuteTransposeCopy(dst, src, intBuffer.asInstanceOf[CLBuffer[Int]], numCols, ev)
+    val res = this.permuteTransposeCopy(dst, src, intBuffer.asInstanceOf[CLBuffer[Int]], 0, numCols, ev)
     res.invokeUponCompletion(new Runnable() {
       def run() = {
         ptr.release(); intBuffer.release()
@@ -27,7 +27,7 @@ class CLMatrixTransposeCopy private(wgSize: Array[Int], kernel: CLKernel, kernel
 
   def permuteTransposeCopy(dst: CLMatrix[Float],
     src: CLMatrix[Float],
-    srcColumnPointers: CLBuffer[Int], numCols: Int,
+    srcColumnPointers: CLBuffer[Int], colOff: Int, numCols: Int,
     events: CLEvent*)(implicit queue: CLQueue):CLEvent = {
     synchronized {
       require(dst.rows == numCols, (dst.rows,dst.cols) + " " + (src.rows, src.cols, numCols))
@@ -38,6 +38,7 @@ class CLMatrixTransposeCopy private(wgSize: Array[Int], kernel: CLKernel, kernel
         src.data.safeBuffer, Integer.valueOf(src.offset), Integer.valueOf(src.majorStride),
         srcColumnPointers,
         Integer.valueOf(src.rows),
+        Integer.valueOf(colOff),
         Integer.valueOf(numCols))
       kernel.enqueueNDRange(queue, Array(wgSize(0) * 40, wgSize(0) * 10, 1), wgSize, (events): _*)
     }
@@ -123,7 +124,7 @@ object CLMatrixTransposeCopy {
 __attribute__((reqd_work_group_size(""" + wgSize.mkString(", ") + """)))
 __kernel void transpose_copy(__global T* _dst, int dstOff, int dstMajorStride, 
                              __global T* _src, int srcOff, int srcMajorStride, __global int* srcPtrs,
-                             int srcRows, int srcCols) {
+                             int srcRows, int colOff, int srcCols) {
   int numGroupsX = BLOCK_SIZE * get_num_groups(0);
   int numGroupsY = BLOCK_SIZE * get_num_groups(1);
   int firstBlockX = BLOCK_SIZE * get_group_id(0);
@@ -145,7 +146,7 @@ __kernel void transpose_copy(__global T* _dst, int dstOff, int dstMajorStride,
       for (int y = threadidy + yb; y < ylim; y += get_local_size(1)) {
        #pragma unroll
         for(int x = threadid + xb; x < xlim; x += get_local_size(0)) {
-          tile[x-xb][y-yb] = src[srcPtrs[y]*srcMajorStride + x];
+          tile[x-xb][y-yb] = src[srcPtrs[colOff + y]*srcMajorStride + x];
         }
       }
       barrier(CLK_LOCAL_MEM_FENCE);

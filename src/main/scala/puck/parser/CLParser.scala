@@ -591,7 +591,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
           val wevl =  if(skipFineWork && batch.hasMasks) null else devLeftPtrs.writeArray(queue, lArray, offset, ev:_*) profileIn hdTransferEvents
 
-          val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), scoreMatrix, devLeftPtrs, offset, wevl) profileIn transferEvents
+          val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), scoreMatrix, devLeftPtrs, 0, offset, wevl) profileIn transferEvents
 
           val endEvents = kernels.update(unaryEvents, devParent(0 until offset, ::), devLeft(0 until offset, ::),  wl, zz)
 
@@ -677,8 +677,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
            val evTRightPtrs =  if(skipFineWork && batch.hasMasks) null else  devRightPtrs.writeArray(queue, rArray, offset, ev:_*) profileIn hdTransferEvents
 
            // do transpose based on ptrs
-           val evTransLeft  = if(skipFineWork && batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), leftChartMatrix, devLeftPtrs, offset, evTLeftPtrs) profileIn transferEvents
-           val evTransRight = if(skipFineWork && batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), rightChartMatrix, devRightPtrs, offset, evTRightPtrs) profileIn transferEvents
+           val evTransLeft  = if(skipFineWork && batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), leftChartMatrix, devLeftPtrs, 0, offset, evTLeftPtrs) profileIn transferEvents
+           val evTransRight = if(skipFineWork && batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), rightChartMatrix, devRightPtrs, 0, offset, evTRightPtrs) profileIn transferEvents
 
            val updateDirectToChart = true
            // copy parent pointers

@@ -149,7 +149,7 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
       val ptr = Pointer.pointerToArray[java.lang.Integer](Array.range(0, cols))
       val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, cols)
       val ev = intBuffer.write(queue, 0, cols, ptr, false, events:_*)
-      val res = tc.permuteTransposeCopy(this.t.asInstanceOf[CLMatrix[Float]], b.asInstanceOf[CLMatrix[Float]], intBuffer.asInstanceOf[CLBuffer[Int]], cols, ev)
+      val res = tc.permuteTransposeCopy(this.t.asInstanceOf[CLMatrix[Float]], b.asInstanceOf[CLMatrix[Float]], intBuffer.asInstanceOf[CLBuffer[Int]], 0, cols, ev)
       PointerFreer.enqueue({ptr.release()}, res)
       PointerFreer.enqueue({intBuffer.release()}, res)
       res
