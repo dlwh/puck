@@ -3,7 +3,7 @@ package puck.util
 import com.nativelibs4java.opencl._
 import org.bridj.Pointer
 
-case class CLBufferMappedPointerPair[V](val buffer: CLBuffer[V])(implicit queue: CLQueue) {
+case class CLBufferPointerPair[V](val buffer: CLBuffer[V])(implicit queue: CLQueue) {
   private var _mappedPointer:Pointer[V] = null
   
   def mappedPointer:Pointer[V] = mappedPointer()
@@ -48,7 +48,4 @@ case class CLBufferMappedPointerPair[V](val buffer: CLBuffer[V])(implicit queue:
   def safeBuffer = { waitUnmap(); buffer }
 }
 
-object CLBufferMappedPointerPair {
-  implicit def fromBuffer[V](buffer: CLBuffer[V])(implicit queue: CLQueue):CLBufferMappedPointerPair[V] = CLBufferMappedPointerPair[V](buffer)
-  implicit def toBuffer[V](buffer: CLBufferMappedPointerPair[V]):CLBuffer[V] = buffer.safeBuffer
-}
+
