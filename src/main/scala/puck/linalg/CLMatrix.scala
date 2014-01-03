@@ -263,7 +263,7 @@ object CLMatrix extends LowPriorityNativeMatrix {
         if(cols.isEmpty) new CLMatrix(m.rows, 0, m.data, 0, 1)
         else if(!m.isTranspose) {
           assert(cols.head >= 0)
-          assert(cols.last < m.cols)
+          assert(cols.last < m.cols, cols.last + " " + m.cols)
           val first = cols.head
           new CLMatrix(m.rows, cols.length, m.data, m.offset + first * m.majorStride, m.majorStride * cols.step)
         } else {
