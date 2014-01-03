@@ -111,9 +111,9 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         		String parent = declaredParents.get(parentIndex);
         		if(parent == null) {
         			parent = "parent_" + parentIndex;
-        			sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
+//        			sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
         			
-//        			sb.append(String.format("float parent_%d = parents[parentIndex[row] * "+cellSize+" + %d];\n", parentIndex, parentIndex));
+        			sb.append(String.format("float parent_%d = parents[parentIndex[row] * "+cellSize+" + %d];\n", parentIndex, parentIndex));
         			
         			declaredParents.put(parentIndex, parent);
         		}
@@ -140,13 +140,13 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         		if (parentCounts.get(parentIndex) == 0) {
 //        			sb.append(String.format("parents[%d * numRows + row] = %s;\n", parentIndex, parent));
 
-                    String dest = String.format("parents[%d * numRows + row]", parentIndex);
-                    String src = parent;
-                    sb.append(genWriteSymbol(dest, src, !dupParents.contains(parentIndex), supportsExtendedAtomics));
-
-//        			String dest = String.format("parents[parentIndex[row] * "+cellSize+" + %d]", parentIndex);
+//                    String dest = String.format("parents[%d * numRows + row]", parentIndex);
 //                    String src = parent;
-//                    sb.append(genWriteSymbol(dest, src, false, supportsExtendedAtomics));
+//                    sb.append(genWriteSymbol(dest, src, !dupParents.contains(parentIndex), supportsExtendedAtomics));
+
+        			String dest = String.format("parents[parentIndex[row] * "+cellSize+" + %d]", parentIndex);
+                    String src = parent;
+                    sb.append(genWriteSymbol(dest, src, false, supportsExtendedAtomics));
         		}
         	}
 
