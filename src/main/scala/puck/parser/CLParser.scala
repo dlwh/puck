@@ -181,12 +181,15 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def partitions(sentences: IndexedSeq[IndexedSeq[W]], mask: Option[DenseMatrix[Int]]) = synchronized {
       getBatches(sentences, mask).iterator.flatMap { batch =>
-        val ev = inside(batch)
+        var ev = inside(batch)
+        ev = outside(batch, ev)
         Option(ev).foreach(_.waitFor())
         for ( i <- 0 until batch.numSentences) yield {
-          (batch.insideCharts(i).top(0, batch.sentences(i).length, structure.root))
-          //        (batch.insideCharts(i).bot(2, 3)
-          //        + batch.outsideCharts(i).bot(2,3)).max
+          if(sentences(i).length < 3)
+            (batch.insideCharts(i).top(0, batch.sentences(i).length, structure.root))
+          else
+                  (batch.insideCharts(i).bot(2, 3)
+                  + batch.outsideCharts(i).bot(2,3)).max
         }
       }.toIndexedSeq
     }
@@ -747,7 +750,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
              sent <- 0 until batch.numSentences
              start <- 0 to batch.sentences(sent).length - span
              _ = total += 1
-             mask <- if(parentChartMatrix.data eq devInsideRaw) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
+             mask <- if(parentChartMatrix.data.buffer eq devInsideRaw) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
              if {val x = any(mask); if(!x) pruned += 1; x || doEmptySpans }
            } yield (sent, start, start+span, mask)
            val ordered = orderSpansBySimilarity(allSpans)
