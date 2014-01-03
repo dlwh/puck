@@ -17,7 +17,7 @@ import puck.util.BitHacks
  *
  * @author dlwh
  **/
-abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L]) extends GenRuleMultiply[C, L] {
+abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L], writeDirectToChart: Boolean) extends GenRuleMultiply[C, L] {
   def javaBinaryRuleApplication(rules: util.List[IndexedBinaryRule[C, L]], name: String, context: CLContext):CLBinaryRuleUpdater
   def javaUnaryRuleApplication(rules: util.List[IndexedUnaryRule[C, L]], name: String, context: CLContext):CLUnaryRuleUpdater
 

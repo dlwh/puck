@@ -14,8 +14,8 @@ public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 
 	public static final int BINARY_NUM_SEGMENTS = 24;
 	
-	public GreedySegmentationGenRuleMultiply(RuleStructure<C, L> structure) {
-		super(structure);
+	public GreedySegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite) {
+		super(structure, directWrite);
 	}
 
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {
