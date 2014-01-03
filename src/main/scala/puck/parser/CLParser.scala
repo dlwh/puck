@@ -178,7 +178,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       queue.finish()
         ev = data.util.getRootScores(dest, devInside, devParentPtrs, batch.numSentences, structure.root, ev)
         queue.finish()
-        dest.read(queue, ev).getFloats(sentences.length)
+        dest.read(queue, ev).getFloats(batch.numSentences)
       }.toIndexedSeq
     }
 
