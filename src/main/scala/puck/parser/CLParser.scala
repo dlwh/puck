@@ -438,7 +438,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         import batch.cellOffsets
         val length = batch.sentences(s).length
         val numCells = (cellOffsets(s+1)-cellOffsets(s))/2
-        assert(numCells == TriangularArray.arraySize(length))
+        assert(numCells == chartSize(length)/2)
         val botBegin = cellOffsets(s)
         val botEnd = botBegin + numCells
         val topBegin = botEnd
@@ -528,7 +528,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       lazy val insideCharts = for (i <- 0 until numSentences) yield {
         val numCells = (cellOffsets(i+1)-cellOffsets(i))/2
-        assert(numCells == TriangularArray.arraySize(sentences(i).length))
+        assert(numCells == chartSize(sentences(i).length)/2)
         val chart = new ParseChart(sentences(i).length, devInside(::, cellOffsets(i) until (cellOffsets(i) + numCells)), devInside(::, cellOffsets(i) + numCells until cellOffsets(i+1)))
         chart
       }
@@ -537,7 +537,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         for (i <- 0 until numSentences) yield {
 
           val numCells = (cellOffsets(i+1)-cellOffsets(i))/2
-          assert(numCells == TriangularArray.arraySize(sentences(i).length))
+          assert(numCells == chartSize(sentences(i).length)/2)
           val botBegin = cellOffsets(i)
           val botEnd = botBegin + numCells
           val topBegin = botEnd
@@ -550,6 +550,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     }
 
+    private def chartSize(len: Int) = TriangularArray.arraySize(len) * 2
+
     private[CLParser] def getBatches(sentences: IndexedSeq[IndexedSeq[W]], masks: Option[DenseMatrix[Int]]): IndexedSeq[Batch] = {
       val result = ArrayBuffer[Batch]()
       var current = ArrayBuffer[IndexedSeq[W]]()
@@ -558,14 +560,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       var offsetIntoMasksArray = 0
       for ( (s, i) <- sentences.zipWithIndex) {
         currentLengthTotal += s.length
-        currentCellTotal += TriangularArray.arraySize(s.length) * 4
+        currentCellTotal += chartSize(s.length)
         if (currentLengthTotal > numWorkCells || currentCellTotal > numChartCells) {
-          currentCellTotal -= TriangularArray.arraySize(s.length) * 4
+          currentCellTotal -= chartSize(s.length)
           assert(current.nonEmpty)
-          result += createBatch(current, masks.map(m => m(::, offsetIntoMasksArray until (offsetIntoMasksArray + currentCellTotal/2))))
+          result += createBatch(current, masks.map(m => m(::, offsetIntoMasksArray until (offsetIntoMasksArray + currentCellTotal))))
           offsetIntoMasksArray += (currentCellTotal/2)
           currentLengthTotal = s.length
-          currentCellTotal = TriangularArray.arraySize(s.length) * 4
+          currentCellTotal = chartSize(s.length)
           current = ArrayBuffer()
         }
         current += s
@@ -578,7 +580,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     private[CLParser] def createBatch(sentences: IndexedSeq[IndexedSeq[W]], masks: Option[DenseMatrix[Int]]): Batch = {
       val lengthTotals = sentences.scanLeft(0)((acc, sent) => acc + sent.length)
-      val cellTotals = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2)
+      val cellTotals = sentences.scanLeft(0)((acc, sent) => acc + chartSize(sent.length))
       println(f"Batch size of ${sentences.length}, total length of ${lengthTotals.last}, total (inside) cells: ${cellTotals.last}, total inside ${cellTotals.last * myCellSize * 4.0/1024/1024}%.2fM  ")
       assert(masks.forall(_.cols == cellTotals.last), masks.map(_.cols) -> cellTotals.last)
       assert(cellTotals.last <= devInside.cols, cellTotals.last + " " +  devInside.cols)
