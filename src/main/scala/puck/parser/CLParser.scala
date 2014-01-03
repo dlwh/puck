@@ -43,7 +43,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         doEmptySpans: Boolean = false,
                         profile: Boolean = true,
                         var oldPruning: Boolean = false,
-                        trackRules: Boolean = true)(implicit val context: CLContext) extends Logging {
+                        trackRules: Boolean = false)(implicit val context: CLContext) extends Logging {
   val skipFineWork = false
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
@@ -775,9 +775,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
          val numBlocks = updater.numKernelBlocks
 
+
          val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).groupBy(updater.kernels(_).parents.data.toIndexedSeq).values.toIndexedSeq
 
          for(block <- blocks) {
+           val parentCounts = DenseVector.zeros[Int](data.maskSize * 32)
            val blockParents = updater.kernels(block.head).parents
            //        if(allSpans.head._4 != null)
            //          println(BitHacks.asBitSet(blockParents).cardinality)
@@ -808,7 +810,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                      ev = enqueue(block, batch, span, parentTi, leftChild, rightChild, ev)
                      if(profile && trackRules && mask != null) {
                        val mask2 = BitHacks.asBitSet(mask)
-                       theoreticalRules += updater.kernels.flatMap(_.rules).count(r => mask2(r.parent.gpu))
+                       for(m <- mask2.iterator) {
+                        parentCounts(m) += 1
+                       }
                      }
                    }
                  }
@@ -818,11 +822,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
              }
 
            }
+          theoreticalRules += block.flatMap(updater.kernels(_).rules).groupBy(_.parent.coarse).map { case (k,v) => parentCounts(k) * v.length}.sum
 
            if (offset > 0) {
              ev = flushQueue(block, batch, span, ev)
            }
          }
+
 
 //         if(profile  && trackRulesForThisSetOfRules) {
 //           rulesTotal += {for {
