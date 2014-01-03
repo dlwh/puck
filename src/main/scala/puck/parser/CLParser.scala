@@ -41,7 +41,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         maxSentencesPerBatch: Long = 400,
                         doEmptySpans: Boolean = false,
                         profile: Boolean = true,
-                        var oldPruning: Boolean = false)(implicit val context: CLContext) extends Logging {
+                        var oldPruning: Boolean = false,
+                        trackRules: Boolean = true)(implicit val context: CLContext) extends Logging {
   val skipFineWork = false
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
@@ -152,6 +153,8 @@ private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
   private val parsers = data.map(new ActualParser(_))
   var pruned = 0
   var total = 0
+  var rulesEvaled = 0L
+  var rulesTotal = 0L
   var sortTime = 0L
 
   private class ActualParser(val data: CLParserData[C, L, W]) {
@@ -221,6 +224,8 @@ private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
       pruned = 0
       total = 0
       sortTime = 0
+      rulesEvaled = 0
+      rulesTotal = 0
 
       val evZeroCharts = zmk.fillMemory(devInside.data, _zero, events:_*) profileIn initMemFillEvents
       val evZeroOutside = zmk.fillMemory(devOutside.data, _zero, events:_*) profileIn initMemFillEvents
@@ -244,9 +249,9 @@ private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
         allProfilers.foreach(p => println(s"Inside $p"))
         println(f"Time accounted for: ${allProfilers.map(_.processingTime).sum}%.3f")
         println("Sorting took: " + sortTime/1000.0)
-
+        println(s"Pruned $pruned/$total")
+        println(s"Rules evaled: $rulesEvaled/$rulesTotal ${(rulesEvaled.toDouble/rulesTotal)}")
       }
-      println(s"Pruned $pruned/$total")
 
       ev
     }
@@ -255,6 +260,8 @@ private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
       var ev = event
       allProfilers.foreach(_.clear())
       allProfilers.foreach(_.tick())
+      rulesEvaled = 0
+      rulesTotal = 0
       pruned  = 0
       total = 0
 
@@ -286,8 +293,9 @@ private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
         allProfilers.foreach(p => println(s"Outside $p"))
         println(f"Time accounted for: ${allProfilers.map(_.processingTime).sum}%.3f")
         println("Sorting took: " + sortTime/1000.0)
+        println(s"Pruned $pruned/$total")
+        println(s"Rules evaled: $rulesEvaled/$rulesTotal ${(rulesEvaled.toDouble/rulesTotal)}")
       }
-      println(s"Pruned $pruned/$total")
 
       ev
     }
@@ -396,7 +404,7 @@ private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
     private def insideTT = new BinaryUpdateManager(data.inside.insideTTKernels, true, devInside, devInside, devInside, insideBot, insideBot, insideBot, (b, e, l) => (b+1 to b+1))
     private def insideNT = new BinaryUpdateManager(data.inside.insideNTKernels, true, devInside, devInside, devInside, insideBot, insideTop, insideBot, (b, e, l) => (e-1 to e-1))
     private def insideTN = new BinaryUpdateManager(data.inside.insideTNKernels, true, devInside, devInside, devInside, insideBot, insideBot, insideTop, (b, e, l) => (b+1 to b+1))
-    private def insideNN = new BinaryUpdateManager(data.inside.insideNNKernels, true, devInside, devInside, devInside, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1))
+    private def insideNN = new BinaryUpdateManager(data.inside.insideNNKernels, true, devInside, devInside, devInside, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1), trackRules)
 
     // here, "parentChart" is actually the left child, left is the parent, right is the right completion
     private def outsideTT_L = new BinaryUpdateManager(data.outside.outside_L_TTKernels, true, devOutside, devOutside, devInside, outsideBot, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
@@ -408,7 +416,7 @@ private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
     private def outsideTT_R = new BinaryUpdateManager(data.outside.outside_R_TTKernels, true, devOutside, devInside, devOutside, outsideBot, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
     private def outsideNT_R = new BinaryUpdateManager(data.outside.outside_R_NTKernels, true, devOutside, devInside, devOutside, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
     private def outsideTN_R = new BinaryUpdateManager(data.outside.outside_R_TNKernels, false, devOutside, devInside, devOutside, outsideTop, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
-    private def outsideNN_R = new BinaryUpdateManager(data.outside.outside_R_NNKernels, false, devOutside, devInside, devOutside, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1))
+    private def outsideNN_R = new BinaryUpdateManager(data.outside.outside_R_NNKernels, false, devOutside, devInside, devOutside, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1), trackRules)
 
     private def outsideTU = new UnaryUpdateManager(data.outside.outsideTUKernels, devOutside, outsideBot, outsideTop)
     private def outsideNU = new UnaryUpdateManager(data.outside.outsideNUKernels, devOutside, outsideBot, outsideTop)
@@ -642,7 +650,9 @@ private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
                                       parentChart: (Batch,Int)=>ChartHalf,
                                       leftChart: (Batch,Int)=>ChartHalf,
                                       rightChart: (Batch,Int)=>ChartHalf,
-                                      ranger: (Int, Int, Int)=>Range) {
+                                      ranger: (Int, Int, Int)=>Range,
+                                      trackRulesForThisSetOfRules: Boolean = false) {
+      lazy val totalRulesInKernels = (updater.kernels.map(_.rules.length).sum)
 
 
        var splitPointOffset = 0 // number of unique parent spans used so far
@@ -660,6 +670,10 @@ private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
          pArray(offset) = parent
          lArray(offset) = left
          rArray(offset) = right
+
+         if(profile && trackRulesForThisSetOfRules) {
+           rulesEvaled += block.map(updater.kernels(_).rules.length).sum.toLong
+         }
 
          offset += 1
          if (offset >= numWorkCells)  {
@@ -700,6 +714,7 @@ private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
              maskCharts, evTransLeft, evTransRight, evWriteDevParent, zeroParent)
 
            val sumEv: CLEvent = if((skipFineWork && batch.hasMasks) || updateDirectToChart) null else sumSplitPoints(span, Seq(evWriteDevParent, evWriteDevSplitPoint) ++ kEvents: _*)
+
 
            offset = 0
            splitPointOffset = 0
@@ -751,10 +766,16 @@ private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
 
          for(block <- blocks) {
            val blockParents = updater.kernels(block.head).parents
+           val numRules = block.map(updater.kernels(_).rules.length).sum
            //        if(allSpans.head._4 != null)
            //          println(BitHacks.asBitSet(blockParents).cardinality)
            for ( (sent, start, end, mask) <- allSpans ) {
+             if(profile && trackRulesForThisSetOfRules) {
+               val numSplits = ranger(start, start + span, batch.sentences(sent).length).filter(split => split >= 0 && split <= batch.sentences(sent).length).length
+               rulesTotal += numSplits.toLong * numRules
+             }
              if(mask == null || oldPruning || intersects(blockParents, mask)) {
+
 
                val splitRange = ranger(start, start + span, batch.sentences(sent).length)
                var split =  splitRange.start
@@ -784,6 +805,15 @@ private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
              ev = flushQueue(block, batch, span, ev)
            }
          }
+
+//         if(profile  && trackRulesForThisSetOfRules) {
+//           rulesTotal += {for {
+//             sent <- 0 until batch.numSentences
+//             start <- 0 to batch.sentences(sent).length - span
+//             split <- ranger(start, start + span, batch.sentences(sent).length)
+//             if (split >= 0 && split <= batch.sentences(sent).length)
+//           } yield split}.sum.toLong * totalRulesInKernels
+//         }
 
          assert(ev.length == 1)
          ev.head
