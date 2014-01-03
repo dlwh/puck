@@ -42,7 +42,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         doEmptySpans: Boolean = false,
                         profile: Boolean = true,
                         var oldPruning: Boolean = false,
-                        trackRules: Boolean = true)(implicit val context: CLContext) extends Logging {
+                        trackRules: Boolean = false)(implicit val context: CLContext) extends Logging {
   val skipFineWork = false
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
@@ -120,7 +120,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     // in a fixed sentence is (n/2)^2= n^2/4.
     // Take n = 32, then we want our P/L/R arrays to be of the ratio (3 * 256):992 \approx 3/4 (3/4 exaclty if we exclude the - n term)
     // doesn't quite work the way we want (outside), so we'll bump the number to 4/5
-    val relativeSizeOfChartsToP = 8
+    val relativeSizeOfChartsToP = 7
     val baseSize = numberOfUnitsOf16 / (3 + relativeSizeOfChartsToP)
     val extra = numberOfUnitsOf16 % (3 + relativeSizeOfChartsToP)
     val plrSize = baseSize
@@ -179,9 +179,7 @@ private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
         var ev = inside(batch)
         val dest = context.createFloatBuffer(CLMem.Usage.Output, sentences.length)
         ev = devParentPtrs.writeArray(queue, batch.insideCharts.map(_.top.rootIndex).toArray, batch.numSentences, ev) profileIn hdTransferEvents
-      queue.finish()
         ev = data.util.getRootScores(dest, devInside, devParentPtrs, batch.numSentences, structure.root, ev)
-        queue.finish()
         dest.read(queue, ev).getFloats(batch.numSentences)
       }.toIndexedSeq
     }
@@ -762,15 +760,15 @@ private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
 
          val numBlocks = updater.numKernelBlocks
 
-         val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).map(IndexedSeq(_))
+         val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).groupBy(updater.kernels(_).parents.data.toIndexedSeq).values.toIndexedSeq
 
          for(block <- blocks) {
            val blockParents = updater.kernels(block.head).parents
-           val numRules = block.map(updater.kernels(_).rules.length).sum
            //        if(allSpans.head._4 != null)
            //          println(BitHacks.asBitSet(blockParents).cardinality)
            for ( (sent, start, end, mask) <- allSpans ) {
              if(profile && trackRulesForThisSetOfRules) {
+               val numRules = block.map(updater.kernels(_).rules.length).sum
                val numSplits = ranger(start, start + span, batch.sentences(sent).length).filter(split => split >= 0 && split <= batch.sentences(sent).length).length
                rulesTotal += numSplits.toLong * numRules
              }
