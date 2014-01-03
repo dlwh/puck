@@ -759,7 +759,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
              start <- 0 to batch.sentences(sent).length - span
              _ = total += 1
              mask <- if(parentIsBot) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
-             if {val x = any(mask); if(!x) pruned += 1; x || doEmptySpans }
+             if {val x = any(mask); if(!x) pruned += 1; x || doEmptySpans || trackRulesForThisSetOfRules }
            } yield (sent, start, start+span, mask)
 
            val ordered = orderSpansBySimilarity(allSpans)
@@ -778,7 +778,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
              mask <- if(parentIsBot) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
            } {
              val numSplits = ranger(start, start + span, batch.sentences(sent).length).count(split => split >= 0 && split <= batch.sentences(sent).length)
-             val mm = BitHacks.asBitSet(mask).iterator.map(sym => structure.refinements.labels.refinementsOf(sym).map(structure.grammar.indexedBinaryRulesWithParent(_).length).sum).sum
+             val mask = BitHacks.asBitSet(mask)
+             val mm = {for(block <- updater.kernels; r <- block.rules if mask(r.parent.coarse)) yield x}.length
              theoreticalRules += numSplits * mm
            }
          }
