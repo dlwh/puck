@@ -26,12 +26,12 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
   def numKernelBlocks = kernels.length
 
   def update(block: IndexedSeq[Int], profiler: CLProfiler, parent: CLMatrix[Float], parentPointers: CLBuffer[Int],
-             left: CLMatrix[Float],  leftPointers: CLBuffer[Int],
-             right: CLMatrix[Float],  rightPointers: CLBuffer[Int],
+             left: CLMatrix[Float],
+             right: CLMatrix[Float],
              masks: CLMatrix[Int], events: CLEvent*)(implicit queue: CLQueue) = synchronized {
 //    require(parent.rows <= parentPointers.getElementCount)
-    require(left.rows <= leftPointers.getElementCount)
-    require(right.rows <= rightPointers.getElementCount)
+//    require(left.rows <= leftPointers.getElementCount)
+//    require(right.rows <= rightPointers.getElementCount)
 //    require(parent.rows == left.cols)
 //    require(parent.cols > parentPointers.read(queue).toArray.take(left.rows).map(_.toInt).max)
 //    require(parent.rows == left.rows)
@@ -42,8 +42,8 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
     require(left.majorStride == right.majorStride)
     block.flatMap(kernels(_).kernels).foldLeft(events) { (ev, k) =>
       k.setArgs(parent.data.safeBuffer, parentPointers,
-        left.data.safeBuffer, leftPointers,
-        right.data.safeBuffer,  rightPointers,
+        left.data.safeBuffer,
+        right.data.safeBuffer,
         masks.data.safeBuffer,
         Integer.valueOf(left.majorStride), Integer.valueOf(left.rows) )
       buffer.foreach(buf => k.setArg(7, buf))

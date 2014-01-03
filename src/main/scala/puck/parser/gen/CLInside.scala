@@ -15,10 +15,10 @@ case class CLInsideKernels(insideNNKernels: CLBinaryRuleUpdater,
                            insideTUKernels: CLUnaryRuleUpdater) {
 
   def write(out: ZipOutputStream) {
-     insideNTKernels.write("insideNT", out)
-     insideNNKernels.write("insideNN", out)
-     insideTNKernels.write("insideTN", out)
-     insideTTKernels.write("insideTT", out)
+    insideNTKernels.write("insideNT", out)
+    insideNNKernels.write("insideNN", out)
+    insideTNKernels.write("insideTN", out)
+    insideTTKernels.write("insideTT", out)
     insideNUKernels.write("insideNU", out)
     insideTUKernels.write("insideTU", out)
   }

@@ -1,7 +1,6 @@
 package puck.parser
 
 import puck.linalg.CLMatrix
-import breeze.collection.mutable.TriangularArray
 
 class ParseChart(val length: Int, botMat: CLMatrix[Float], topMat: CLMatrix[Float]) {
   val top = new ChartHalf(length, topMat, false)

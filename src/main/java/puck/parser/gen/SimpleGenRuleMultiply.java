@@ -164,8 +164,8 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         sb.append(String.format(
                 " __kernel void %s(__global volatile float* parents," +
                 "                  __global int* parentIndex, " +
-                "                  __global float* left, __global int* leftIndex, " +
-                "                  __global float* right, __global int* rightIndex," +
+                "                  __global float* left," +
+                "                  __global float* right,"  +
                 "                  __global const mask_t* masks, int numRows, int cellsToDo) {\n" +
                 "    int numWorkers = get_global_size(0);\n" +
                 "    int grammarSubPartition = get_group_id(1);\n" +
