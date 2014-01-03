@@ -114,7 +114,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     //       not all threads need to participate... If sequential threads in a half warp access memory that is
     //       sequential but not aligned with the segments, then a separate transaction results for each element
     //       requested on a device with compute capability 1.1 or lower.
-    val numberOfUnitsOf16 = maxPossibleNumberOfCells / 16
+    val numberOfUnitsOf32 = maxPossibleNumberOfCells / 32
     // average sentence length of sentence, let's say n.
     // for the gpu charts, we'll need (n choose 2) * 2 * 2 =
     // for the "P/L/R" parts, the maximum number of relaxations (P = L * R * rules) for a fixed span
@@ -122,11 +122,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     // Take n = 32, then we want our P/L/R arrays to be of the ratio (3 * 256):992 \approx 3/4 (3/4 exaclty if we exclude the - n term)
     // doesn't quite work the way we want (outside), so we'll bump the number to 4/5
     val relativeSizeOfChartsToP = 7
-    val baseSize = numberOfUnitsOf16 / (3 + relativeSizeOfChartsToP)
-    val extra = numberOfUnitsOf16 % (3 + relativeSizeOfChartsToP)
+    val baseSize = numberOfUnitsOf32 / (3 + relativeSizeOfChartsToP)
+    val extra = numberOfUnitsOf32 % (3 + relativeSizeOfChartsToP)
     val plrSize = baseSize
     // TODO, can probably do a better job of these calculations?
-    (plrSize * 16, (baseSize * relativeSizeOfChartsToP + extra) * 16)
+    (plrSize * 32, (baseSize * relativeSizeOfChartsToP + extra) * 32)
   }
 
   def maxNumWorkCells = parsers.map(_.numWorkCells).max
