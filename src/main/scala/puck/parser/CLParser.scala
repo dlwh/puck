@@ -574,7 +574,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
 
 
-      if (current.nonEmpty) result += createBatch(current, masks.map(m => m(::, offsetIntoMasksArray until (offsetIntoMasksArray + currentCellTotal/2))))
+      if (current.nonEmpty) result += createBatch(current, masks.map(m => m(::, offsetIntoMasksArray until (offsetIntoMasksArray + currentCellTotal))))
       result
     }
 
@@ -813,7 +813,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                      if(profile && trackRules && mask != null) {
                        val mask2 = BitHacks.asBitSet(mask)
                        for(m <- mask2.iterator) {
-                        parentCounts(m) += 1
+                         parentCounts(m) += 1
                        }
                      }
                    }
