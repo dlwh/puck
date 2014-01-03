@@ -49,7 +49,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         maxSentencesPerBatch: Long = 400,
                         doEmptySpans: Boolean = false,
                         profile: Boolean = true,
-                        oldPruning: Boolean = false)(implicit val context: CLContext) extends Logging {
+                        var oldPruning: Boolean = false)(implicit val context: CLContext) extends Logging {
   val skipFineWork = false
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
@@ -507,9 +507,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       assert(numCellsUsed <= devInside.cols)
       assert(masks.forall(m => m.cols == numCellsUsed))
 
-      def isAllowedSpan(sent: Int, begin: Int, end: Int) = maskFor(sent, begin, end).forall(any)
+      def isAllowedSpan(sent: Int, begin: Int, end: Int) = botMaskFor(sent, begin, end).forall(any)
 
-      def maskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).bot.cellOffset(begin, end)))
+      def botMaskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).bot.cellOffset(begin, end)))
+      def topMaskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).top.cellOffset(begin, end)))
 
       def hasMasks = masks.nonEmpty
 
@@ -746,7 +747,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
              sent <- 0 until batch.numSentences
              start <- 0 to batch.sentences(sent).length - span
              _ = total += 1
-             mask <- batch.maskFor(sent, start, start + span)
+             mask <- if(parentChartMatrix.data eq devInsideRaw) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
              if {val x = any(mask); if(!x) pruned += 1; x || doEmptySpans }
            } yield (sent, start, start+span, mask)
            val ordered = orderSpansBySimilarity(allSpans)
@@ -760,7 +761,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
          val numBlocks = updater.numKernelBlocks
 
-         val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).groupBy(updater.kernels(_).parents).values.toIndexedSeq
+         val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).map(IndexedSeq(_))
 
          for(block <- blocks) {
            val blockParents = updater.kernels(block.head).parents
