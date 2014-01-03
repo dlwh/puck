@@ -558,21 +558,21 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       var offsetIntoMasksArray = 0
       for ( (s, i) <- sentences.zipWithIndex) {
         currentLengthTotal += s.length
-        currentCellTotal += TriangularArray.arraySize(s.length) * 4
+        currentCellTotal += TriangularArray.arraySize(s.length) * 2
         if (currentLengthTotal > numWorkCells || currentCellTotal > numChartCells) {
-          currentCellTotal -= TriangularArray.arraySize(s.length) * 4
+          currentCellTotal -= TriangularArray.arraySize(s.length) * 2
           assert(current.nonEmpty)
-          result += createBatch(current, masks.map(m => m(::, offsetIntoMasksArray until (offsetIntoMasksArray + currentCellTotal/2))))
-          offsetIntoMasksArray += (currentCellTotal/2)
+          result += createBatch(current, masks.map(m => m(::, offsetIntoMasksArray until (offsetIntoMasksArray + currentCellTotal))))
+          offsetIntoMasksArray += currentCellTotal
           currentLengthTotal = s.length
-          currentCellTotal = TriangularArray.arraySize(s.length) * 4
+          currentCellTotal = TriangularArray.arraySize(s.length) * 2
           current = ArrayBuffer()
         }
         current += s
       }
 
 
-      if (current.nonEmpty) result += createBatch(current, masks.map(m => m(::, offsetIntoMasksArray until (offsetIntoMasksArray + currentCellTotal/2))))
+      if (current.nonEmpty) result += createBatch(current, masks.map(m => m(::, offsetIntoMasksArray until (offsetIntoMasksArray + currentCellTotal))))
       result
     }
 
