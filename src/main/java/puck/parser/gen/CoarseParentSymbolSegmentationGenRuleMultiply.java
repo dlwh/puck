@@ -11,8 +11,8 @@ import puck.parser.RuleStructure;
 
 public class CoarseParentSymbolSegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultiply<C, L> {
 
-	public CoarseParentSymbolSegmentationGenRuleMultiply(RuleStructure<C, L> structure) {
-		super(structure);
+	public CoarseParentSymbolSegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite) {
+		super(structure, directWrite);
 	}
 
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {

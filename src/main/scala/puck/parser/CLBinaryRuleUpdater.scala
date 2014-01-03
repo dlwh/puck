@@ -18,8 +18,10 @@ import puck.parser.gen.{HasParent, IndexedBinaryRule}
  */
 case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
                                globalSize: Array[Int],
-                               wgSize: Array[Int], extra: Option[Array[Int]] = None) {
-  def this(kernels: java.util.List[RuleKernel], globalSize: Array[Int], wgSize: Array[Int]) = this(kernels.asScala.toIndexedSeq, globalSize, wgSize)
+                               wgSize: Array[Int],
+                               directWriteToChart: Boolean,
+                               extra: Option[Array[Int]] = None) {
+  def this(kernels: java.util.List[RuleKernel], globalSize: Array[Int], wgSize: Array[Int], directWrite: Boolean) = this(kernels.asScala.toIndexedSeq, globalSize, wgSize, directWrite)
 
   private val buffer = extra.map(arr => kernels.head.kernels.head.getProgram.getContext.createIntBuffer(CLMem.Usage.Input, Pointer.pointerToInts(arr:_*), true))
 
@@ -29,17 +31,16 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
              left: CLMatrix[Float],
              right: CLMatrix[Float],
              masks: CLMatrix[Int], events: CLEvent*)(implicit queue: CLQueue) = synchronized {
-//    require(parent.rows <= parentPointers.getElementCount)
-//    require(left.rows <= leftPointers.getElementCount)
-//    require(right.rows <= rightPointers.getElementCount)
-//    require(parent.rows == left.cols)
-//    require(parent.cols > parentPointers.read(queue).toArray.take(left.rows).map(_.toInt).max)
+    require(!directWriteToChart || parent.rows == left.cols)
+    require(directWriteToChart || parent.cols == left.cols)
+    require(directWriteToChart || parent.rows == left.rows)
+    require(directWriteToChart || parent.majorStride == left.majorStride)
 //    require(parent.rows == left.rows)
 //    require(parent.cols == left.cols)
-//    require(parent.majorStride == left.majorStride)
     require(left.rows == right.rows)
     require(left.cols == right.cols)
     require(left.majorStride == right.majorStride)
+
     block.flatMap(kernels(_).kernels).foldLeft(events) { (ev, k) =>
       k.setArgs(parent.data.safeBuffer, parentPointers,
         left.data.safeBuffer,
@@ -62,6 +63,7 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
     ZipUtil.serializedEntry(out, s"$name/globalSize", globalSize)
     ZipUtil.serializedEntry(out, s"$name/wgSize", wgSize)
     ZipUtil.serializedEntry(out, s"$name/extra", extra)
+    ZipUtil.serializedEntry(out, s"$name/directWrite", java.lang.Boolean.valueOf(directWriteToChart))
   }
 }
 
@@ -74,7 +76,8 @@ object CLBinaryRuleUpdater {
     val globalSize = ZipUtil.deserializeEntry[Array[Int]](in.getInputStream(in.getEntry(s"$name/globalSize")))
     val wgSize = ZipUtil.deserializeEntry[Array[Int]](in.getInputStream(in.getEntry(s"$name/wgSize")))
     val extra = ZipUtil.deserializeEntry[Option[Array[Int]]](in.getInputStream(in.getEntry(s"$name/extra")))
-    CLBinaryRuleUpdater(kernels, globalSize, wgSize, extra)
+    val directWrite = ZipUtil.deserializeEntry[java.lang.Boolean](in.getInputStream(in.getEntry(s"$name/directWrite")))
+    CLBinaryRuleUpdater(kernels, globalSize, wgSize, directWrite.booleanValue(), extra)
   }
 }
 

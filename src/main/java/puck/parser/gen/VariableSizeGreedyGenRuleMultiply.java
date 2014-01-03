@@ -6,8 +6,8 @@ import java.util.*;
 
 public class VariableSizeGreedyGenRuleMultiply<C, L>  extends SimpleGenRuleMultiply<C, L> {
 
-	public VariableSizeGreedyGenRuleMultiply(RuleStructure<C, L> structure) {
-		super(structure);
+	public VariableSizeGreedyGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite) {
+		super(structure, directWrite);
 	}
 
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {
