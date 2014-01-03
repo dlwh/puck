@@ -835,7 +835,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
              }
 
            }
-          theoreticalRules += block.flatMap(updater.kernels(_).rules).groupBy(_.parent.coarse).map { case (k,v) => parentCounts(k) * v.length}.sum
+
+           if(trackRulesForThisSetOfRules && profile)
+            theoreticalRules += block.flatMap(updater.kernels(_).rules).groupBy(_.parent.coarse).map { case (k,v) => parentCounts(k) * v.length}.sum
 
            if (offset > 0) {
              ev = flushQueue(block, batch, span, ev)
