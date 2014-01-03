@@ -1,6 +1,7 @@
 package puck
 package parser
 
+import epic.AwesomeBitSet
 import gen._
 import com.nativelibs4java.opencl._
 import com.typesafe.scalalogging.slf4j.Logging
@@ -42,7 +43,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         doEmptySpans: Boolean = false,
                         profile: Boolean = true,
                         var oldPruning: Boolean = false,
-                        trackRules: Boolean = false)(implicit val context: CLContext) extends Logging {
+                        trackRules: Boolean = true)(implicit val context: CLContext) extends Logging {
   val skipFineWork = false
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
@@ -154,6 +155,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   var pruned = 0
   var total = 0
   var rulesEvaled = 0L
+  var theoreticalRules = 0L
   var rulesTotal = 0L
   var sortTime = 0L
 
@@ -229,6 +231,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       total = 0
       sortTime = 0
       rulesEvaled = 0
+      theoreticalRules = 0
       rulesTotal = 0
 
       val evZeroCharts = zmk.fillMemory(devInside.data, _zero, events:_*) profileIn initMemFillEvents
@@ -255,6 +258,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         println("Sorting took: " + sortTime/1000.0)
         println(s"Pruned $pruned/$total")
         println(s"Rules evaled: $rulesEvaled/$rulesTotal ${(rulesEvaled.toDouble/rulesTotal)}")
+        println(s"Rules Theoretical (by rulesEvaled): $theoreticalRules/$rulesTotal ${(theoreticalRules.toDouble/rulesTotal)}")
+        println(s"Rules Theoretical (by rulesEvaled): $theoreticalRules/$rulesEvaled ${(theoreticalRules.toDouble/rulesEvaled)}")
       }
 
       ev
@@ -266,6 +271,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       allProfilers.foreach(_.tick())
       rulesEvaled = 0
       rulesTotal = 0
+      theoreticalRules = 0
       pruned  = 0
       total = 0
 
@@ -573,7 +579,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private[CLParser] def createBatch(sentences: IndexedSeq[IndexedSeq[W]], masks: Option[DenseMatrix[Int]]): Batch = {
       val lengthTotals = sentences.scanLeft(0)((acc, sent) => acc + sent.length)
       val cellTotals = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2)
-      println(s"Batch size of ${sentences.length}, total length of ${lengthTotals.last}, total (inside) cells: ${cellTotals.last}, total inside ${cellTotals.last * myCellSize * 4.0/1024/1024}M  ")
+      println(f"Batch size of ${sentences.length}, total length of ${lengthTotals.last}, total (inside) cells: ${cellTotals.last}, total inside ${cellTotals.last * myCellSize * 4.0/1024/1024}%.2fM  ")
       assert(masks.forall(_.cols == cellTotals.last), masks.map(_.cols) -> cellTotals.last)
       assert(cellTotals.last <= devInside.cols, cellTotals.last + " " +  devInside.cols)
       Batch(lengthTotals.toArray, cellTotals.toArray, sentences, masks)
@@ -755,6 +761,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
              mask <- if(parentIsBot) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
              if {val x = any(mask); if(!x) pruned += 1; x || doEmptySpans }
            } yield (sent, start, start+span, mask)
+
            val ordered = orderSpansBySimilarity(allSpans)
            ordered
          } else {
@@ -762,6 +769,18 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
              sent <- 0 until batch.numSentences
              start <- 0 to batch.sentences(sent).length - span
            } yield (sent, start, start+span, null)
+         }
+
+         if(trackRules && batch.hasMasks) {
+           for {
+             sent <- 0 until batch.numSentences
+             start <- 0 to batch.sentences(sent).length - span
+             mask <- if(parentIsBot) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
+           } {
+             val numSplits = ranger(start, start + span, batch.sentences(sent).length).count(split => split >= 0 && split <= batch.sentences(sent).length)
+             val mm = BitHacks.asBitSet(mask).iterator.map(sym => structure.refinements.labels.refinementsOf(sym).map(structure.grammar.indexedBinaryRulesWithParent(_).length).sum).sum
+             theoreticalRules += numSplits * mm
+           }
          }
 
          val numBlocks = updater.numKernelBlocks
@@ -777,6 +796,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                val numRules = block.map(updater.kernels(_).rules.length).sum
                val numSplits = ranger(start, start + span, batch.sentences(sent).length).filter(split => split >= 0 && split <= batch.sentences(sent).length).length
                rulesTotal += numSplits.toLong * numRules
+
              }
              if(mask == null || oldPruning || intersects(blockParents, mask)) {
 
