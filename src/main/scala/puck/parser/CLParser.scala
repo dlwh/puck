@@ -438,7 +438,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         import batch.cellOffsets
         val length = batch.sentences(s).length
         val numCells = (cellOffsets(s+1)-cellOffsets(s))/2
-        assert(numCells == chartSize(length)/2)
+        assert(numCells == TriangularArray.arraySize(length))
         val botBegin = cellOffsets(s)
         val botEnd = botBegin + numCells
         val topBegin = botEnd
@@ -528,7 +528,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       lazy val insideCharts = for (i <- 0 until numSentences) yield {
         val numCells = (cellOffsets(i+1)-cellOffsets(i))/2
-        assert(numCells == chartSize(sentences(i).length)/2)
+        assert(numCells == TriangularArray.arraySize(sentences(i).length))
         val chart = new ParseChart(sentences(i).length, devInside(::, cellOffsets(i) until (cellOffsets(i) + numCells)), devInside(::, cellOffsets(i) + numCells until cellOffsets(i+1)))
         chart
       }
@@ -537,7 +537,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         for (i <- 0 until numSentences) yield {
 
           val numCells = (cellOffsets(i+1)-cellOffsets(i))/2
-          assert(numCells == chartSize(sentences(i).length)/2)
+          assert(numCells == TriangularArray.arraySize(sentences(i).length))
           val botBegin = cellOffsets(i)
           val botEnd = botBegin + numCells
           val topBegin = botEnd
@@ -550,8 +550,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     }
 
-    private def chartSize(len: Int) = TriangularArray.arraySize(len) * 2
-
     private[CLParser] def getBatches(sentences: IndexedSeq[IndexedSeq[W]], masks: Option[DenseMatrix[Int]]): IndexedSeq[Batch] = {
       val result = ArrayBuffer[Batch]()
       var current = ArrayBuffer[IndexedSeq[W]]()
@@ -560,27 +558,27 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       var offsetIntoMasksArray = 0
       for ( (s, i) <- sentences.zipWithIndex) {
         currentLengthTotal += s.length
-        currentCellTotal += chartSize(s.length)
+        currentCellTotal += TriangularArray.arraySize(s.length) * 4
         if (currentLengthTotal > numWorkCells || currentCellTotal > numChartCells) {
-          currentCellTotal -= chartSize(s.length)
+          currentCellTotal -= TriangularArray.arraySize(s.length) * 4
           assert(current.nonEmpty)
-          result += createBatch(current, masks.map(m => m(::, offsetIntoMasksArray until (offsetIntoMasksArray + currentCellTotal))))
+          result += createBatch(current, masks.map(m => m(::, offsetIntoMasksArray until (offsetIntoMasksArray + currentCellTotal/2))))
           offsetIntoMasksArray += (currentCellTotal/2)
           currentLengthTotal = s.length
-          currentCellTotal = chartSize(s.length)
+          currentCellTotal = TriangularArray.arraySize(s.length) * 4
           current = ArrayBuffer()
         }
         current += s
       }
 
 
-      if (current.nonEmpty) result += createBatch(current, masks.map(m => m(::, offsetIntoMasksArray until (offsetIntoMasksArray + currentCellTotal))))
+      if (current.nonEmpty) result += createBatch(current, masks.map(m => m(::, offsetIntoMasksArray until (offsetIntoMasksArray + currentCellTotal/2))))
       result
     }
 
     private[CLParser] def createBatch(sentences: IndexedSeq[IndexedSeq[W]], masks: Option[DenseMatrix[Int]]): Batch = {
       val lengthTotals = sentences.scanLeft(0)((acc, sent) => acc + sent.length)
-      val cellTotals = sentences.scanLeft(0)((acc, sent) => acc + chartSize(sent.length))
+      val cellTotals = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2)
       println(f"Batch size of ${sentences.length}, total length of ${lengthTotals.last}, total (inside) cells: ${cellTotals.last}, total inside ${cellTotals.last * myCellSize * 4.0/1024/1024}%.2fM  ")
       assert(masks.forall(_.cols == cellTotals.last), masks.map(_.cols) -> cellTotals.last)
       assert(cellTotals.last <= devInside.cols, cellTotals.last + " " +  devInside.cols)
@@ -813,7 +811,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                      if(profile && trackRules && mask != null) {
                        val mask2 = BitHacks.asBitSet(mask)
                        for(m <- mask2.iterator) {
-                         parentCounts(m) += 1
+                        parentCounts(m) += 1
                        }
                      }
                    }
