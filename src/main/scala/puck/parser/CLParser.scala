@@ -573,7 +573,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private[CLParser] def createBatch(sentences: IndexedSeq[IndexedSeq[W]], masks: Option[DenseMatrix[Int]]): Batch = {
       val lengthTotals = sentences.scanLeft(0)((acc, sent) => acc + sent.length)
       val cellTotals = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2)
-      println(s"Batch size of ${sentences.length}, total length of ${lengthTotals.last}, total (inside) cells: ${cellTotals.last}  ")
+      println(s"Batch size of ${sentences.length}, total length of ${lengthTotals.last}, total (inside) cells: ${cellTotals.last}, total inside ${cellTotals.last * myCellSize * 4.0/1024/1024}M  ")
       assert(masks.forall(_.cols == cellTotals.last), masks.map(_.cols) -> cellTotals.last)
       assert(cellTotals.last <= devInside.cols, cellTotals.last + " " +  devInside.cols)
       Batch(lengthTotals.toArray, cellTotals.toArray, sentences, masks)
