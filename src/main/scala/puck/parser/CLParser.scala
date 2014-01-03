@@ -863,7 +863,8 @@ object CLParser extends Logging {
                     jvmParse: Boolean = false, parseTwice: Boolean = false,
                     textGrammarPrefix: String = null,
                     checkPartitions: Boolean = false,
-                    justInsides: Boolean = false)
+                    justInsides: Boolean = false,
+                    mem: String = "1g")
 
   def main(args: Array[String]) = {
     import ParserParams.JointParams
@@ -921,7 +922,7 @@ object CLParser extends Logging {
     val allData = grammars.dropRight(1).map(CLParserData.make(_, defaultGenerator)) :+ parserData
 
     val kern = {
-      fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](allData, profile)
+      fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](allData, profile, parseMemString(mem))
     }
 
     if (justInsides) {
@@ -985,12 +986,12 @@ object CLParser extends Logging {
   }
 
 
-  def fromParserData[L, L2, W](data: CLParserData[L, L2, W], profile: Boolean)(implicit context: CLContext): CLParser[L, L2, W] = {
-    fromParserDatas(IndexedSeq(data), profile)
+  def fromParserData[L, L2, W](data: CLParserData[L, L2, W], profile: Boolean, mem: Long)(implicit context: CLContext): CLParser[L, L2, W] = {
+    fromParserDatas(IndexedSeq(data), profile, mem)
   }
 
-  def fromParserDatas[L, L2, W](data: IndexedSeq[CLParserData[L, L2, W]], profile: Boolean)(implicit context: CLContext): CLParser[L, L2, W] = {
-    val kern = new CLParser[L, L2, W](data, profile = profile)
+  def fromParserDatas[L, L2, W](data: IndexedSeq[CLParserData[L, L2, W]], profile: Boolean, mem: Long)(implicit context: CLContext): CLParser[L, L2, W] = {
+    val kern = new CLParser[L, L2, W](data, profile = profile, maxAllocSize = mem)
     kern
   }
 
@@ -1003,6 +1004,15 @@ object CLParser extends Logging {
       val deBgold: Tree[String] = Trees.debinarize(Trees.deannotate(chainReplacer.replaceUnaries(gold).map(_.label)))
       eval.apply(guessTree, deBgold)
     } reduceLeft (_ + _)
+  }
+
+  def parseMemString(x: String) = x.last.toLower match {
+    case 'g' => Math.scalb(x.dropRight(1).toDouble, 30).toLong
+    case 'm' => Math.scalb(x.dropRight(1).toDouble, 20).toLong
+    case 'k' => Math.scalb(x.dropRight(1).toDouble, 10).toLong
+    case y:Char if y.isLetterOrDigit => throw new RuntimeException(s"bad mem string: $x")
+    case _ => x.toLong
+
   }
 
 
