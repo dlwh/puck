@@ -10,11 +10,13 @@ import org.bridj.Pointer
 import puck.parser.{ViterbiRuleSemiring, RuleSemiring, RuleStructure}
 
 case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKernel, setRootScoresKernel: CLKernel,
-                               splitPointsBlockSize: Int, groupSize: Int) {
+                         getRootScoresKernel: CLKernel,
+                         splitPointsBlockSize: Int, groupSize: Int) {
   def write(out: ZipOutputStream) {
     ZipUtil.addKernel(out, "sumGrammarKernel", sumGrammarKernel)
     ZipUtil.addKernel(out, "sumSplitPointsKernel", sumSplitPointsKernel)
     ZipUtil.addKernel(out, "setRootScoresKernel", setRootScoresKernel)
+    ZipUtil.addKernel(out, "getRootScoresKernel", getRootScoresKernel)
     ZipUtil.serializedEntry(out, "ints", Array(splitPointsBlockSize, groupSize))
   }
 
@@ -44,6 +46,19 @@ case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKer
       Integer.valueOf(root), java.lang.Float.valueOf(one))
 
     setRootScoresKernel.enqueueNDRange(queue, Array(numUniqueParents), events:_*)
+  }
+
+  def getRootScores(dest: CLBuffer[Float],
+                    charts: CLMatrix[Float],
+                    chartIndices: CLBuffer[Integer], numUniqueParents: Int,
+                    root: Int,
+                    events: CLEvent*)(implicit queue: CLQueue):CLEvent = {
+
+    getRootScoresKernel.setArgs(dest, charts.data.safeBuffer, chartIndices,
+      Integer.valueOf(numUniqueParents), Integer.valueOf(charts.rows),
+      Integer.valueOf(root))
+
+    getRootScoresKernel.enqueueNDRange(queue, Array(numUniqueParents), events:_*)
   }
 
 }
@@ -91,6 +106,7 @@ object CLParserUtils {
     CLParserUtils(sumCellsKernel,
       prog.createKernel("splitPointSum"),
       prog.createKernel("setRootScores"),
+      prog.createKernel("getRootScores"),
       blockSize, groupSize)
   }
 
@@ -104,10 +120,11 @@ object CLParserUtils {
      }
 
 #ifdef LOGSUM
+     float mm = m;
      if(m != -INFINITY) {
-       float adj = exp(_acc - m);
+       float adj = exp(_acc - mm);
        for(int i = first; i < last; i += 1) {
-         adj += exp(scores[i] - m);
+         adj += exp(scores[i] - mm);
        }
        m += log(adj);
      }
@@ -202,6 +219,13 @@ __kernel void setRootScores(__global float* charts, __global int* indices, int n
   if(id < numIndices)
       charts[numSyms * indices[id] + root] = value;
 }
+
+ __kernel void getRootScores(__global float* buf, __global const float* charts, __global int* indices, int numIndices, int numSyms, int root) {
+   int id = get_global_id(0);
+   if(id < numIndices) {
+      buf[id] = charts[numSyms * indices[id] + root];
+   }
+ }
 
                                             """
 

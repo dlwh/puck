@@ -173,15 +173,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def partitions(sentences: IndexedSeq[IndexedSeq[W]], mask: Option[DenseMatrix[Int]]) = synchronized {
       getBatches(sentences, mask).iterator.flatMap { batch =>
         var ev = inside(batch)
-        ev = outside(batch, ev)
-        Option(ev).foreach(_.waitFor())
-        for ( i <- 0 until batch.numSentences) yield {
-          if(sentences(i).length < 3)
-            (batch.insideCharts(i).top(0, batch.sentences(i).length, structure.root))
-          else
-                  (batch.insideCharts(i).bot(2, 3)
-                  + batch.outsideCharts(i).bot(2,3)).max
-        }
+//        ev = outside(batch, ev)
+        val dest = context.createFloatBuffer(CLMem.Usage.Output, sentences.length)
+        ev = devParentPtrs.writeArray(queue, batch.insideCharts.map(_.top.rootIndex).toArray, sentences.length, ev) profileIn hdTransferEvents
+      queue.finish()
+        ev = data.util.getRootScores(dest, devInside, devParentPtrs, batch.numSentences, structure.root, ev)
+        queue.finish()
+        dest.read(queue, ev).getFloats(sentences.length)
       }.toIndexedSeq
     }
 
