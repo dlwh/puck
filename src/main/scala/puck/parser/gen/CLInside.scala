@@ -30,7 +30,8 @@ trait GenType {
 
 object GenType {
   object VariableLength extends GenType {
-    def generator[C, L](structure: RuleStructure[C, L]): GenRuleMultiply[C, L] = new SmartVariableGen(structure)
+//    def generator[C, L](structure: RuleStructure[C, L]): GenRuleMultiply[C, L] = new SmartVariableGen(structure)
+    def generator[C, L](structure: RuleStructure[C, L]): GenRuleMultiply[C, L] = new VariableSizeGreedyGenRuleMultiply(structure)
   }
   object Canny extends GenType {
     def generator[C, L](structure: RuleStructure[C, L]): GenRuleMultiply[C, L] = new CannySegmentationGenRuleMultiply(structure)

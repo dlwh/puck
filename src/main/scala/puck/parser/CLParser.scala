@@ -45,7 +45,7 @@ import puck.parser.RuleStructure
 class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 //                        maxAllocSize: Long = 1L<<30, // 1 gig
 //                        maxAllocSize: Long = 1L<<32, // 4 gig
-                        maxAllocSize: Long = 5L<<28, //1.25 G
+                        maxAllocSize: Long = 1<<30, //1.25 G
                         maxSentencesPerBatch: Long = 400,
                         doEmptySpans: Boolean = false,
                         profile: Boolean = true,
@@ -697,14 +697,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
            val evTransLeft  = if(skipFineWork && batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), leftChartMatrix, offsetBuffer.buffer, offset, offset, evx) profileIn transferEvents
            val evTransRight = if(skipFineWork && batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), rightChartMatrix, offsetBuffer.buffer, offset * 2, offset, evx) profileIn transferEvents
 
-           val updateDirectToChart = true
+           val updateDirectToChart = false
+           
            // copy parent pointers
            // corresponding splits
            val evWriteDevSplitPoint =  if ((skipFineWork && batch.hasMasks) || updateDirectToChart) null else devSplitPointOffsets.writeArray(queue, splitPointOffsets, splitPointOffset + 1, ev:_*) profileIn hdTransferEvents
 
-//           val zeroParent = if((skipFineWork && batch.hasMasks) || updateDirectToChart) null else zmk.shapedFill(devParent(0 until offset, ::), parser._zero, ev:_*) profileIn memFillEvents
+           val zeroParent = if((skipFineWork && batch.hasMasks) || updateDirectToChart) null else zmk.shapedFill(devParent(0 until offset, ::), _zero, ev:_*) profileIn memFillEvents
 
-           //        val updateDirectToChart = batch.hasMasks
            val targetChart = if(updateDirectToChart) parentChartMatrix else devParent(0 until offset, ::)
            val kEvents = updater.update(block, binaryEvents,
              targetChart, offsetBuffer.buffer,
