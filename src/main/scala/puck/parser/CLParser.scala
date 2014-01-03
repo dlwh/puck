@@ -128,6 +128,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   }
 
   def maxNumWorkCells = parsers.map(_.numWorkCells).max
+  def maxNumChartCells = parsers.map(_.numChartCells).max
 
   // On the Device side we have 4 Matrices:
   // One is where we calculate P = L * R * rules, for fixed spans and split points (the "bot")
@@ -140,8 +141,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val devSplitPointOffsets = context.createIntBuffer(CLMem.Usage.Input, numDefaultWorkCells + 1)
   // transposed
   private val devInsideRaw, devOutsideRaw = context.createFloatBuffer(CLMem.Usage.InputOutput, numDefaultChartCells/2 * cellSize)
-  private val maskCharts = new CLMatrix[Int](maskSize, numDefaultChartCells)
-
+//  private val maskCharts = new CLMatrix[Int](maskSize, numDefaultChartCells)
+private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
 
   // other stuff
   private val zmk = ZeroMemoryKernel()
