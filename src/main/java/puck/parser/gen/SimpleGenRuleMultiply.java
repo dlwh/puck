@@ -20,10 +20,12 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 	public static final int NUM_SM = 8;
 	
     public RuleStructure<C, L> structure;
+    private boolean writeDirectToChart;
 
-    public SimpleGenRuleMultiply(RuleStructure<C, L> structure) {
-        super(structure);
+    public SimpleGenRuleMultiply(RuleStructure<C, L> structure, boolean writeDirectToChart) {
+        super(structure, writeDirectToChart);
         this.structure = structure;
+        this.writeDirectToChart = writeDirectToChart;
     }
     
     public abstract List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules);
@@ -41,7 +43,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         List<RuleKernel> kernels = compileKernels(context, this.<IndexedBinaryRule<C, L>>flatten(segments), kernelTexts);
         int[] globalSize = {WARP_SIZE * NUM_WARPS, NUM_SM, 1};
         int[] wgSize = {WARP_SIZE, 1, 1};
-        return new CLBinaryRuleUpdater(kernels, globalSize, wgSize);
+        return new CLBinaryRuleUpdater(kernels, globalSize, wgSize, writeDirectToChart);
     }
 
 
@@ -94,6 +96,8 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         	Map<Integer,String> declaredLeft = new HashMap<Integer, String>();
         	Map<Integer,String> declaredRight = new HashMap<Integer, String>();
 
+            sb.append("int pi = parentIndex[row];");
+
         	Map<Integer,Integer> parentCounts = new HashMap<Integer,Integer>();
         	for(IndexedBinaryRule<C, L> rule : subsegments[m]) { 
         		int parentIndex = rule.rule().parent().gpu();
@@ -111,10 +115,12 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         		String parent = declaredParents.get(parentIndex);
         		if(parent == null) {
         			parent = "parent_" + parentIndex;
-        			sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
+                    if(writeDirectToChart)
+                        sb.append(String.format("float parent_%d = parents[pi * "+cellSize+" + %d];\n", parentIndex, parentIndex));
+        			else
+                        sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
         			
-//        			sb.append(String.format("float parent_%d = parents[parentIndex[row] * "+cellSize+" + %d];\n", parentIndex, parentIndex));
-        			
+
         			declaredParents.put(parentIndex, parent);
         		}
 
@@ -138,15 +144,17 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         		
         		parentCounts.put(parentIndex, parentCounts.get(parentIndex)-1);
         		if (parentCounts.get(parentIndex) == 0) {
-//        			sb.append(String.format("parents[%d * numRows + row] = %s;\n", parentIndex, parent));
 
-                    String dest = String.format("parents[%d * numRows + row]", parentIndex);
-                    String src = parent;
-                    sb.append(genWriteSymbol(dest, src, !dupParents.contains(parentIndex), supportsExtendedAtomics));
+                    if(writeDirectToChart) {
+                        String dest = String.format("parents[pi * "+cellSize+" + %d]", parentIndex);
+                        String src = parent;
+                        sb.append(genWriteSymbol(dest, src, false, supportsExtendedAtomics));
+                    } else {
+                        String dest = String.format("parents[%d * numRows + row]", parentIndex);
+                        String src = parent;
+                        sb.append(genWriteSymbol(dest, src, !dupParents.contains(parentIndex), supportsExtendedAtomics));
+                    }
 
-//        			String dest = String.format("parents[parentIndex[row] * "+cellSize+" + %d]", parentIndex);
-//                    String src = parent;
-//                    sb.append(genWriteSymbol(dest, src, false, supportsExtendedAtomics));
         		}
         	}
 
