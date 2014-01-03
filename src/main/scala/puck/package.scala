@@ -113,4 +113,13 @@ package object puck {
 
   def roundUpToMultipleOf(num: Int, divisor: Int) = (num + divisor - 1)/divisor * divisor
 
+  def logTime[T](name: String, numItems: Int)(f: =>T) = {
+    val in = System.currentTimeMillis()
+    val x = f
+    val out = System.currentTimeMillis()
+    val duration = (out-in)/1000.0
+    println(f"$name took ${duration}s seconds. (${numItems/duration} per second)")
+    x
+  }
+
 }

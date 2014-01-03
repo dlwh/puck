@@ -142,8 +142,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val devSplitPointOffsets = context.createIntBuffer(CLMem.Usage.Input, numDefaultWorkCells + 1)
   // transposed
   private val devInsideRaw, devOutsideRaw = context.createFloatBuffer(CLMem.Usage.InputOutput, numDefaultChartCells/2 * cellSize)
-//  private val maskCharts = new CLMatrix[Int](maskSize, numDefaultChartCells)
-private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
+  //  private val maskCharts = new CLMatrix[Int](maskSize, numDefaultChartCells)
+  private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
 
   // other stuff
   private val zmk = ZeroMemoryKernel()
@@ -159,34 +159,40 @@ private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
 
   private class ActualParser(val data: CLParserData[C, L, W]) {
     import data._
-    
-    
+
+
     def parse(sentences: IndexedSeq[IndexedSeq[W]], mask: Option[DenseMatrix[Int]]) = synchronized {
-      getBatches(sentences, mask).iterator.flatMap { batch =>
-        var ev = inside(batch)
-        ev = outside(batch, ev)
-        val ev3 = computeViterbiMasks(batch, ev)
-        Option(ev3).foreach(_.waitFor())
-        val dmMasks:DenseMatrix[Int] = maskCharts(::, 0 until batch.numCellsUsed).toDense
-        val parses = extractParses(batch, dmMasks, ev3)
-        maskCharts.data.waitUnmap()
-        parses
-      }.toIndexedSeq
+      logTime("parse", sentences.length) {
+        getBatches(sentences, mask).iterator.flatMap { batch =>
+          var ev = inside(batch)
+          ev = outside(batch, ev)
+          val ev3 = computeViterbiMasks(batch, ev)
+          Option(ev3).foreach(_.waitFor())
+          val dmMasks:DenseMatrix[Int] = maskCharts(::, 0 until batch.numCellsUsed).toDense
+          val parses = extractParses(batch, dmMasks, ev3)
+          maskCharts.data.waitUnmap()
+          parses
+        }.toIndexedSeq
+      }
     }
 
     def partitions(sentences: IndexedSeq[IndexedSeq[W]], mask: Option[DenseMatrix[Int]]) = synchronized {
-      getBatches(sentences, mask).iterator.flatMap { batch =>
-        var ev = inside(batch)
-        val dest = context.createFloatBuffer(CLMem.Usage.Output, sentences.length)
-        ev = devParentPtrs.writeArray(queue, batch.insideCharts.map(_.top.rootIndex).toArray, batch.numSentences, ev) profileIn hdTransferEvents
-        ev = data.util.getRootScores(dest, devInside, devParentPtrs, batch.numSentences, structure.root, ev)
-        dest.read(queue, ev).getFloats(batch.numSentences)
-      }.toIndexedSeq
+      logTime("partitions", sentences.length) {
+        getBatches(sentences, mask).iterator.flatMap { batch =>
+          var ev = inside(batch)
+          val dest = context.createFloatBuffer(CLMem.Usage.Output, sentences.length)
+          ev = devParentPtrs.writeArray(queue, batch.insideCharts.map(_.top.rootIndex).toArray, batch.numSentences, ev) profileIn hdTransferEvents
+          ev = data.util.getRootScores(dest, devInside, devParentPtrs, batch.numSentences, structure.root, ev)
+          dest.read(queue, ev).getFloats(batch.numSentences)
+        }.toIndexedSeq
+      }
     }
 
     def updateMasks(sentences: IndexedSeq[IndexedSeq[W]], mask: Option[DenseMatrix[Int]]): DenseMatrix[Int] = synchronized {
-      val masks = getBatches(sentences, mask).iterator.map { computePruningMasks(_) }.toIndexedSeq
-      DenseMatrix.horzcat(masks:_*)
+      logTime("masks", sentences.length) {
+        val masks = getBatches(sentences, mask).iterator.map { computePruningMasks(_) }.toIndexedSeq
+        DenseMatrix.horzcat(masks:_*)
+      }
     }
 
     def computePruningMasks(batch: Batch, ev: CLEvent*): DenseMatrix[Int] = {
@@ -942,17 +948,13 @@ object CLParser extends Logging {
     }
 
     if (justInsides) {
-      val timeIn = System.currentTimeMillis()
-      val partsX = kern.partitions(toParse)
-      val timeOut = System.currentTimeMillis()
-      val parseDuration = (timeOut-timeIn)/1000.0
+      val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
       println(partsX)
-      println(f"CL Insides: $parseDuration (${toParse.length/parseDuration}%.3f sent/sec)")
       System.exit(0)
     }
 
     if (checkPartitions) {
-      val partsX = kern.partitions(toParse)
+      val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
       println(partsX)
       val parser = Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
       val parts2 = toParse.par.map(parser.marginal(_).logPartition)
@@ -960,21 +962,13 @@ object CLParser extends Logging {
       println("max difference: " + (DenseVector(partsX.map(_.toDouble):_*) - DenseVector(parts2.seq:_*)).norm(Double.PositiveInfinity))
       System.exit(0)
     }
-    var timeIn = System.currentTimeMillis()
-    val trees = kern.parse(toParse)
-    var timeOut = System.currentTimeMillis()
-      println(eval(trees zip gold.map(_.tree)))
+
+    val trees = logTime("CL Parsing:", toParse.length)(kern.parse(toParse))
+    println(eval(trees zip gold.map(_.tree)))
     //println(trees zip toParse map {case (k,v) if k != null => k render v; case (k,v) => ":("})
-    var parseDuration = (timeOut-timeIn)/1000.0
-    println(f"CL Parsing took: ${parseDuration} (${toParse.length/parseDuration}%.3f sent/sec)")
     if (parseTwice) {
-      timeIn = System.currentTimeMillis()
-      val parts2 = kern.parse(toParse)
-      println(eval(parts2 zip gold.map(_.tree)))
-      timeOut = System.currentTimeMillis()
-      //println(parts2 zip train map {case (k,v) => k render v})
-      parseDuration = (timeOut-timeIn)/1000.0
-      println(f"CL Parsing took x2: ${parseDuration} (${toParse.length/parseDuration}%.3f sent/sec)")
+      val trees = logTime("CL Parsing x2:", toParse.length)(kern.parse(toParse))
+      println(eval(trees zip gold.map(_.tree)))
     }
     if (jvmParse) {
       val parser = if(grammars.length > 1) {
@@ -984,16 +978,13 @@ object CLParser extends Logging {
       } else {
         Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
       }
-      timeIn = System.currentTimeMillis()
-      val margs = toParse.map { w =>
-        val m = parser.apply(w)
-        m -> w
+      val margs = logTime("JVM Parse", toParse.length) {
+        toParse.par.map { w =>
+          val m = parser.apply(w)
+          m
+        }.seq.toIndexedSeq
       }
-      println(eval(margs.map(_._1) zip gold.map(_.tree)))
-      timeOut = System.currentTimeMillis()
-      parseDuration = (timeOut-timeIn)/1000.0
-      println(f"Scala parsing took ${parseDuration} (${toParse.length/parseDuration}%.3f sent/sec)")
-     // println(margs.map{case (m ,w) => m render w})
+      println(eval(margs zip gold.map(_.tree)))
     }
 
     kern.release()
