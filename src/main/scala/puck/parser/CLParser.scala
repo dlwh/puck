@@ -778,8 +778,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
              mask <- if(parentIsBot) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
            } {
              val numSplits = ranger(start, start + span, batch.sentences(sent).length).count(split => split >= 0 && split <= batch.sentences(sent).length)
-             val mask = BitHacks.asBitSet(mask)
-             val mm = {for(block <- updater.kernels; r <- block.rules if mask(r.parent.coarse)) yield x}.length
+             val myMask = BitHacks.asBitSet(mask)
+             val mm = {for(block <- updater.kernels.iterator; r <- block.rules if myMask(r.parent.coarse)) yield r}.length
              theoreticalRules += numSplits * mm
            }
          }
