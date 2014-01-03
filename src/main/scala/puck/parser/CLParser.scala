@@ -896,17 +896,18 @@ object CLParser extends Logging {
     }
 
     val defaultGenerator = GenType.VariableLength
+    val prunedGenerator = GenType.VariableLength
 
     if (parserData == null || parserData.grammar.signature != grammar.signature) {
       println("Regenerating parser data")
-      val gen = if(grammars.length > 1) GenType.VariableLength else GenType.VariableLength
-      parserData =  CLParserData.make(grammar, gen)
+      val gen = if(grammars.length > 1) prunedGenerator else defaultGenerator
+      parserData =  CLParserData.make(grammar, gen, grammars.length > 1)
       if (cache && codeCache != null) {
         parserData.write(new BufferedOutputStream(new FileOutputStream(codeCache)))
       }
     }
 
-    val allData = grammars.dropRight(1).map(CLParserData.make(_, defaultGenerator)) :+ parserData
+    val allData = grammars.dropRight(1).map(CLParserData.make(_,  defaultGenerator, false)) :+ parserData
 
     val kern = {
       fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](allData, profile, parseMemString(mem))
@@ -1032,15 +1033,15 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 }
 
 object CLParserData {
-  def make[C, L, W](grammar: SimpleRefinedGrammar[C, L, W], genType: GenType)(implicit context: CLContext) = {
+  def make[C, L, W](grammar: SimpleRefinedGrammar[C, L, W], genType: GenType, directWrite: Boolean)(implicit context: CLContext) = {
     implicit val viterbi = ViterbiRuleSemiring
     val ruleScores: Array[Float] = Array.tabulate(grammar.refinedGrammar.index.size){r =>
       val score = grammar.ruleScoreArray(grammar.refinements.rules.project(r))(grammar.refinements.rules.localize(r))
       viterbi.fromLogSpace(score.toFloat)
     }
     val structure = new RuleStructure(grammar.refinements, grammar.refinedGrammar, ruleScores)
-    val inside = CLInsideKernels.make(structure, genType)
-    val outside =  CLOutsideKernels.make(structure, genType)
+    val inside = CLInsideKernels.make(structure, directWrite, genType)
+    val outside =  CLOutsideKernels.make(structure, directWrite, genType)
     val util = CLParserUtils.make(structure)
     val masks = CLMaskKernels.make(structure)
 
