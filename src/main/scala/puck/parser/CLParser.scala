@@ -258,7 +258,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         println("Sorting took: " + sortTime/1000.0)
         println(s"Pruned $pruned/$total")
         println(s"Rules evaled: $rulesEvaled/$rulesTotal ${(rulesEvaled.toDouble/rulesTotal)}")
-        println(s"Rules Theoretical (by rulesEvaled): $theoreticalRules/$rulesTotal ${(theoreticalRules.toDouble/rulesTotal)}")
+        println(s"Rules Theoretical (by rulesTotal): $theoreticalRules/$rulesTotal ${(theoreticalRules.toDouble/rulesTotal)}")
         println(s"Rules Theoretical (by rulesEvaled): $theoreticalRules/$rulesEvaled ${(theoreticalRules.toDouble/rulesEvaled)}")
       }
 
@@ -771,18 +771,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
            } yield (sent, start, start+span, null)
          }
 
-         if(trackRules && batch.hasMasks) {
-           for {
-             sent <- 0 until batch.numSentences
-             start <- 0 to batch.sentences(sent).length - span
-             mask <- if(parentIsBot) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
-           } {
-             val numSplits = ranger(start, start + span, batch.sentences(sent).length).count(split => split >= 0 && split <= batch.sentences(sent).length)
-             val myMask = BitHacks.asBitSet(mask)
-             val mm = {for(block <- updater.kernels.iterator; r <- block.rules if myMask(r.parent.coarse)) yield r}.length
-             theoreticalRules += numSplits * mm
-           }
-         }
+
 
          val numBlocks = updater.numKernelBlocks
 
@@ -817,6 +806,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                      val leftChild = if (split < start) leftChart(batch, sent).cellOffset(split,start) else leftChart(batch, sent).cellOffset(start, split)
                      val rightChild = if (split < end) rightChart(batch, sent).cellOffset(split,end) else rightChart(batch, sent).cellOffset(end, split)
                      ev = enqueue(block, batch, span, parentTi, leftChild, rightChild, ev)
+                     if(profile && trackRules && mask != null) {
+                       val mask2 = BitHacks.asBitSet(mask)
+                       theoreticalRules += updater.kernels.flatMap(_.rules).count(r => mask2(r.parent.gpu))
+                     }
                    }
                  }
                  split += step
