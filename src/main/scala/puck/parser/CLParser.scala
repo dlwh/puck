@@ -5,7 +5,7 @@ import epic.AwesomeBitSet
 import gen._
 import com.nativelibs4java.opencl._
 import com.typesafe.scalalogging.slf4j.Logging
-import puck.util.{ZipUtil, BitHacks, ZeroMemoryKernel, CLProfiler}
+import puck.util._
 import puck.linalg.CLMatrix
 import puck.linalg.kernels.{CLMatrixSliceCopy, CLMatrixTransposeCopy}
 import breeze.collection.mutable.TriangularArray
@@ -29,6 +29,14 @@ import epic.parser.SimpleRefinedGrammar.CloseUnaries
 import epic.parser.projections.{ParserChartConstraintsFactory, ConstraintCoreGrammarAdaptor}
 import scala.collection.parallel.immutable.ParSeq
 import java.util.Collections
+import epic.trees.UnaryTree
+import scala.Some
+import epic.parser.ViterbiDecoder
+import epic.trees.NullaryTree
+import epic.trees.BinaryTree
+import epic.trees.annotations.Xbarize
+import epic.trees.Span
+import puck.parser.RuleStructure
 
 /**
  * TODO
@@ -140,7 +148,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val devParentRaw, devLeftRaw, devRightRaw = context.createFloatBuffer(CLMem.Usage.InputOutput, numDefaultWorkCells.toLong * cellSize)
   private lazy val maskParent = new CLMatrix[Int](maskSize, maxNumWorkCells)
   private lazy val devParentPtrs, devLeftPtrs, devRightPtrs = context.createIntBuffer(CLMem.Usage.Input, maxNumWorkCells)
-  private val devSplitPointOffsets = context.createIntBuffer(CLMem.Usage.Input, numDefaultWorkCells + 1)
+  private lazy val offsetBuffer = new CLBufferPointerPair[Integer](context.createIntBuffer(CLMem.Usage.Input, maxNumWorkCells * 3))
+  private lazy val devSplitPointOffsets = context.createIntBuffer(CLMem.Usage.Input, maxNumWorkCells + 1)
   // transposed
   private val devInsideRaw, devOutsideRaw = context.createFloatBuffer(CLMem.Usage.InputOutput, numDefaultChartCells/2 * cellSize)
   //  private val maskCharts = new CLMatrix[Int](maskSize, numDefaultChartCells)
@@ -215,6 +224,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     val pArray, lArray, rArray = new Array[Int](numWorkCells)
     val splitPointOffsets = new Array[Int](numWorkCells+1)
 
+
     val devParent = new CLMatrix[Float]( numWorkCells, myCellSize, devParentRaw)
     val devLeft = new CLMatrix[Float]( numWorkCells, myCellSize, devLeftRaw)
     val devRight = new CLMatrix[Float]( numWorkCells, myCellSize, devRightRaw)
@@ -275,8 +285,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       pruned  = 0
       total = 0
 
-      ev = devParentPtrs.writeArray(queue, batch.outsideCharts.map(_.top.rootIndex).toArray, batch.outsideCharts.length, ev) profileIn hdTransferEvents
-      ev = data.util.setRootScores(devOutside, devParentPtrs, batch.numSentences, structure.root, data.semiring.one, ev) profileIn memFillEvents
+     ev = offsetBuffer.writeInts(0, batch.outsideCharts.map(_.top.rootIndex).toArray, 0, batch.outsideCharts.length, ev) profileIn hdTransferEvents
+//      ev = devParentPtrs.writeArray(queue, batch.outsideCharts.map(_.top.rootIndex).toArray, batch.outsideCharts.length, ev) profileIn hdTransferEvents
+      ev = data.util.setRootScores(devOutside, offsetBuffer.buffer, batch.numSentences, structure.root, data.semiring.one, ev) profileIn memFillEvents
+//      ev = data.util.setRootScores(devOutside, devParentPtrs, batch.numSentences, structure.root, data.semiring.one, ev) profileIn memFillEvents
 
       ev = outsideNU.doUpdates(batch, batch.maxLength, ev)
 

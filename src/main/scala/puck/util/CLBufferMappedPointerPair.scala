@@ -30,6 +30,12 @@ case class CLBufferMappedPointerPair[V](val buffer: CLBuffer[V])(implicit queue:
     }
   }
 
+  def writeInts(dstOffset: Int, src: Array[Int], srcOffset: Int, len: Int, ev: CLEvent*)(implicit wit: Integer =:= V): CLEvent = {
+    val ptr = mappedPointer(ev:_*)
+    ptr.setIntsAtOffset(dstOffset * 4, src, srcOffset, len)
+    unmap()
+  }
+
   def waitUnmap() {
     Option(unmap()).foreach(_.waitFor)
   }
