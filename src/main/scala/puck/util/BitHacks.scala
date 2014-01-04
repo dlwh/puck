@@ -104,5 +104,15 @@ object BitHacks {
       }
     }
   }
+
+  def any(x: DenseVector[Int]) = {
+    var i = 0
+    var any = false
+    while(i < x.length && !any) {
+      any = x(i) != 0
+      i += 1
+    }
+    any
+  }
 }
 

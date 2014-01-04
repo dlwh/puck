@@ -204,7 +204,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
     }
 
-    def computePruningMasks(batch: Batch, ev: CLEvent*): DenseMatrix[Int] = {
+    def computePruningMasks(batch: Batch[W], ev: CLEvent*): DenseMatrix[Int] = {
       val insideEvents = inside(batch, ev:_*)
       val outsideEvents = outside(batch, insideEvents)
       val ev2 = computeMasks(batch, -7, outsideEvents)
@@ -232,7 +232,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def _zero: Float = data.semiring.zero
 
-    def inside(batch: Batch, events: CLEvent*):CLEvent = synchronized {
+    def inside(batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
       allProfilers.foreach(_.clear())
       allProfilers.foreach(_.tick())
       pruned = 0
@@ -273,7 +273,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev
     }
 
-    def outside(batch: Batch, event: CLEvent):CLEvent = synchronized {
+    def outside(batch: Batch[W], event: CLEvent):CLEvent = synchronized {
       var ev = event
       allProfilers.foreach(_.clear())
       allProfilers.foreach(_.tick())
@@ -319,27 +319,27 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev
     }
 
-    def computeViterbiMasks(batch: Batch, events: CLEvent*):CLEvent = synchronized {
+    def computeViterbiMasks(batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
       computeMasks(batch, -4E-3f, events:_*)
     }
 
-    def initializeTagScores(batch: Batch, events: CLEvent*) = {
-      import batch._
+    def initializeTagScores(batch: Batch[W], events: CLEvent*) = {
+      val totalLength = batch.totalLength
       val dm = DenseMatrix.zeros[Float](totalLength, myCellSize)
       dm := _zero
-      for (i <- 0 until numSentences par) {
+      for (i <- 0 until batch.numSentences par) {
         tagScoresFor(batch, dm, i)
-        val parent = insideCharts(i).bot.spanRangeSlice(1)
-        parent.copyToArray(pArray, _workArrayOffsetsForSpan(1)(i) )
+        val parent = batch.insideCharts(i).bot.spanRangeSlice(1)
+        parent.copyToArray(pArray, batch._workArrayOffsetsForSpan(1)(i) )
       }
 
-      val ev2 = devParentPtrs.writeArray(queue, pArray, totalLengthForSpan(1), events:_*) profileIn hdTransferEvents
+      val ev2 = devParentPtrs.writeArray(queue, pArray, batch.totalLengthForSpan(1), events:_*) profileIn hdTransferEvents
       val ev = devParent(0 until totalLength, ::).writeFrom(dm, false, ev2) map (_ profileIn  hdTransferEvents)
-      transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, totalLengthForSpan(1), devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn sumToChartsEvents
+      transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, batch.totalLengthForSpan(1), devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn sumToChartsEvents
     }
 
 
-    private def tagScoresFor(batch: Batch, dm: DenseMatrix[Float], i: Int) {
+    private def tagScoresFor(batch: Batch[W], dm: DenseMatrix[Float], i: Int) {
       import batch._
       val sent = sentences(i)
       val tags = dm(workArrayOffsetsForSpan(i, 1), ::)
@@ -354,7 +354,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
     }
 
-    private def markTerminalsInMasks(batch: Batch, events: CLEvent*) = {
+    private def markTerminalsInMasks(batch: Batch[W], events: CLEvent*) = {
       import batch._
       val set0 = maskCharts.assignAsync(0, events:_*)
       set0.waitFor()
@@ -368,7 +368,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       sliceCopy.sliceCopyOut(maskCharts.asInstanceOf[CLMatrix[Float]],  devParentPtrs, totalLengthForSpan(1), maskParent(::, 0 until totalLength).asInstanceOf[CLMatrix[Float]], ev, ev2, set0) profileIn sumToChartsEvents
     }
 
-    private def computeMasks(batch: Batch, threshold: Float, events: CLEvent*):CLEvent = synchronized {
+    private def computeMasks(batch: Batch[W], threshold: Float, events: CLEvent*):CLEvent = synchronized {
       if(profile) {
         allProfilers.foreach(_.clear())
         allProfilers.foreach(_.tick())
@@ -389,7 +389,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       evr
     }
 
-    private def insideBinaryPass(batch: Batch, span: Int, events: CLEvent*) = {
+    private def insideBinaryPass(batch: Batch[W], span: Int, events: CLEvent*) = {
       var ev = events
       if (span == 2) {
         ev = Seq(insideTT.doUpdates(batch, span, ev :_*))
@@ -401,7 +401,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev.head
     }
 
-    private def outsideBinaryPass(batch: Batch, span: Int, events: CLEvent) = {
+    private def outsideBinaryPass(batch: Batch[W], span: Int, events: CLEvent) = {
       var ev = events
 
       ev = outsideTN_R.doUpdates(batch, span, ev)
@@ -412,10 +412,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev
     }
 
-    private val insideBot = {(b: Batch, s: Int) =>  b.insideCharts(s).bot}
-    private val insideTop = {(b: Batch, s: Int) =>  b.insideCharts(s).top}
-    private val outsideBot = {(b: Batch, s: Int) =>  b.outsideCharts(s).bot}
-    private val outsideTop = {(b: Batch, s: Int) =>  b.outsideCharts(s).top}
+    private val insideBot = {(b: Batch[W], s: Int) =>  b.insideCharts(s).bot}
+    private val insideTop = {(b: Batch[W], s: Int) =>  b.insideCharts(s).top}
+    private val outsideBot = {(b: Batch[W], s: Int) =>  b.outsideCharts(s).bot}
+    private val outsideTop = {(b: Batch[W], s: Int) =>  b.outsideCharts(s).top}
 
     private def insideTU = new UnaryUpdateManager(data.inside.insideTUKernels, devInside, insideTop, insideBot)
     private def insideNU = new UnaryUpdateManager(data.inside.insideNUKernels, devInside, insideTop, insideBot)
@@ -440,7 +440,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def outsideTU = new UnaryUpdateManager(data.outside.outsideTUKernels, devOutside, outsideBot, outsideTop)
     private def outsideNU = new UnaryUpdateManager(data.outside.outsideNUKernels, devOutside, outsideBot, outsideTop)
 
-    def extractParses(batch: Batch, masks: DenseMatrix[Int], events: CLEvent*): ParSeq[BinarizedTree[C]] = {
+    def extractParses(batch: Batch[W], masks: DenseMatrix[Int], events: CLEvent*): ParSeq[BinarizedTree[C]] = {
       events.foreach(_.waitFor())
       val in = if (profile) System.currentTimeMillis() else 0L
       val trees = for (s <- 0 until batch.numSentences par) yield try {
@@ -511,56 +511,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     }
 
 
-    private[CLParser] case class Batch(lengthTotals: Array[Int],
-                                       cellOffsets: Array[Int],
-                                       sentences: IndexedSeq[IndexedSeq[W]],
-                                       masks: Option[DenseMatrix[Int]]) {
-
-      def totalLength = lengthTotals.last
-      def numSentences = sentences.length
-      def numCellsUsed: Int = cellOffsets.last
-      val maxLength = sentences.map(_.length).max
-      assert(numCellsUsed <= devInside.cols)
-      assert(masks.forall(m => m.cols == numCellsUsed))
-
-      def isAllowedSpan(sent: Int, begin: Int, end: Int) = botMaskFor(sent, begin, end).forall(any)
-
-      def botMaskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).bot.cellOffset(begin, end)))
-      def topMaskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).top.cellOffset(begin, end)))
-
-      def hasMasks = masks.nonEmpty
-
-      val _workArrayOffsetsForSpan = Array.tabulate(maxLength+1)(span => sentences.scanLeft(0)((off, sent) => off + math.max(0,sent.length-span+1)).toArray)
-      def workArrayOffsetsForSpan(sent: Int, span: Int) = Range(_workArrayOffsetsForSpan(span)(sent), _workArrayOffsetsForSpan(span)(sent+1))
-
-      def totalLengthForSpan(span: Int) = _workArrayOffsetsForSpan(span).last
-
-      lazy val insideCharts = for (i <- 0 until numSentences) yield {
-        val numCells = (cellOffsets(i+1)-cellOffsets(i))/2
-        assert(numCells == TriangularArray.arraySize(sentences(i).length))
-        val chart = new ParseChart(sentences(i).length, devInside(::, cellOffsets(i) until (cellOffsets(i) + numCells)), devInside(::, cellOffsets(i) + numCells until cellOffsets(i+1)))
-        chart
-      }
-
-      lazy val outsideCharts = {
-        for (i <- 0 until numSentences) yield {
-
-          val numCells = (cellOffsets(i+1)-cellOffsets(i))/2
-          assert(numCells == TriangularArray.arraySize(sentences(i).length))
-          val botBegin = cellOffsets(i)
-          val botEnd = botBegin + numCells
-          val topBegin = botEnd
-          val topEnd = topBegin + numCells
-          assert(topEnd <= devOutside.cols)
-          val chart = new ParseChart(sentences(i).length, devOutside(::, botBegin until botEnd), devOutside(::, topBegin until topEnd))
-          chart
-        }
-      }
-
-    }
-
-    private[CLParser] def getBatches(sentences: IndexedSeq[IndexedSeq[W]], masks: Option[DenseMatrix[Int]]): IndexedSeq[Batch] = {
-      val result = ArrayBuffer[Batch]()
+    private[CLParser] def getBatches(sentences: IndexedSeq[IndexedSeq[W]], masks: Option[DenseMatrix[Int]]): IndexedSeq[Batch[W]] = {
+      val result = ArrayBuffer[Batch[W]]()
       var current = ArrayBuffer[IndexedSeq[W]]()
       var currentLengthTotal = 0
       var currentCellTotal = 0
@@ -585,24 +537,24 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       result
     }
 
-    private[CLParser] def createBatch(sentences: IndexedSeq[IndexedSeq[W]], masks: Option[DenseMatrix[Int]]): Batch = {
+    private[CLParser] def createBatch(sentences: IndexedSeq[IndexedSeq[W]], masks: Option[DenseMatrix[Int]]): Batch[W] = {
       val lengthTotals = sentences.scanLeft(0)((acc, sent) => acc + sent.length)
       val cellTotals = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2)
-      println(f"Batch size of ${sentences.length}, total length of ${lengthTotals.last}, total (inside) cells: ${cellTotals.last}, total inside ${cellTotals.last * myCellSize * 4.0/1024/1024}%.2fM  ")
+      println(f"Batch[W] size of ${sentences.length}, total length of ${lengthTotals.last}, total (inside) cells: ${cellTotals.last}, total inside ${cellTotals.last * myCellSize * 4.0/1024/1024}%.2fM  ")
       assert(masks.forall(_.cols == cellTotals.last), masks.map(_.cols) -> cellTotals.last)
       assert(cellTotals.last <= devInside.cols, cellTotals.last + " " +  devInside.cols)
-      Batch(lengthTotals.toArray, cellTotals.toArray, sentences, masks)
+      Batch[W](lengthTotals.toArray, cellTotals.toArray, sentences, devInside, devOutside, masks)
     }
 
     private class UnaryUpdateManager(kernels: CLUnaryRuleUpdater,
                                      scoreMatrix: CLMatrix[Float],
-                                     parentChart: (Batch,Int)=>ChartHalf,
-                                     childChart: (Batch,Int)=>ChartHalf) {
+                                     parentChart: (Batch[W],Int)=>ChartHalf,
+                                     childChart: (Batch[W],Int)=>ChartHalf) {
 
       var offset = 0 // number of cells used so far.
 
 
-      private def enqueue(batch: Batch, span: Int, parent: Int, left: Int, events: Seq[CLEvent]) = {
+      private def enqueue(batch: Batch[W], span: Int, parent: Int, left: Int, events: Seq[CLEvent]) = {
         lArray(offset) = left
         pArray(offset) = parent
         offset += 1
@@ -614,7 +566,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         }
       }
 
-      private def flushQueue(batch: Batch, span: Int, ev: Seq[CLEvent]) = {
+      private def flushQueue(batch: Batch[W], span: Int, ev: Seq[CLEvent]) = {
         if (offset != 0) {
           val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, ev:_*) profileIn memFillEvents
 
@@ -636,7 +588,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         }
       }
 
-      def doUpdates(batch: Batch, span: Int, events: CLEvent*) = {
+      def doUpdates(batch: Batch[W], span: Int, events: CLEvent*) = {
         var ev = events
 
         for {
@@ -666,9 +618,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                                       parentChartMatrix: CLMatrix[Float],
                                       leftChartMatrix: CLMatrix[Float],
                                       rightChartMatrix: CLMatrix[Float],
-                                      parentChart: (Batch,Int)=>ChartHalf,
-                                      leftChart: (Batch,Int)=>ChartHalf,
-                                      rightChart: (Batch,Int)=>ChartHalf,
+                                      parentChart: (Batch[W],Int)=>ChartHalf,
+                                      leftChart: (Batch[W],Int)=>ChartHalf,
+                                      rightChart: (Batch[W],Int)=>ChartHalf,
                                       ranger: (Int, Int, Int)=>Range,
                                       trackRulesForThisSetOfRules: Boolean = false) {
       lazy val totalRulesInKernels = (updater.kernels.map(_.rules.length).sum)
@@ -680,7 +632,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
        // TODO: ugh, state
        var lastParent = -1
 
-       private def enqueue(block: IndexedSeq[Int], batch: Batch, span: Int, parent: Int, left: Int, right: Int, events: Seq[CLEvent]): Seq[CLEvent] = {
+       private def enqueue(block: IndexedSeq[Int], batch: Batch[W], span: Int, parent: Int, left: Int, right: Int, events: Seq[CLEvent]): Seq[CLEvent] = {
          if (splitPointOffset == 0 || lastParent != parent) {
            splitPointOffsets(splitPointOffset) = offset
            splitPointOffset += 1
@@ -704,7 +656,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
        }
 
 
-       private def flushQueue(block: IndexedSeq[Int], batch: Batch, span: Int, ev: Seq[CLEvent]): Seq[CLEvent] = {
+       private def flushQueue(block: IndexedSeq[Int], batch: Batch[W], span: Int, ev: Seq[CLEvent]): Seq[CLEvent] = {
          if (offset != 0) {
            splitPointOffsets(splitPointOffset) = offset
 
@@ -757,7 +709,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
          sumEv
        }
 
-       def doUpdates(batch: Batch, span: Int, events: CLEvent*) = {
+       def doUpdates(batch: Batch[W], span: Int, events: CLEvent*) = {
 
          var ev = events
          splitPointOffset = 0
@@ -862,15 +814,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   }
 
-  def any(x: DenseVector[Int]) = {
-    var i = 0
-    var any = false
-    while(i < x.length && !any) {
-      any = x(i) != 0
-      i += 1
-    }
-    any
-  }
+
 
   def intersects(blockMask: DenseVector[Int], spanMask: DenseVector[Int]):Boolean = {
     var i = 0
