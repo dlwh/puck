@@ -29,12 +29,13 @@ private[parser] case class Batch[W](lengthTotals: Array[Int],
   def botMaskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).bot.cellOffset(begin, end)))
   def topMaskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).top.cellOffset(begin, end)))
 
+  def insideBotCell(sent: Int, begin: Int, end: Int) = insideCharts(sent).bot.cellOffset(begin, end)
+  def insideTopCell(sent: Int, begin: Int, end: Int) = insideCharts(sent).top.cellOffset(begin, end)
+
+  def outsideBotCell(sent: Int, begin: Int, end: Int) = outsideCharts(sent).bot.cellOffset(begin, end)
+  def outsideTopCell(sent: Int, begin: Int, end: Int) = outsideCharts(sent).top.cellOffset(begin, end)
+
   def hasMasks = masks.nonEmpty
-
-  val _workArrayOffsetsForSpan = Array.tabulate(maxLength+1)(span => sentences.scanLeft(0)((off, sent) => off + math.max(0,sent.length-span+1)).toArray)
-  def workArrayOffsetsForSpan(sent: Int, span: Int) = Range(_workArrayOffsetsForSpan(span)(sent), _workArrayOffsetsForSpan(span)(sent+1))
-
-  def totalLengthForSpan(span: Int) = _workArrayOffsetsForSpan(span).last
 
   lazy val insideCharts = for (i <- 0 until numSentences) yield {
     val numCells = (cellOffsets(i+1)-cellOffsets(i))/2

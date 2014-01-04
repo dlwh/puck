@@ -325,47 +325,47 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def initializeTagScores(batch: Batch[W], events: CLEvent*) = {
       val totalLength = batch.totalLength
-      val dm = DenseMatrix.zeros[Float](totalLength, myCellSize)
-      dm := _zero
-      for (i <- 0 until batch.numSentences par) {
-        tagScoresFor(batch, dm, i)
-        val parent = batch.insideCharts(i).bot.spanRangeSlice(1)
-        parent.copyToArray(pArray, batch._workArrayOffsetsForSpan(1)(i) )
+      val tagScores = DenseMatrix.zeros[Float](totalLength, myCellSize)
+      tagScores := _zero
+      var offset = 0
+      for (i <- 0 until batch.numSentences) {
+        val sent = batch.sentences(i)
+        val anch = data.grammar.tagScorer.anchor(sent)
+        val lexAnch = data.grammar.lexicon.anchor(sent)
+        val tags = tagScores(offset, ::)
+        for (pos <- 0 until sent.length) {
+          for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
+            val index = ref
+            val score = anch.scoreTag(pos, data.grammar.refinedGrammar.labelIndex.get(index))
+            val gpuIndex = data.structure.labelIndexToTerminal(index)
+            //        if(pos == 0) println(pos,t,ref,data.grammar.refinements.labels.fineIndex.get(ref), gpuIndex,score)
+            pArray(offset) = batch.insideBotCell(i, pos, pos + 1)
+            tagScores(offset, gpuIndex) = data.semiring.fromLogSpace(score.toFloat)
+          }
+          offset += 1
+        }
       }
 
-      val ev2 = devParentPtrs.writeArray(queue, pArray, batch.totalLengthForSpan(1), events:_*) profileIn hdTransferEvents
-      val ev = devParent(0 until totalLength, ::).writeFrom(dm, false, ev2) map (_ profileIn  hdTransferEvents)
-      transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, batch.totalLengthForSpan(1), devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn sumToChartsEvents
-    }
-
-
-    private def tagScoresFor(batch: Batch[W], dm: DenseMatrix[Float], i: Int) {
-      import batch._
-      val sent = sentences(i)
-      val tags = dm(workArrayOffsetsForSpan(i, 1), ::)
-      val anch = data.grammar.tagScorer.anchor(sent)
-      val lexAnch = data.grammar.lexicon.anchor(sent)
-      for (pos <- 0 until sent.length; t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
-        val index = ref
-        val score = anch.scoreTag(pos, data.grammar.refinedGrammar.labelIndex.get(index))
-        val gpuIndex = data.structure.labelIndexToTerminal(index)
-//        if(pos == 0) println(pos,t,ref,data.grammar.refinements.labels.fineIndex.get(ref), gpuIndex,score)
-        tags(pos, gpuIndex) = data.semiring.fromLogSpace(score.toFloat)
-      }
+      val ev2 = devParentPtrs.writeArray(queue, pArray, offset, events:_*) profileIn hdTransferEvents
+      val ev = devParent(0 until offset, ::).writeFrom(tagScores, false, ev2) map (_ profileIn  hdTransferEvents)
+      transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, offset, devParent(0 until offset, ::), (ev2 +: ev):_*) profileIn sumToChartsEvents
     }
 
     private def markTerminalsInMasks(batch: Batch[W], events: CLEvent*) = {
       import batch._
       val set0 = maskCharts.assignAsync(0, events:_*)
       set0.waitFor()
-      for (i <- 0 until numSentences par) {
-        val parent = insideCharts(i).bot.spanRangeSlice(1)
-        parent.copyToArray(pArray, _workArrayOffsetsForSpan(1)(i) )
+      var offset = 0
+      for (i <- 0 until numSentences) {
+        for(pos <- 0 until sentences(i).length) {
+          pArray(offset) = batch.insideBotCell(i, pos, pos + 1)
+          offset += 1
+        }
       }
 
-      val ev2 = devParentPtrs.writeArray(queue, pArray, totalLengthForSpan(1), events:_*) profileIn hdTransferEvents
+      val ev2 = devParentPtrs.writeArray(queue, pArray, offset, events:_*) profileIn hdTransferEvents
       val ev = maskParent(::, 0 until totalLength).assignAsync(-1, set0) profileIn memFillEvents
-      sliceCopy.sliceCopyOut(maskCharts.asInstanceOf[CLMatrix[Float]],  devParentPtrs, totalLengthForSpan(1), maskParent(::, 0 until totalLength).asInstanceOf[CLMatrix[Float]], ev, ev2, set0) profileIn sumToChartsEvents
+      sliceCopy.sliceCopyOut(maskCharts.asInstanceOf[CLMatrix[Float]],  devParentPtrs, offset, maskParent(::, 0 until totalLength).asInstanceOf[CLMatrix[Float]], ev, ev2, set0) profileIn sumToChartsEvents
     }
 
     private def computeMasks(batch: Batch[W], threshold: Float, events: CLEvent*):CLEvent = synchronized {
@@ -537,6 +537,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       result
     }
 
+<<<<<<< HEAD
     private[CLParser] def createBatch(sentences: IndexedSeq[IndexedSeq[W]], masks: Option[DenseMatrix[Int]]): Batch[W] = {
       val lengthTotals = sentences.scanLeft(0)((acc, sent) => acc + sent.length)
       val cellTotals = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2)
@@ -544,6 +545,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       assert(masks.forall(_.cols == cellTotals.last), masks.map(_.cols) -> cellTotals.last)
       assert(cellTotals.last <= devInside.cols, cellTotals.last + " " +  devInside.cols)
       Batch[W](lengthTotals.toArray, cellTotals.toArray, sentences, devInside, devOutside, masks)
+=======
+    private[CLParser] def createBatch(sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask): Batch[W] = {
+      val batch = Batch[W](sentences, devInside, devOutside, masks)
+      println(f"Batch size of ${sentences.length}, ${batch.numCellsUsed} cells used, total inside ${batch.numCellsUsed * myCellSize * 4.0/1024/1024}%.2fM  ")
+      batch
+>>>>>>> acb0b4e... fix to Batch refactor.
     }
 
     private class UnaryUpdateManager(kernels: CLUnaryRuleUpdater,
