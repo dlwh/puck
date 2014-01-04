@@ -44,10 +44,7 @@ import puck.parser.RuleStructure
  * @author dlwh
  **/
 class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
-//                        maxAllocSize: Long = 1L<<30, // 1 gig
-//                        maxAllocSize: Long = 1L<<32, // 4 gig
-                        maxAllocSize: Long = 1<<30, //1.25 G
-                        maxSentencesPerBatch: Long = 400,
+                        maxAllocSize: Long = 1<<30,
                         doEmptySpans: Boolean = false,
                         profile: Boolean = true,
                         var oldPruning: Boolean = false,
@@ -110,6 +107,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   val (numDefaultWorkCells:Int, numDefaultChartCells: Int) = {
     val sizeOfFloat = 4
     val fractionOfMemoryToUse = 0.7 // slack!
+    val maxSentencesPerBatch: Long = 400,
 //    val fractionOfMemoryToUse = 0.9 // slack!
     val amountOfMemory = ((context.getDevices.head.getGlobalMemSize min maxAllocSize) * fractionOfMemoryToUse).toInt  - maxSentencesPerBatch * 3 * 4;
     val maxPossibleNumberOfCells = ((amountOfMemory / sizeOfFloat) / (cellSize + 4 + maskSize)).toInt // + 4 for each kind of offset
