@@ -23,13 +23,16 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
 
   def numSentences = sentences.length
   val maxLength = sentences.map(_.length).max
-  def totalLength = sentences.map(_.length).sum
+  val totalLength = sentences.map(_.length).sum
   assert(numCellsUsed <= devInside.cols)
   assert(masks.forall(m => m.cols == numCellsUsed))
 
   def isAllowedSpan(sent: Int, begin: Int, end: Int) = botMaskFor(sent, begin, end).forall(BitHacks.any)
 
   def rootIndex(sent: Int) = insideCharts(sent).top.rootIndex
+  def rootIndices = Array.tabulate(sentences.length)(rootIndex)
+  def outsideRootIndex(sent: Int) = outsideCharts(sent).top.rootIndex
+  def outsideRootIndices = Array.tabulate(sentences.length)(outsideRootIndex)
 
   def botMaskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).bot.cellOffset(begin, end)))
   def topMaskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).top.cellOffset(begin, end)))
