@@ -13,20 +13,19 @@ import puck.util.BitHacks
 private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
                                     devInside: CLMatrix[Float],
                                     devOutside: CLMatrix[Float],
-                                    masks: Option[DenseMatrix[Int]]) {
+                                    masks: PruningMask) {
   val cellOffsets = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2).toArray
 
   def numCellsUsed: Int = cellOffsets.last
 
 
-  assert(masks.forall(_.cols == numCellsUsed), masks.map(_.cols) -> numCellsUsed)
+
   assert(numCellsUsed <= devInside.cols, numCellsUsed + " " +  devInside.cols)
 
   def numSentences = sentences.length
   val maxLength = sentences.map(_.length).max
   val totalLength = sentences.map(_.length).sum
   assert(numCellsUsed <= devInside.cols)
-  assert(masks.forall(m => m.cols == numCellsUsed))
 
   def isAllowedSpan(sent: Int, begin: Int, end: Int) = botMaskFor(sent, begin, end).forall(BitHacks.any)
 
@@ -35,8 +34,8 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
   def outsideRootIndex(sent: Int) = outsideCharts(sent).top.rootIndex
   def outsideRootIndices = Array.tabulate(sentences.length)(outsideRootIndex)
 
-  def botMaskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).bot.cellOffset(begin, end)))
-  def topMaskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).top.cellOffset(begin, end)))
+  def botMaskFor(sent: Int, begin: Int, end: Int) = masks.maskForBotCell(sent, begin, end)
+  def topMaskFor(sent: Int, begin: Int, end: Int) = masks.maskForTopCell(sent, begin, end)
 
   def insideBotCell(sent: Int, begin: Int, end: Int) = insideCharts(sent).bot.cellOffset(begin, end)
   def insideTopCell(sent: Int, begin: Int, end: Int) = insideCharts(sent).top.cellOffset(begin, end)
@@ -45,7 +44,7 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
   def outsideBotCell(sent: Int, begin: Int, end: Int) = outsideCharts(sent).bot.cellOffset(begin, end)
   def outsideTopCell(sent: Int, begin: Int, end: Int) = outsideCharts(sent).top.cellOffset(begin, end)
 
-  def hasMasks = masks.nonEmpty
+  def hasMasks = masks.hasMasks
 
   lazy val insideCharts = for (i <- 0 until numSentences) yield {
     val numCells = (cellOffsets(i+1)-cellOffsets(i))/2
