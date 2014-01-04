@@ -18,6 +18,7 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
 
   def numCellsUsed: Int = cellOffsets.last
 
+
   assert(masks.forall(_.cols == numCellsUsed), masks.map(_.cols) -> numCellsUsed)
   assert(numCellsUsed <= devInside.cols, numCellsUsed + " " +  devInside.cols)
 

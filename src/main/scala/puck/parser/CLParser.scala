@@ -515,18 +515,15 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private[CLParser] def getBatches(sentences: IndexedSeq[IndexedSeq[W]], masks: Option[DenseMatrix[Int]]): IndexedSeq[Batch[W]] = {
       val result = ArrayBuffer[Batch[W]]()
       var current = ArrayBuffer[IndexedSeq[W]]()
-      var currentLengthTotal = 0
       var currentCellTotal = 0
       var offsetIntoMasksArray = 0
       for ( (s, i) <- sentences.zipWithIndex) {
-        currentLengthTotal += s.length
         currentCellTotal += TriangularArray.arraySize(s.length) * 2
-        if (currentLengthTotal > numWorkCells || currentCellTotal > numChartCells) {
+        if (currentCellTotal > numChartCells) {
           currentCellTotal -= TriangularArray.arraySize(s.length) * 2
           assert(current.nonEmpty)
           result += createBatch(current, masks.map(m => m(::, offsetIntoMasksArray until (offsetIntoMasksArray + currentCellTotal))))
           offsetIntoMasksArray += currentCellTotal
-          currentLengthTotal = s.length
           currentCellTotal = TriangularArray.arraySize(s.length) * 2
           current = ArrayBuffer()
         }
