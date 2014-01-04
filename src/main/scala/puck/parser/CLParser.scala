@@ -364,8 +364,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
 
       val ev2 = devParentPtrs.writeArray(queue, pArray, offset, events:_*) profileIn hdTransferEvents
-      val ev = maskParent(::, 0 until totalLength).assignAsync(-1, set0) profileIn memFillEvents
-      sliceCopy.sliceCopyOut(maskCharts.asInstanceOf[CLMatrix[Float]],  devParentPtrs, offset, maskParent(::, 0 until totalLength).asInstanceOf[CLMatrix[Float]], ev, ev2, set0) profileIn sumToChartsEvents
+      val ev = maskParent(::, 0 until offset).assignAsync(-1, set0) profileIn memFillEvents
+      sliceCopy.sliceCopyOut(maskCharts.asInstanceOf[CLMatrix[Float]],  devParentPtrs, offset, maskParent(::, 0 until offset).asInstanceOf[CLMatrix[Float]], ev, ev2, set0) profileIn sumToChartsEvents
     }
 
     private def computeMasks(batch: Batch[W], threshold: Float, events: CLEvent*):CLEvent = synchronized {
@@ -537,20 +537,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       result
     }
 
-<<<<<<< HEAD
     private[CLParser] def createBatch(sentences: IndexedSeq[IndexedSeq[W]], masks: Option[DenseMatrix[Int]]): Batch[W] = {
-      val lengthTotals = sentences.scanLeft(0)((acc, sent) => acc + sent.length)
-      val cellTotals = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2)
-      println(f"Batch[W] size of ${sentences.length}, total length of ${lengthTotals.last}, total (inside) cells: ${cellTotals.last}, total inside ${cellTotals.last * myCellSize * 4.0/1024/1024}%.2fM  ")
-      assert(masks.forall(_.cols == cellTotals.last), masks.map(_.cols) -> cellTotals.last)
-      assert(cellTotals.last <= devInside.cols, cellTotals.last + " " +  devInside.cols)
-      Batch[W](lengthTotals.toArray, cellTotals.toArray, sentences, devInside, devOutside, masks)
-=======
-    private[CLParser] def createBatch(sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask): Batch[W] = {
       val batch = Batch[W](sentences, devInside, devOutside, masks)
       println(f"Batch size of ${sentences.length}, ${batch.numCellsUsed} cells used, total inside ${batch.numCellsUsed * myCellSize * 4.0/1024/1024}%.2fM  ")
       batch
->>>>>>> acb0b4e... fix to Batch refactor.
     }
 
     private class UnaryUpdateManager(kernels: CLUnaryRuleUpdater,

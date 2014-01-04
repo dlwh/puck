@@ -10,27 +10,33 @@ import puck.util.BitHacks
  *
  * @author dlwh
  **/
-private[parser] case class Batch[W](lengthTotals: Array[Int],
-                                    cellOffsets: Array[Int],
-                                    sentences: IndexedSeq[IndexedSeq[W]],
+private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
                                     devInside: CLMatrix[Float],
                                     devOutside: CLMatrix[Float],
                                     masks: Option[DenseMatrix[Int]]) {
+  val cellOffsets = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2).toArray
 
-  def totalLength = lengthTotals.last
-  def numSentences = sentences.length
   def numCellsUsed: Int = cellOffsets.last
+
+  assert(masks.forall(_.cols == numCellsUsed), masks.map(_.cols) -> numCellsUsed)
+  assert(numCellsUsed <= devInside.cols, numCellsUsed + " " +  devInside.cols)
+
+  def numSentences = sentences.length
   val maxLength = sentences.map(_.length).max
+  def totalLength = sentences.map(_.length).sum
   assert(numCellsUsed <= devInside.cols)
   assert(masks.forall(m => m.cols == numCellsUsed))
 
   def isAllowedSpan(sent: Int, begin: Int, end: Int) = botMaskFor(sent, begin, end).forall(BitHacks.any)
+
+  def rootIndex(sent: Int) = insideCharts(sent).top.rootIndex
 
   def botMaskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).bot.cellOffset(begin, end)))
   def topMaskFor(sent: Int, begin: Int, end: Int) = masks.map(m =>  m(::, insideCharts(sent).top.cellOffset(begin, end)))
 
   def insideBotCell(sent: Int, begin: Int, end: Int) = insideCharts(sent).bot.cellOffset(begin, end)
   def insideTopCell(sent: Int, begin: Int, end: Int) = insideCharts(sent).top.cellOffset(begin, end)
+
 
   def outsideBotCell(sent: Int, begin: Int, end: Int) = outsideCharts(sent).bot.cellOffset(begin, end)
   def outsideTopCell(sent: Int, begin: Int, end: Int) = outsideCharts(sent).top.cellOffset(begin, end)
