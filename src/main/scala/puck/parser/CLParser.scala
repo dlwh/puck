@@ -220,8 +220,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     }
 
     def myCellSize:Int = roundUpToMultipleOf(data.numSyms, 32)
-    def numWorkCells = ((devParentRaw.getElementCount) / myCellSize ).toInt
-    def numChartCells = ((devInsideRaw.getElementCount) / myCellSize ).toInt
+    val numWorkCells = ((devParentRaw.getElementCount) / myCellSize ).toInt
+    val numChartCells = ((devInsideRaw.getElementCount) / myCellSize ).toInt
 
     // (dest, leftSource, rightSource) (right Source if binary rules)
     val pArray, lArray, rArray = new Array[Int](numWorkCells)
