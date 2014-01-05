@@ -107,7 +107,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   val (numDefaultWorkCells:Int, numDefaultChartCells: Int) = {
     val sizeOfFloat = 4
     val fractionOfMemoryToUse = 0.7 // slack!
-    val maxSentencesPerBatch: Long = 400,
+    val maxSentencesPerBatch: Long = 400
 //    val fractionOfMemoryToUse = 0.9 // slack!
     val amountOfMemory = ((context.getDevices.head.getGlobalMemSize min maxAllocSize) * fractionOfMemoryToUse).toInt  - maxSentencesPerBatch * 3 * 4;
     val maxPossibleNumberOfCells = ((amountOfMemory / sizeOfFloat) / (cellSize + 4 + maskSize)).toInt // + 4 for each kind of offset
