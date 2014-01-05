@@ -858,7 +858,8 @@ object CLParser extends Logging {
                     textGrammarPrefix: String = null,
                     checkPartitions: Boolean = false,
                     justInsides: Boolean = false,
-                    mem: String = "1g")
+                    mem: String = "1g",
+                    reproject: Boolean = true)
 
   def main(args: Array[String]) = {
     import ParserParams.JointParams
@@ -891,10 +892,10 @@ object CLParser extends Logging {
       IndexedSeq(GenerativeParser.annotated(annotator, transformed))
     } else {
       val paths = textGrammarPrefix.split(":")
-      paths.zipWithIndex.map{ case (f,i) => SimpleRefinedGrammar.parseBerkeleyText(f, if(i == paths.length -1 ) -12 else -50, CloseUnaries.None)}
+      paths.zipWithIndex.map{ case (f,i) => SimpleRefinedGrammar.parseBerkeleyText(f,  -12, CloseUnaries.None)}
     }
 
-    if(grammars.length > 1) {
+    if(reproject && grammars.length > 1) {
       val writer = new FileWriter("qqq")
       grammars.head.prettyPrint(writer)
       writer.close()
@@ -1018,7 +1019,7 @@ object CLParser extends Logging {
     val coarseLevelRefinedGrammar: BaseGrammar[AnnotatedLabel] = coarseGrammar.refinedGrammar
     val fineLevelRefinedGrammar: BaseGrammar[AnnotatedLabel] = fineGrammar.refinedGrammar
     val newBaseRefinements = GrammarRefinements.identity(coarseLevelRefinedGrammar)
-    val newFineRefinements = GrammarRefinements(coarseLevelRefinedGrammar, fineLevelRefinedGrammar, {(x: AnnotatedLabel) => AnnotatedLabel(reverseSymMap(x.label))})
+    val newFineRefinements = GrammarRefinements(coarseLevelRefinedGrammar, fineLevelRefinedGrammar, {(x: AnnotatedLabel) => AnnotatedLabel(reverseSymMap(x.label))}, skipMissingCoarseRules = true)
     
     val newCoarseLexicon = new SplitLexicon(coarseGrammar.lexicon, coarseLevelRefinedGrammar.labelIndex, coarseGrammar.refinements.labels)
 
