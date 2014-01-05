@@ -1114,8 +1114,13 @@ object CLParserData {
   def make[C, L, W](grammar: SimpleRefinedGrammar[C, L, W], genType: GenType, directWrite: Boolean)(implicit context: CLContext) = {
     implicit val viterbi = ViterbiRuleSemiring
     val ruleScores: Array[Float] = Array.tabulate(grammar.refinedGrammar.index.size){r =>
-      val score = grammar.ruleScoreArray(grammar.refinements.rules.project(r))(grammar.refinements.rules.localize(r))
-      viterbi.fromLogSpace(score.toFloat)
+      val projectedRule = grammar.refinements.rules.project(r)
+      if(projectedRule < 0) {
+        -12
+      } else {
+        val score = grammar.ruleScoreArray(projectedRule)(grammar.refinements.rules.localize(r))
+        viterbi.fromLogSpace(score.toFloat)
+      }
     }
     val structure = new RuleStructure(grammar.refinements, grammar.refinedGrammar, ruleScores)
     val inside = CLInsideKernels.make(structure, directWrite, genType)
