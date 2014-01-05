@@ -130,10 +130,6 @@ object CLMaskKernels {
 
 // each global_id(0) corresponds to a single sentence.
 // we have some number of workers for each sentence, global_size(1)
-// for each cell in the sentence, each worker in parallel reads a sym from a cell, thresholds it, and then sets
-// the mask if the threshold is exceeded. Each worker has its own mask for its share of the cells. At the
-// end, the masks are or'd together and written out.
-// the masks are then
 // indices(i) is the first cell in the i'th sentence
 // indices(i+1)-1 is the last cell in the i'th sentence
 // the last cell has the root score.
@@ -171,16 +167,11 @@ __kernel void computeMasks(__global mask_t* masksOut,
       int keep = score >= cutoff;
       int field = projections[sym];
 
-      //if(cell == lastCell - 1 && score != -INFINITY)
-      //  printf("%d %d %d %f %f\n", lastCell, sym, field, score, cutoff);
-
       set_bit(&myMask, field, keep);
     }
 
 
     masksOut[cell] = myMask;
-    masksOut[cell + _outsideOff/numSyms] = myMask;
-//    printf("%d %d\n", cell, cell + _outsideOff/numSyms);
   }
 
 }
