@@ -26,7 +26,7 @@ import epic.trees.BinaryTree
 import epic.trees.annotations.Xbarize
 import epic.trees.Span
 import epic.parser.SimpleRefinedGrammar.CloseUnaries
-import epic.parser.projections.{ParserChartConstraintsFactory, ConstraintCoreGrammarAdaptor}
+import epic.parser.projections.{ProjectionIndexer, GrammarRefinements, ParserChartConstraintsFactory, ConstraintCoreGrammarAdaptor}
 import scala.collection.parallel.immutable.ParSeq
 import java.util.Collections
 import epic.trees.UnaryTree
@@ -37,6 +37,9 @@ import epic.trees.BinaryTree
 import epic.trees.annotations.Xbarize
 import epic.trees.Span
 import puck.parser.RuleStructure
+import scala.io.Source
+import epic.lexicon.Lexicon
+import breeze.util.Index
 
 /**
  * TODO
@@ -884,14 +887,23 @@ object CLParser extends Logging {
     val gold = params.treebank.trainTrees.filter(_.words.length <= maxParseLength).take(numToParse)
     val toParse =  gold.map(_.words)
 
-    val grammars: IndexedSeq[SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String]] = if (textGrammarPrefix == null) {
+    var grammars: IndexedSeq[SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String]] = if (textGrammarPrefix == null) {
       IndexedSeq(GenerativeParser.annotated(annotator, transformed))
     } else {
-      textGrammarPrefix.split(":").map(SimpleRefinedGrammar.parseBerkeleyText(_, -12, CloseUnaries.None))
+      val paths = textGrammarPrefix.split(":")
+      paths.zipWithIndex.map{ case (f,i) => SimpleRefinedGrammar.parseBerkeleyText(f, if(i == paths.length -1 ) -12 else -50, CloseUnaries.None)}
     }
 
-    val grammar = grammars.last
+    if(grammars.length > 1) {
+      val writer = new FileWriter("qqq")
+      grammars.head.prettyPrint(writer)
+      writer.close()
+      val (newc, newr) = reprojectGrammar(grammars.head, textGrammarPrefix.split(":").head, grammars.last, textGrammarPrefix.split(":").last)
+      grammars = IndexedSeq(newc, newr)
+    }
 
+
+    val grammar = grammars.last
 
     var parserData:CLParserData[AnnotatedLabel, AnnotatedLabel, String] = if (cache && codeCache != null && codeCache.exists()) {
       CLParserData.read(new ZipFile(codeCache))
@@ -992,6 +1004,82 @@ object CLParser extends Logging {
 
   }
 
+
+
+  def reprojectGrammar(coarseGrammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String], coarseGrammarName: String,
+                    fineGrammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String],  fineGrammarName: String) = {
+    val symMap: Map[String, IndexedSeq[String]] = readHierarchy(fineGrammarName, coarseGrammarName)
+    var reverseSymMap: Map[String, String] = for {
+      (coarse, fines) <- symMap
+      f <- fines
+    } yield f -> coarse
+
+    reverseSymMap += ("TOP_0" -> "TOP_0")
+    val coarseLevelRefinedGrammar: BaseGrammar[AnnotatedLabel] = coarseGrammar.refinedGrammar
+    val fineLevelRefinedGrammar: BaseGrammar[AnnotatedLabel] = fineGrammar.refinedGrammar
+    val newBaseRefinements = GrammarRefinements.identity(coarseLevelRefinedGrammar)
+    val newFineRefinements = GrammarRefinements(coarseLevelRefinedGrammar, fineLevelRefinedGrammar, {(x: AnnotatedLabel) => AnnotatedLabel(reverseSymMap(x.label))})
+    
+    val newCoarseLexicon = new SplitLexicon(coarseGrammar.lexicon, coarseLevelRefinedGrammar.labelIndex, coarseGrammar.refinements.labels)
+
+    val newBaseGrammar =  RefinedGrammar.unanchored[AnnotatedLabel, AnnotatedLabel, String](coarseLevelRefinedGrammar, newCoarseLexicon,
+      newBaseRefinements,
+      flattenRuleScores(coarseGrammar),
+      new Array(coarseGrammar.refinedGrammar.labelIndex.size),
+      coarseGrammar.tagScorer)
+
+    val newFineGrammar = RefinedGrammar.unanchored[AnnotatedLabel, AnnotatedLabel, String](coarseLevelRefinedGrammar, newCoarseLexicon,
+      newFineRefinements,
+      flattenRuleScores(fineGrammar),
+      new Array(fineGrammar.refinedGrammar.labelIndex.size),
+      fineGrammar.tagScorer)
+
+    (newBaseGrammar, newFineGrammar)
+  }
+
+
+  def readHierarchy(fineGrammarName: String, coarseGrammarName: String): Map[String, IndexedSeq[String]] = {
+    val fine = fineGrammarName.replaceAll("^.*(?:^|[^0-9])([0-9]+)([^0-9]*)$", "$1").toInt
+    val coarse = coarseGrammarName.replaceAll("^.*(?:^|[^0-9])([0-9]+)([^0-9]*)$", "$1").toInt
+
+    val symsIter = for (l <- Source.fromFile(new File(fineGrammarName + ".hierarchy")).getLines()) yield {
+      val Array(sym: String, rest: String) = l.split("\\s+", 2)
+      val (hierarchy, leaves) = PennTreeReader.parseHard(rest)
+
+      val totalHeight = hierarchy.leftHeight
+
+      for {
+        subtree <- hierarchy.preorder
+        if subtree.leftHeight == (totalHeight - coarse)
+      } yield {
+        val coarseSym = s"${sym}_${subtree.label}"
+        val fineSyms = if (fine - 1 == totalHeight) {
+          subtree.span.map(leaves).map(q => s"${sym}_$q")
+        } else {
+          subtree.preorder.filter(_.leftHeight == (totalHeight - fine)).map(_.label).map(q => s"${sym}_$q").toIndexedSeq
+        }
+        coarseSym -> fineSyms
+      }
+    }
+
+    val symMap = symsIter.flatten.toMap
+    symMap
+  }
+
+  private def flattenRuleScores(grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String]): Array[Double] = {
+    Array.tabulate(grammar.refinedGrammar.index.size) { grammar.ruleScore(_) }
+  }
+
+  @SerialVersionUID(1L)
+  private class SplitLexicon[C, L, W](baseLexicon: Lexicon[C, W], val labelIndex: Index[L],
+                                      proj: ProjectionIndexer[C, L]) extends Lexicon[L, W] with Serializable {
+    def anchor(w: IndexedSeq[W]): Anchoring = new Anchoring {
+      val canchor = baseLexicon.anchor(w)
+      def length: Int = w.length
+
+      def allowedTags(pos: Int): Set[Int] = canchor.allowedTags(pos).flatMap(proj.refinementsOf(_:Int))
+    }
+  }
 
 }
 
