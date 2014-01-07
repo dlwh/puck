@@ -17,6 +17,7 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
   val cellOffsets = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2).toArray
 
   private val lengths = sentences.map(_.length).toArray
+  val lengthOffsets = lengths.scan(0)(_ + _)
 
   def numCellsUsed: Int = cellOffsets.last
 
@@ -43,9 +44,8 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
   def insideTopCell(sent: Int, begin: Int, end: Int) = cellOffsets(sent)/2 + cellOffsets(sent+1)/2 +  ChartHalf.chartIndex(begin, end, lengths(sent))//insideCharts(sent).bot.cellOffset(begin, end)
 //  def insideTopCell(sent: Int, begin: Int, end: Int) = insideCharts(sent).top.cellOffset(begin, end)
 
-
-  def outsideBotCell(sent: Int, begin: Int, end: Int) = outsideCharts(sent).bot.cellOffset(begin, end)
-  def outsideTopCell(sent: Int, begin: Int, end: Int) = outsideCharts(sent).top.cellOffset(begin, end)
+  def outsideBotCell(sent: Int, begin: Int, end: Int) = cellOffsets(sent) + ChartHalf.chartIndex(begin, end, lengths(sent))//outsideCharts(sent).bot.cellOffset(begin, end)
+  def outsideTopCell(sent: Int, begin: Int, end: Int) = cellOffsets(sent)/2 + cellOffsets(sent+1)/2 +  ChartHalf.chartIndex(begin, end, lengths(sent))//outsideCharts(sent).bot.cellOffset(begin, end)
 
   def hasMasks = masks.hasMasks
 
