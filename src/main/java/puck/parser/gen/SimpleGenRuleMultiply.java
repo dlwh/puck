@@ -96,7 +96,8 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         	Map<Integer,String> declaredLeft = new HashMap<Integer, String>();
         	Map<Integer,String> declaredRight = new HashMap<Integer, String>();
 
-            sb.append("int pi = parentIndex[row];");
+            if(writeDirectToChart)
+                sb.append("int pi = parentIndex[row];");
 
         	Map<Integer,Integer> parentCounts = new HashMap<Integer,Integer>();
         	for(IndexedBinaryRule<C, L> rule : subsegments[m]) { 
