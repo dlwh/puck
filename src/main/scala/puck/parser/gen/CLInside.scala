@@ -44,7 +44,10 @@ object GenType {
   object CoarseParent extends GenType {
     def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean): GenRuleMultiply[C, L] = new CoarseParentSymbolSegmentationGenRuleMultiply(structure, directWrite)
   }
-
+  
+  object VariableLengthCoarseParent extends GenType {
+    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean): GenRuleMultiply[C, L] = new VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply(structure, directWrite)
+  }
 
   object Greedy extends GenType {
     def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean): GenRuleMultiply[C, L] = new GreedySegmentationGenRuleMultiply(structure, directWrite)

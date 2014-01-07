@@ -149,10 +149,16 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
                         String dest = String.format("parents[pi * "+cellSize+" + %d]", parentIndex);
                         String src = parent;
                         sb.append(genWriteSymbol(dest, src, false, supportsExtendedAtomics));
+                        
+                        // force no atomics
+//                        sb.append(genWriteSymbol(dest, src, true, supportsExtendedAtomics));
                     } else {
                         String dest = String.format("parents[%d * numRows + row]", parentIndex);
                         String src = parent;
                         sb.append(genWriteSymbol(dest, src, !dupParents.contains(parentIndex), supportsExtendedAtomics));
+
+                        // force no atomics
+//                        sb.append(genWriteSymbol(dest, src, true, supportsExtendedAtomics));
                     }
 
         		}
