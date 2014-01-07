@@ -11,6 +11,7 @@ import epic.trees.UnaryRule
 import puck.parser.SymId
 import breeze.linalg.DenseVector
 import puck.util.BitHacks
+import java.io.{FileOutputStream, File}
 
 /**
  * TODO
@@ -39,6 +40,8 @@ abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L],
     if(context.getDevices.head.toString.toLowerCase.contains("nvidia") && !context.getDevices.head.toString.toLowerCase.contains("apple") ) {
       programs.foreach(_.addBuildOption("-cl-nv-verbose"))
       programs.foreach(_.addBuildOption("-DNVIDIA"))
+//      programs.foreach(_.addBuildOption("-cl-nv-opt-level=0"))
+//      programs.foreach(_.addBuildOption("-cl-opt-disable"))
       //programs.foreach(_.addBuildOption("-cl-nv-arch"))
       //programs.foreach(_.addBuildOption("sm_30"))
     }
@@ -51,7 +54,16 @@ abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L],
       RuleKernel(prog.createKernels(), part.asScala.toIndexedSeq, new DenseVector(mask))
     }.asJava
 
+
     for(r <- result.asScala) {
+      for ((plat, ptx) <-  r.kernels.head.getProgram.getBinaries.asScala) {
+        val out = new File(s"compiled/${r.kernels.head.getFunctionName}_${plat.toString.filter(_.isLetterOrDigit)}.ptx")
+        out.getParentFile.mkdirs()
+        val oout = new FileOutputStream(out)
+        oout.write(ptx)
+        oout.close()
+
+      }
       val names = r.kernels.map(_.getFunctionName)
       val parents = BitHacks.asBitSet(r.parents).iterator.map(structure.refinements.labels.coarseIndex.get(_:Int)).toSet
       val ruleCounts = r.rules.length

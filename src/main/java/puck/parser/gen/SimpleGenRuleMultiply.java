@@ -248,10 +248,11 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         return sb.toString();
     }
 
-    public static boolean GRAMMAR_IS_GENERATIVE = false;
+    public static boolean GRAMMAR_IS_GENERATIVE = true;
     public static boolean NVIDIA_IS_STILL_STUPID = true;
 
     public String genWriteSymbol(String dest, String src, boolean symIsUniqueToSubsegmentation, boolean supportsExtendedAtomics) {
+//        return String.format("write_parent_atomic_nvidia_gen(&%s, %s);\n", dest, src);
         if(symIsUniqueToSubsegmentation) {
             return String.format("%s = %s;\n", dest, src);
         } else if(GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics && NVIDIA_IS_STILL_STUPID) {
@@ -278,7 +279,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
             "     inline void write_parent_atomic_nvidia_gen(volatile __global float* loc, float value) {\n" +
             "        volatile __global int* d_ptr = (volatile __global int*)loc;\n" +
             "        int z = *(int*)&value;\n" +
-            "        asm(\"atom.global.max.s32 %%r8, [%0], %1;\" :: \"l\"(d_ptr), \"r\"(z));\n" +
+            "        asm volatile(\"atom.global.min.s32 %0, [%1], %2;\" : \"=r\"(z), \"+l\"(d_ptr): \"r\"(z));\n" +
             "      }\n"+
             "     \n" +
             " #endif \n" +
