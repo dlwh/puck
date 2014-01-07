@@ -15,8 +15,8 @@ public class CoarseParentSymbolSegmentationGenRuleMultiply<C, L> extends SimpleG
 
 	public static final int MIN_SINGLE_COARSE_PARENT_GROUP_SIZE = 300;
 	
-	public CoarseParentSymbolSegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite) {
-		super(structure, directWrite);
+	public CoarseParentSymbolSegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, boolean logSpace) {
+		super(structure, directWrite, logSpace);
 	}
 
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {

@@ -18,8 +18,8 @@ public class VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply<C, L> ext
 	public static final int MIN_SINGLE_COARSE_PARENT_GROUP_SIZE = 300;
 	public static final int MAX_BADNESS = 120;
 
-	public VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite) {
-		super(structure, directWrite);
+	public VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, boolean logSpace) {
+		super(structure, directWrite, logSpace);
 	}
 
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {

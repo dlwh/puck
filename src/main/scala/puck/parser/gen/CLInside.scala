@@ -25,32 +25,32 @@ case class CLInsideKernels(insideNNKernels: CLBinaryRuleUpdater,
 }
 
 trait GenType {
-  def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean):GenRuleMultiply[C, L]
+  def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, logAdd: Boolean):GenRuleMultiply[C, L]
 }
 
 object GenType {
   object VariableLength extends GenType {
 //    def generator[C, L](structure: RuleStructure[C, L]): GenRuleMultiply[C, L] = new SmartVariableGen(structure)
-    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean): GenRuleMultiply[C, L] = new VariableSizeGreedyGenRuleMultiply(structure, directWrite)
+    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, logAdd: Boolean): GenRuleMultiply[C, L] = new VariableSizeGreedyGenRuleMultiply(structure, directWrite, logAdd)
   }
   object Canny extends GenType {
-    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean): GenRuleMultiply[C, L] = new CannySegmentationGenRuleMultiply(structure, directWrite)
+    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, logAdd: Boolean): GenRuleMultiply[C, L] = new CannySegmentationGenRuleMultiply(structure, directWrite, logAdd)
   }
 
   object Random extends GenType {
-    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean): GenRuleMultiply[C, L] = new RandomSegmentationGenRuleMultiply(structure, directWrite)
+    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, logAdd: Boolean): GenRuleMultiply[C, L] = new RandomSegmentationGenRuleMultiply(structure, directWrite, logAdd)
   }
 
   object CoarseParent extends GenType {
-    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean): GenRuleMultiply[C, L] = new CoarseParentSymbolSegmentationGenRuleMultiply(structure, directWrite)
+    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, logAdd: Boolean): GenRuleMultiply[C, L] = new CoarseParentSymbolSegmentationGenRuleMultiply(structure, directWrite, logAdd)
   }
   
   object VariableLengthCoarseParent extends GenType {
-    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean): GenRuleMultiply[C, L] = new VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply(structure, directWrite)
+    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, logAdd: Boolean): GenRuleMultiply[C, L] = new VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply(structure, directWrite, logAdd)
   }
 
   object Greedy extends GenType {
-    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean): GenRuleMultiply[C, L] = new GreedySegmentationGenRuleMultiply(structure, directWrite)
+    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, logAdd: Boolean): GenRuleMultiply[C, L] = new GreedySegmentationGenRuleMultiply(structure, directWrite, logAdd)
   }
 }
 
@@ -67,11 +67,11 @@ object CLInsideKernels {
 
 
 
-  def make[C, L](structure: RuleStructure[C, L], directWrite: Boolean, genType: GenType = GenType.VariableLength)(implicit context: CLContext, semiring: RuleSemiring) = {
+  def make[C, L](structure: RuleStructure[C, L], directWrite: Boolean, logAdd: Boolean, genType: GenType = GenType.VariableLength)(implicit context: CLContext, semiring: RuleSemiring) = {
 //    val parserGen = new LHSGenRuleMultiply[C, L](structure)
 //    val parserGen = new RandomSegmentationGenRuleMultiply[C, L](structure)
 //    val parserGen = new CannySegmentationGenRuleMultiply[C, L](structure)
-    val parserGen = genType.generator(structure, directWrite)
+    val parserGen = genType.generator(structure, directWrite, logAdd)
 //    val parserGen = new CoarseParentSymbolSegmentationGenRuleMultiply[C, L](structure)
 //	  val parserGen = new GreedySegmentationGenRuleMultiply[C, L](structure)
 //    val parserGen = new NoninlinedRuleMultiply(structure)

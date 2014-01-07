@@ -13,7 +13,7 @@ object SmartVariableGen {
 
 import SimpleGenRuleMultiply.NUM_SM
 
-class SmartVariableGen[C, L](structure: RuleStructure[C, L], directWrite: Boolean) extends SimpleGenRuleMultiply[C, L](structure, directWrite) {
+class SmartVariableGen[C, L](structure: RuleStructure[C, L], directWrite: Boolean, logSpace: Boolean) extends SimpleGenRuleMultiply[C, L](structure, directWrite, logSpace) {
 
   def segmentUnaries(indexedUnaryRules: List[IndexedUnaryRule[C, L]]): Array[List[IndexedUnaryRule[C, L]]] = {
     val segmentation: Array[List[IndexedUnaryRule[C, L]]] = Array(indexedUnaryRules)

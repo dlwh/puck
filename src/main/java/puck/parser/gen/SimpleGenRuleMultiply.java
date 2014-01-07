@@ -1,7 +1,6 @@
 package puck.parser.gen;
 
 import com.nativelibs4java.opencl.CLContext;
-import com.nativelibs4java.opencl.CLKernel;
 
 import puck.package$;
 import puck.parser.*;
@@ -21,11 +20,13 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 	
     public RuleStructure<C, L> structure;
     private boolean writeDirectToChart;
+    private boolean logSpaceSemiring;
 
-    public SimpleGenRuleMultiply(RuleStructure<C, L> structure, boolean writeDirectToChart) {
+    public SimpleGenRuleMultiply(RuleStructure<C, L> structure, boolean writeDirectToChart, boolean logSpace) {
         super(structure, writeDirectToChart);
         this.structure = structure;
         this.writeDirectToChart = writeDirectToChart;
+        this.logSpaceSemiring = logSpace;
     }
     
     public abstract List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules);
@@ -68,7 +69,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
             sb.append("#pragma OPENCL EXTENSION cl_khr_global_int32_extended_atomics : enable\n");
         }
 
-        if (LOG_SPACE_SEMIRING) {
+        if (logSpaceSemiring) {
         	sb.append(LOG_SPACE_SEMIRING_ADD);
         } else {
         	sb.append(MAX_SEMIRING_ADD);
@@ -217,7 +218,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 
     private String unaryKernelText(String name, List<IndexedUnaryRule<C, L>> segment) {
         StringBuilder sb = new StringBuilder();
-        if (LOG_SPACE_SEMIRING) {
+        if (logSpaceSemiring) {
         	sb.append(LOG_SPACE_SEMIRING_ADD);
         } else {
         	sb.append(MAX_SEMIRING_ADD);
@@ -264,7 +265,6 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         return sb.toString();
     }
 
-    public static boolean LOG_SPACE_SEMIRING = true;
     public static boolean GRAMMAR_IS_GENERATIVE = true;
     public static boolean NVIDIA_IS_STILL_STUPID = true;
 
@@ -272,9 +272,9 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 //        return String.format("write_parent_atomic_nvidia_gen(&%s, %s);\n", dest, src);
     	if(symIsUniqueToSubsegmentation) {
             return String.format("%s = %s;\n", dest, src);
-        } else if(!LOG_SPACE_SEMIRING && GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics && NVIDIA_IS_STILL_STUPID) {
+        } else if(!logSpaceSemiring && GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics && NVIDIA_IS_STILL_STUPID) {
             return String.format("write_parent_atomic_nvidia_gen(&%s, %s);\n", dest, src);
-        } else if(!LOG_SPACE_SEMIRING && GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics) {
+        } else if(!logSpaceSemiring && GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics) {
             return String.format("write_parent_gen_atomic(&%s, %s);\n", dest, src);
         } else {
             return String.format("write_parent_atomic(&%s, %s);\n", dest, src);
