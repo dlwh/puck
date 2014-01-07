@@ -38,6 +38,7 @@ abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L],
     programs.foreach(_.setFastRelaxedMath())
     if(context.getDevices.head.toString.toLowerCase.contains("nvidia") && !context.getDevices.head.toString.toLowerCase.contains("apple") ) {
       programs.foreach(_.addBuildOption("-cl-nv-verbose"))
+      programs.foreach(_.addBuildOption("-DNVIDIA"))
       //programs.foreach(_.addBuildOption("-cl-nv-arch"))
       //programs.foreach(_.addBuildOption("sm_30"))
     }

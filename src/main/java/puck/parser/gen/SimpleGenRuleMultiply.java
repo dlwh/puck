@@ -248,10 +248,13 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
     }
 
     public static boolean GRAMMAR_IS_GENERATIVE = false;
+    public static boolean NVIDIA_IS_STILL_STUPID = true;
 
     public String genWriteSymbol(String dest, String src, boolean symIsUniqueToSubsegmentation, boolean supportsExtendedAtomics) {
         if(symIsUniqueToSubsegmentation) {
             return String.format("%s = %s;\n", dest, src);
+        } else if(GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics && NVIDIA_IS_STILL_STUPID) {
+            return String.format("write_parent_atomic_nvidia_gen(&%s, %s);\n", dest, src);
         } else if(GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics) {
             return String.format("write_parent_gen_atomic(&%s, %s);\n", dest, src);
         } else {
@@ -267,10 +270,17 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
     private static final String WRITE_PARENT_ATOMIC = "" +
             "     typedef union { int old; float oldf; } intbox;\n" +
             "     \n" +
-            "     inline void write_parent_atomic_gen(volatile __global float* loc, float value) {\n" +
+            "     inline void write_parent_gen_atomic(volatile __global float* loc, float value) {\n" +
             "        atomic_min((volatile __global int*)loc, *(int*)&value);\n" +
             "      }\n"+
+            " #ifdef NVIDIA \n" +
+            "     inline void write_parent_atomic_nvidia_gen(volatile __global float* loc, float value) {\n" +
+            "        volatile __global int* d_ptr = (volatile __global int*)loc;\n" +
+            "        int z = *(int*)&value;\n" +
+            "        asm(\"atom.global.max.s32 %%r8, [%0], %1;\" :: \"l\"(d_ptr), \"r\"(z));\n" +
+            "      }\n"+
             "     \n" +
+            " #endif \n" +
             "     inline void write_parent_atomic(volatile __global float* loc, float value) {\n" +
             "       intbox old;\n" +
             "       value = max(*loc, value);\n" +
