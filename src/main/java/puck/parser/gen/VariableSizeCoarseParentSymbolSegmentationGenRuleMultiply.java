@@ -66,12 +66,12 @@ public class VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply<C, L> ext
 		while(!rulesSegmentedByParent.isEmpty()) {
 			List<IndexedBinaryRule<C, L>> segment = rulesSegmentedByParent.remove(0);
 			if (segment.size() >= MIN_SINGLE_COARSE_PARENT_GROUP_SIZE) {
-				segmentation.addAll(variableSizeSubsegmentBinaries(segment, NUM_SM));
+				segmentation.addAll(variableSizeSegmentBinaries(segment, NUM_SM));
 			} else {
 				for (List<IndexedBinaryRule<C, L>> nextSegment : rulesSegmentedByParent) {
 					segment.addAll(nextSegment);
 				}
-				segmentation.addAll(variableSizeSubsegmentBinaries(segment, NUM_SM));
+				segmentation.addAll(variableSizeSegmentBinaries(segment, NUM_SM));
 				break;
 			}
 		}
@@ -79,7 +79,7 @@ public class VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply<C, L> ext
 		return segmentation.toArray(new List[0][0]);
 	}
 	
-	private List<List<IndexedBinaryRule<C, L>>[]> variableSizeSubsegmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int numSubsegments) {
+	private List<List<IndexedBinaryRule<C, L>>[]> variableSizeSegmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int numSubsegments) {
 		List<List<IndexedBinaryRule<C, L>>[]> segmentation = new ArrayList<List<IndexedBinaryRule<C, L>>[]>();
         Deque<IndexedBinaryRule<C, L>> allRules = new ArrayDeque<IndexedBinaryRule<C, L>>();
         List<IndexedBinaryRule<C, L>> sortedRules = new ArrayList<IndexedBinaryRule<C, L>>(indexedBinaryRules);
@@ -139,106 +139,5 @@ public class VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply<C, L> ext
     private int badness(List<IndexedBinaryRule<C, L>> rules, Set<Integer> parents, Set<Integer> left, Set<Integer> right) {
         return left.size() + right.size();
     }
-	
-//    private List<IndexedBinaryRule<C, L>>[][] balancedSubsegmentBinariesByParent(List<IndexedBinaryRule<C, L>> indexedBinaryRules, int numSubsegments, int maxBadness, int maxSegmentSize, int maxNumSegmnets) {
-//    	Set<Integer> allParents = getParentIndices(indexedBinaryRules); 
-//    	Set<Integer> allLefts = getLeftChildIndices(indexedBinaryRules); 
-//    	IndexingILPWrapper<String> ilp = new IndexingILPWrapper<String>(new CPLEXIntegerLinearProgram(20, 8, false));
-//    	ilp.addBoundedVar("maxSegmentSize", 0, Integer.MAX_VALUE);
-//    	ilp.addBoundedVar("maxActiveParents", 0, Integer.MAX_VALUE);
-//    	for (int segmentId=0; segmentId<numSegments; ++segmentId) {
-//    		for (int ruleId=0; ruleId<indexedBinaryRules.size(); ++ruleId) {
-//    			ilp.addBoundedIntVar("ruleAssignment"+segmentId+"_"+ruleId, 0, 1);
-//    		}
-//    		for (Integer parentIndex : allParents) {
-//    			ilp.addBoundedIntVar("parentAssignment"+segmentId+"_"+parentIndex, 0, 1);
-//    		}
-//    	}
-//    	ilp.lockVariableCount();
-//
-//    	// objective
-//    	ilp.addObjectiveWeights(new String[] {"maxSegmentSize", "maxActiveParents"}, new double[] {1.0, 1.0});
-//
-//    	// maxSegmentSize is greater than all segment sizes
-//    	for (int segmentId=0; segmentId<numSegments; ++segmentId) {
-//    		String[] objs = new String[indexedBinaryRules.size()+1];
-//    		double[] weights = new double[indexedBinaryRules.size()+1];
-//    		objs[0] = "maxSegmentSize";
-//    		weights[0] = 1.0;
-//    		for (int ruleId=0; ruleId<indexedBinaryRules.size(); ++ruleId) {
-//    			objs[ruleId+1] = "ruleAssignment"+segmentId+"_"+ruleId;
-//    			weights[ruleId+1] = -1.0;
-//    		}
-//    		ilp.addGreaterThanConstraint(objs, weights, 0.0);
-//    	}
-//    	
-//    	// maxActiveParents is greater than num active parents in each segment
-//    	for (int segmentId=0; segmentId<numSegments; ++segmentId) {
-//    		String[] objs = new String[allParents.size()+1];
-//    		double[] weights = new double[allParents.size()+1];
-//    		objs[0] = "maxActiveParents";
-//    		weights[0] = 1.0;
-//    		int index = 1;
-//    		for (Integer parentIndex : allParents) {
-//    			objs[index] = "parentAssignment"+segmentId+"_"+parentIndex;
-//    			weights[index] = -1.0;
-//    			index++;
-//    		}
-//    		ilp.addGreaterThanConstraint(objs, weights, 0.0);
-//    	}
-//    	
-//    	// rule on implies parent on
-//    	for (int segmentId=0; segmentId<numSegments; ++segmentId) {
-//    		for (int ruleId=0; ruleId<indexedBinaryRules.size(); ++ruleId) {
-//    			int parentIndex = indexedBinaryRules.get(ruleId).parent().gpu();
-//    			ilp.addGreaterThanConstraint(new String[] {"parentAssignment"+segmentId+"_"+parentIndex, "ruleAssignment"+segmentId+"_"+ruleId}, new double[] {1.0, -1.0}, 0.0);
-//    		}
-//    	}
-//    	
-//    	// rule is in exactly one segment
-//    	for (int ruleId=0; ruleId<indexedBinaryRules.size(); ++ruleId) {
-//    		String[] objs = new String[numSegments];
-//    		double[] weights = new double[numSegments];
-//    		for (int segmentId=0; segmentId<numSegments; ++segmentId) {
-//    			objs[segmentId] = "ruleAssignment"+segmentId+"_"+ruleId;
-//    			weights[segmentId] = 1.0;
-//    		}
-//    		ilp.addEqualityConstraint(objs, weights, 1.0);
-//    	}
-//    	
-//    	// parent is in at most one segment
-//    	for (Integer parentIndex : allParents) {
-//    		String[] objs = new String[numSegments];
-//    		double[] weights = new double[numSegments];
-//    		for (int segmentId=0; segmentId<numSegments; ++segmentId) {
-//    			objs[segmentId] = "parentAssignment"+segmentId+"_"+parentIndex;
-//    			weights[segmentId] = 1.0;
-//    		}
-//    		ilp.addLessThanConstraint(objs, weights, 1.0);
-//    	}
-//    	
-//    	// solve
-//    	ilp.optimize();
-//    	System.out.println("ilp objective value: "+ilp.objectiveValue());
-//    	Map<String,Double> solution = ilp.solution();
-//    	
-//    	return null;
-//    }
-//    
-//    private Set<Integer> getParentIndices(List<IndexedBinaryRule<C, L>> indexedBinaryRules) {
-//    	Set<Integer> parents = new HashSet<Integer>();
-//    	for (IndexedBinaryRule<C, L> rule : indexedBinaryRules) {
-//    		parents.add(rule.parent().gpu());
-//    	}
-//    	return parents;
-//    }
-//    
-//    private Set<Integer> getLeftChildIndices(List<IndexedBinaryRule<C, L>> indexedBinaryRules) {
-//    	Set<Integer> leftChildren = new HashSet<Integer>();
-//    	for (IndexedBinaryRule<C, L> rule : indexedBinaryRules) {
-//    		leftChildren.add(rule.rule().left().gpu());
-//    	}
-//    	return leftChildren;
-//    }
     
 }

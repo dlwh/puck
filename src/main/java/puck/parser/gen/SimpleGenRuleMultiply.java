@@ -296,5 +296,12 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
             "     \n" +
             "       while((old.old = atomic_cmpxchg((volatile __global int*)loc, old.old, *(int*)&value)) !=  *(int*)&value) value = max(value, old.oldf);\n" +
             "     }\n\n\n";
+    
+//    private static final String LOG_ADD = "" +
+//    		"inline float log_add(float x0, float y0) {\n"+
+//    		"	x = min(x0, y0);\n"+
+//    		"	y = max(x0, y0);\n"+
+//    		"	return y + native_log(1.0f + native_exp(x - y));\n"+
+//    		"}\n";
 
 }
