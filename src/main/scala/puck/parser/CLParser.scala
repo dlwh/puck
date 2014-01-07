@@ -331,12 +331,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val totalLength = batch.totalLength
       val tagScores = DenseMatrix.zeros[Float](totalLength, myCellSize)
       tagScores := _zero
-      var offset = 0
-      for (i <- 0 until batch.numSentences) {
+      for (i <- (0 until batch.numSentences).par) {
         val sent = batch.sentences(i)
         val anch = data.grammar.tagScorer.anchor(sent)
         val lexAnch = data.grammar.lexicon.anchor(sent)
-        val tags = tagScores(offset, ::)
+        var offset = batch.lengthOffsets(i)
         for (pos <- 0 until sent.length) {
           for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
             val index = ref
@@ -350,9 +349,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         }
       }
 
-      val ev2 = devParentPtrs.writeArray(queue, pArray, offset, events:_*) profileIn hdTransferEvents
-      val ev = devParent(0 until offset, ::).writeFrom(tagScores, false, ev2) map (_ profileIn  hdTransferEvents)
-      transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, offset, devParent(0 until offset, ::), (ev2 +: ev):_*) profileIn sumToChartsEvents
+      val ev2 = devParentPtrs.writeArray(queue, pArray, totalLength, events:_*) profileIn hdTransferEvents
+      val ev = devParent(0 until totalLength, ::).writeFrom(tagScores, false, ev2) map (_ profileIn  hdTransferEvents)
+      transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, totalLength, devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn sumToChartsEvents
     }
 
     private def markTerminalsInMasks(batch: Batch[W], events: CLEvent*) = {
@@ -930,11 +929,6 @@ object CLParser extends Logging {
       fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](allData, profile, parseMemString(mem))
     }
 
-    if (justInsides) {
-      val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
-      println(partsX)
-      System.exit(0)
-    }
 
     if (checkPartitions) {
       val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
@@ -945,6 +939,13 @@ object CLParser extends Logging {
       println("max difference: " + (DenseVector(partsX.map(_.toDouble):_*) - DenseVector(parts2.seq:_*)).norm(Double.PositiveInfinity))
       System.exit(0)
     }
+
+    if (justInsides) {
+      val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
+      println(partsX)
+      System.exit(0)
+    }
+
 
     val trees = logTime("CL Parsing:", toParse.length)(kern.parse(toParse))
     println(eval(trees zip gold.map(_.tree)))
