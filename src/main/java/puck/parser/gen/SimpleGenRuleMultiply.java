@@ -68,6 +68,11 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
             sb.append("#pragma OPENCL EXTENSION cl_khr_global_int32_extended_atomics : enable\n");
         }
 
+        if (LOG_SPACE_SEMIRING) {
+        	sb.append(LOG_SPACE_SEMIRING_ADD);
+        } else {
+        	sb.append(MAX_SEMIRING_ADD);
+        }
         sb.append(WRITE_PARENT_ATOMIC);
         sb.append(CLMaskKernels.maskHeader(structure));
 
@@ -141,7 +146,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         			declaredRight.put(rightIndex, right);
         		}
 
-        		sb.append(String.format("%s = max(%s, %s + %s + %ff);\n", parent, parent, left, right, structure.scores()[rule.ruleId()]));
+        		sb.append(String.format("%s = semiring_add(%s, %s + %s + %ff);\n", parent, parent, left, right, structure.scores()[rule.ruleId()]));
         		
         		parentCounts.put(parentIndex, parentCounts.get(parentIndex)-1);
         		if (parentCounts.get(parentIndex) == 0) {
@@ -212,6 +217,12 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 
     private String unaryKernelText(String name, List<IndexedUnaryRule<C, L>> segment) {
         StringBuilder sb = new StringBuilder();
+        if (LOG_SPACE_SEMIRING) {
+        	sb.append(LOG_SPACE_SEMIRING_ADD);
+        } else {
+        	sb.append(MAX_SEMIRING_ADD);
+        }
+        sb.append("\n\n\n");
         sb.append(String.format(
                 " __kernel void %s(__global volatile float* parents, __global float* child, int numRows, int cellsToDo) {\n" +
                 "    int numWorkers = get_global_size(0);\n" +
@@ -240,8 +251,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         		declaredLeft.put(childIndex, child);
         	}
         	
-        	
-        	sb.append(String.format("%s = max(%s, %s + %ff);\n", parent, parent, child, structure.scores()[rule.ruleId()]));
+        	sb.append(String.format("%s = semiring_add(%s, %s + %ff);\n", parent, parent, child, structure.scores()[rule.ruleId()]));
         }
 
         sb.append("// write out\n");
@@ -254,16 +264,17 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         return sb.toString();
     }
 
+    public static boolean LOG_SPACE_SEMIRING = true;
     public static boolean GRAMMAR_IS_GENERATIVE = true;
     public static boolean NVIDIA_IS_STILL_STUPID = true;
 
     public String genWriteSymbol(String dest, String src, boolean symIsUniqueToSubsegmentation, boolean supportsExtendedAtomics) {
 //        return String.format("write_parent_atomic_nvidia_gen(&%s, %s);\n", dest, src);
-        if(symIsUniqueToSubsegmentation) {
+    	if(symIsUniqueToSubsegmentation) {
             return String.format("%s = %s;\n", dest, src);
-        } else if(GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics && NVIDIA_IS_STILL_STUPID) {
+        } else if(!LOG_SPACE_SEMIRING && GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics && NVIDIA_IS_STILL_STUPID) {
             return String.format("write_parent_atomic_nvidia_gen(&%s, %s);\n", dest, src);
-        } else if(GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics) {
+        } else if(!LOG_SPACE_SEMIRING && GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics) {
             return String.format("write_parent_gen_atomic(&%s, %s);\n", dest, src);
         } else {
             return String.format("write_parent_atomic(&%s, %s);\n", dest, src);
@@ -271,6 +282,19 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 
     }
 
+    private static final String MAX_SEMIRING_ADD = "" +
+    		"inline float semiring_add(float x, float y) {\n"+
+    		"	return max(x, y);\n"+
+    		"}\n\n\n";
+    
+    private static final String LOG_SPACE_SEMIRING_ADD = "" +
+    		"inline float semiring_add(float x, float y) {\n"+
+    		"	float tmp = x;\n"+
+    		"	x = min(x, y);\n"+
+    		"	y = max(tmp, y);\n"+
+    		"	return y + native_log(1.0f + native_exp(x - y));\n"+
+    		"}\n\n\n";
+    
     // floats < 0 are well ordered such that if max(float1, float2) = float1, then min(*(int*)&float1,*(int*)&float2) = *(int*)&float1
     // note inversion of min and max
     // this is for write_atomic_min (because all floats are same sign)
@@ -294,14 +318,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
             "       value = max(*loc, value);\n" +
             "       old.oldf = value;\n" +
             "     \n" +
-            "       while((old.old = atomic_cmpxchg((volatile __global int*)loc, old.old, *(int*)&value)) !=  *(int*)&value) value = max(value, old.oldf);\n" +
+            "       while((old.old = atomic_cmpxchg((volatile __global int*)loc, old.old, *(int*)&value)) !=  *(int*)&value) value = semiring_add(value, old.oldf);\n" +
             "     }\n\n\n";
-    
-//    private static final String LOG_ADD = "" +
-//    		"inline float log_add(float x0, float y0) {\n"+
-//    		"	x = min(x0, y0);\n"+
-//    		"	y = max(x0, y0);\n"+
-//    		"	return y + native_log(1.0f + native_exp(x - y));\n"+
-//    		"}\n";
 
 }

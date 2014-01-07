@@ -1113,7 +1113,8 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 
 object CLParserData {
   def make[C, L, W](grammar: SimpleRefinedGrammar[C, L, W], genType: GenType, directWrite: Boolean)(implicit context: CLContext) = {
-    implicit val viterbi = ViterbiRuleSemiring
+//    implicit val viterbi = ViterbiRuleSemiring
+    implicit val viterbi = LogSpaceRuleSemiring
     val ruleScores: Array[Float] = Array.tabulate(grammar.refinedGrammar.index.size){r =>
       val projectedRule = grammar.refinements.rules.project(r)
       if(projectedRule < 0) {
