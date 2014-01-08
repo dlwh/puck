@@ -65,6 +65,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     parsers.last.partitions(sentences, mask)
   }
 
+  def insideOutside(sentences: IndexedSeq[IndexedSeq[W]]):Unit = synchronized {
+    val mask: PruningMask = computeMasks(sentences)
+    parsers.last.insideOutside(sentences, mask)
+  }
+
 
   private def computeMasks(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask = NoPruningMask): PruningMask = {
     val ev = maskCharts.assignAsync(-1)
@@ -182,6 +187,17 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           maskCharts.data.waitUnmap()
           parses
         }.toIndexedSeq
+      }
+    }
+
+    def insideOutside(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
+      logTime("parse", sentences.length) {
+        getBatches(sentences, mask).iterator.foreach { batch =>
+          var ev = inside(batch)
+          ev = outside(batch, ev)
+          val ev3 = computeViterbiMasks(batch, ev)
+          Option(ev3).foreach(_.waitFor())
+        }
       }
     }
 
@@ -857,6 +873,7 @@ object CLParser extends Logging {
                     textGrammarPrefix: String = null,
                     checkPartitions: Boolean = false,
                     justInsides: Boolean = false,
+                    noExtraction: Boolean = false,
                     mem: String = "1g",
                     reproject: Boolean = true)
 
@@ -942,6 +959,12 @@ object CLParser extends Logging {
 
     if (justInsides) {
       val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
+      println(partsX)
+      System.exit(0)
+    }
+
+    if (noExtraction) {
+      val partsX = logTime("CL Inside/Outside", toParse.length)( kern.insideOutside(toParse))
       println(partsX)
       System.exit(0)
     }
