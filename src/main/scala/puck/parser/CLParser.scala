@@ -223,7 +223,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def computePruningMasks(batch: Batch[W], ev: CLEvent*): DenseMatrixMask = {
       val insideEvents = inside(batch, ev:_*)
       val outsideEvents = outside(batch, insideEvents)
-      val ev2 = computeMasks(batch, -7, outsideEvents)
+      val ev2 = computeMasks(batch, -9, outsideEvents)
       ev2.waitFor()
       extractMasks(batch)
    }
