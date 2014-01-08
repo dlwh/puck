@@ -16,7 +16,7 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
                                     masks: PruningMask) {
   val cellOffsets = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2).toArray
 
-  private val lengths = sentences.map(_.length).toArray
+  val lengths = sentences.map(_.length).toArray
   val lengthOffsets = lengths.scan(0)(_ + _)
 
   def numCellsUsed: Int = cellOffsets.last
