@@ -913,7 +913,7 @@ object CLParser extends Logging {
     }
 
     val defaultGenerator = GenType.VariableLength
-    val prunedGenerator = GenType.CoarseParent
+    val prunedGenerator = GenType.VariableLengthCoarseParent
 
     if (parserData == null || parserData.grammar.signature != grammar.signature) {
       println("Regenerating parser data")
