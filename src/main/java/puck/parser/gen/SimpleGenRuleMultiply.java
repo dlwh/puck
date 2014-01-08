@@ -265,8 +265,8 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         return sb.toString();
     }
 
-    public static boolean GRAMMAR_IS_GENERATIVE = false;
-    public static boolean NVIDIA_IS_STILL_STUPID = false;
+    public static boolean GRAMMAR_IS_GENERATIVE = true;
+    public static boolean NVIDIA_IS_STILL_STUPID = true;
 
     public String genWriteSymbol(String dest, String src, boolean symIsUniqueToSubsegmentation, boolean supportsExtendedAtomics) {
 //        return String.format("write_parent_atomic_nvidia_gen(&%s, %s);\n", dest, src);
