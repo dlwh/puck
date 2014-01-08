@@ -13,6 +13,7 @@ import epic.trees.StandardTreeProcessor
 import epic.trees.TreeInstance
 import epic.trees.annotations.Xbarize
 import java.util
+import puck.parser.gen.GenType
 
 /**
  * TODO
@@ -23,7 +24,7 @@ class CLParserDataTest extends FunSuite {
   test("write/read works") {
     implicit val clcontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.GPU)
     val grammar = ParserTestHarness.grammar.asInstanceOf[SimpleRefinedGrammar[String, String, String]]
-    val data = CLParserData.make(grammar)
+    val data = CLParserData.make(grammar, GenType.VariableLength, false, true)
     val tempFile = File.createTempFile("xxx","parserdata")
     tempFile.deleteOnExit()
     val out = new FileOutputStream(tempFile)
@@ -34,26 +35,7 @@ class CLParserDataTest extends FunSuite {
     assert(data.grammar.signature === input.grammar.signature)
   }
 
-  test("debuggin") {
-    implicit val clcontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.GPU)
-    implicit val cpucontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.CPU)
 
-    val src = "__kernel void add(int a, int b, __global int* c) { *c = a + b; }"
-    val ap = clcontext.createProgram(src)
-    val tempFile = File.createTempFile("xxx","parserdata")
-    tempFile.deleteOnExit()
-    val out = new FileOutputStream(tempFile)
-    CLProgram.writeBinaries(ap.getBinaries, src, "XXX", out)
-    out.close()
-    val in = new FileInputStream(tempFile)
-    // NPE in CLProgram here:
-    // devices is null if the signature isn't present.
-    //      List<CLDevice> devices = devicesBySignature.get(signature);
-    // for (CLDevice device : devices)
-    // ret.put(device, data);
-    CLProgram.readBinaries(util.Arrays.asList(cpucontext.getDevices:_*), "XXX", in)
-    in.close()
-  }
 }
 
 object TstTreebank {
