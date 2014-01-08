@@ -370,22 +370,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, totalLength, devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn sumToChartsEvents
     }
 
-    private def markTerminalsInMasks(batch: Batch[W], events: CLEvent*) = {
-      import batch._
-      val set0 = maskCharts.assignAsync(0, events:_*)
-      set0.waitFor()
-      var offset = 0
-      for (i <- 0 until numSentences) {
-        for(pos <- 0 until sentences(i).length) {
-          pArray(offset) = batch.insideBotCell(i, pos, pos + 1)
-          offset += 1
-        }
-      }
 
-      val ev2 = devParentPtrs.writeArray(queue, pArray, offset, events:_*) profileIn hdTransferEvents
-      val ev = maskParent(::, 0 until offset).assignAsync(-1, set0) profileIn memFillEvents
-      sliceCopy.sliceCopyOut(maskCharts.asInstanceOf[CLMatrix[Float]],  devParentPtrs, offset, maskParent(::, 0 until offset).asInstanceOf[CLMatrix[Float]], ev, ev2, set0) profileIn sumToChartsEvents
-    }
 
     private def computeMasks(batch: Batch[W], threshold: Float, events: CLEvent*):CLEvent = synchronized {
       if(profile) {
@@ -393,12 +378,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         allProfilers.foreach(_.tick())
       }
 
-      val ev =  markTerminalsInMasks(batch, events:_*)
-
       val evr = data.masks.getMasks(maskCharts(::, 0 until batch.numCellsUsed),
         devInside(::, 0 until batch.numCellsUsed),
         devOutside(::, 0 until batch.numCellsUsed),
-        0, batch.cellOffsets, structure.root, threshold, ev) profileIn masksEvents
+        0, batch.cellOffsets, batch.lengths, structure.root, threshold, events:_*) profileIn masksEvents
       if (profile) {
         queue.finish()
         allProfilers.foreach(_.tock())

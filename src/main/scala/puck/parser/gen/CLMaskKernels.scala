@@ -8,6 +8,7 @@ import org.bridj.Pointer
 import java.util.zip.{ZipOutputStream, ZipFile}
 import puck.util.ZipUtil
 import scala.Array
+import puck.PointerFreer
 
 /**
  * TODO
@@ -27,6 +28,7 @@ case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
                outside: CLMatrix[Float],
                firstOutside: Int,
                chartIndices: Array[Int],
+               lengths: Array[Int],
                root: Int, threshold: Float,
                events: CLEvent*)(implicit queue: CLQueue):CLEvent = {
     require(masks.rows == maskSize, masks.rows + " " + maskSize)
@@ -40,17 +42,22 @@ case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
     val intBufferCI = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, chartIndices.length)
     val evCI = intBufferCI.write(queue, 0, chartIndices.length, ptrCI, false, events:_*)
 
+    val ptrL = Pointer.pointerToArray[java.lang.Integer](lengths)
+    val intBufferL = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, lengths.length)
+    val evL = intBufferL.write(queue, 0, lengths.length, ptrL, false, events:_*)
+
     getMasksKernel.setArgs(masks.data.safeBuffer,
-      inside.data.safeBuffer, outside.data.safeBuffer, Integer.valueOf(outside.offset), intBufferCI,
+      inside.data.safeBuffer, outside.data.safeBuffer, intBufferCI, intBufferL,
       Integer.valueOf(chartIndices(chartIndices.length-1)), Integer.valueOf(inside.rows),
       Integer.valueOf(root), java.lang.Float.valueOf(threshold))
     //, LocalSize.ofIntArray(fieldSize * groupSize * 5))
 
-    val ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices.length-1, 1), Array(1, 1), evCI)
+    val ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices.length-1, 1), Array(1, 1), evCI, evL)
+    PointerFreer.enqueue(ptrCI.release(), ev)
+    PointerFreer.enqueue(intBufferCI.release(), ev)
 
-    ev.invokeUponCompletion(new Runnable() {
-      def run() = { ptrCI.release(); intBufferCI.release();}
-    })
+    PointerFreer.enqueue(ptrL.release(), ev)
+    PointerFreer.enqueue(intBufferL.release(), ev)
     ev
   }
 
@@ -137,9 +144,9 @@ object CLMaskKernels {
 /** TODO this isn't optimized at all */
 __kernel void computeMasks(__global mask_t* masksOut,
                            __global const float* inside,
-                           __global const float* _outside,
-                           const int _outsideOff,
+                           __global const float* outside,
                            __global const int* indices,
+                           __global const int* lengths,
                            const int numIndices,
                            int numSyms,
                            int root,
@@ -147,13 +154,13 @@ __kernel void computeMasks(__global mask_t* masksOut,
   const int sentence = get_global_id(0);
   const int firstCell = indices[sentence];
   const int lastCell = indices[sentence + 1];
-  __global const float* outside = _outside + _outsideOff;
+  int length = lengths[sentence];
   const float root_score = inside[(lastCell-1) * numSyms + root];
 
   float cutoff = root_score + thresh;
 
   for(int cell = firstCell; cell < lastCell; cell++) {
-    __constant const int* projections = (masksOut[cell].fields[0] == 0) ? nonterminalProjections : terminalProjections;
+    __constant const int* projections = (cell-firstCell >= length) ? nonterminalProjections : terminalProjections;
 
     __global const float* in = inside + (cell * numSyms);
     __global const float* out = outside + (cell * numSyms);
