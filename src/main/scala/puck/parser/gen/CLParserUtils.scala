@@ -32,7 +32,9 @@ case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKer
     val rowBlocks = (numSymsToDo + splitPointsBlockSize - 1)/splitPointsBlockSize
 
 
-    sumSplitPointsKernel.enqueueNDRange(queue, Array(numGroups * groupSize, rowBlocks), Array(groupSize, 1), events :_*)
+    val ev = sumSplitPointsKernel.enqueueNDRange(queue, Array(numGroups * groupSize, rowBlocks), Array(groupSize, 1), events :_*)
+    queue.finish()
+    ev
   }
 
   def setRootScores(charts: CLMatrix[Float],
