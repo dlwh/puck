@@ -678,7 +678,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
              targetChart, offsetBuffer.buffer,
              devLeft(0 until offset, ::),
              devRight(0 until offset, ::),
-             maskCharts, evTransLeft, evTransRight, evx)
+             maskCharts, evTransLeft, evTransRight, evx, zeroParent)
 
            val sumEv: CLEvent = if((skipFineWork && batch.hasMasks) || updateDirectToChart) null else sumSplitPoints(span, Seq(evx, evWriteDevSplitPoint) ++ kEvents: _*)
 
