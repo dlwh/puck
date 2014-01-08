@@ -16,7 +16,7 @@ import puck.parser.RuleStructure;
 public class VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultiply<C, L> {
 	
 	public static final int MIN_SINGLE_COARSE_PARENT_GROUP_SIZE = 300;
-	public static final int MAX_BADNESS = 120;
+	public static final int MAX_BADNESS = 60;
 
 	public VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, boolean logSpace) {
 		super(structure, directWrite, logSpace);
@@ -75,7 +75,17 @@ public class VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply<C, L> ext
 				break;
 			}
 		}
-		System.out.println("Done with binary segment.");
+		
+        double min = Double.POSITIVE_INFINITY;
+        double max = Double.NEGATIVE_INFINITY;
+        for (List[] segment : segmentation) {
+            for (List sub : segment) {
+                min = Math.min(sub.size(), min);
+                max = Math.max(sub.size(), max);
+            }
+        }
+        System.out.println("min binary sub segment size: "+min);
+        System.out.println("max binary sub segment size: "+max);
 		return segmentation.toArray(new List[0][0]);
 	}
 	
