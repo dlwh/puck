@@ -381,7 +381,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val evr = data.masks.getMasks(maskCharts(::, 0 until batch.numCellsUsed),
         devInside(::, 0 until batch.numCellsUsed),
         devOutside(::, 0 until batch.numCellsUsed),
-        0, batch.cellOffsets, batch.lengths, structure.root, threshold, events:_*) profileIn masksEvents
+        batch.cellOffsets, batch.lengths, structure.root, threshold, events:_*) profileIn masksEvents
       if (profile) {
         queue.finish()
         allProfilers.foreach(_.tock())

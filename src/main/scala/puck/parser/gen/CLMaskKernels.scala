@@ -26,7 +26,6 @@ case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
   def getMasks(masks: CLMatrix[Int],
                inside: CLMatrix[Float],
                outside: CLMatrix[Float],
-               firstOutside: Int,
                chartIndices: Array[Int],
                lengths: Array[Int],
                root: Int, threshold: Float,
