@@ -9,14 +9,41 @@ import com.nativelibs4java.opencl.CLMem.Usage
  *
  * @author dlwh
  */
-class CLParserQueue(simpleScan: CLKernel) {
+class CLParserQueue(simpleScan: CLKernel, insideDenseOffsets: CLKernel, outsideDenseOffsets: CLKernel) {
 
-  def computeDenseInsideOffsets(cellOffsets: Array[Int], ev: CLEvent*)(implicit queue: CLQueue):Array[Int] = simpleScan.synchronized {
-    val src = queue.getContext.createIntBuffer(Usage.InputOutput, IntBuffer.wrap(cellOffsets), true)
-    val dest = queue.getContext.createIntBuffer(Usage.InputOutput, cellOffsets.length)
-    val evr = scan(dest, src, cellOffsets.length, ev:_*)
-    dest.read(queue, evr).getInts
+  def computeTerminalOffsets(lengths: CLBuffer[Integer], numSentences: Integer,
+                             scratch: CLBuffer[Integer], workArrayOffsets: CLBuffer[Integer], ev: CLEvent*)(implicit queue: CLQueue):CLEvent = simpleScan.synchronized {
+    require(lengths.getElementCount >= numSentences)
+    require(scratch.getElementCount  >= numSentences)
+    require(workArrayOffsets.getElementCount  >= numSentences)
+    insideDenseOffsets.setArgs(scratch, lengths, numSentences, 2)
+    val evoff = insideDenseOffsets.enqueueNDRange(queue, Array(1024), Array(32), ev:_*)
+    val evr = scan(workArrayOffsets,  scratch, numSentences, evoff)
+    evr
   }
+
+  def computeDenseInsideOffsets(lengths: CLBuffer[Integer],numSentences: Integer,
+                                spanLength: Integer, scratch: CLBuffer[Integer], workArrayOffsets: CLBuffer[Integer], ev: CLEvent*)(implicit queue: CLQueue):CLEvent = simpleScan.synchronized {
+    require(lengths.getElementCount >= numSentences)
+    require(scratch.getElementCount  >= numSentences)
+    require(workArrayOffsets.getElementCount  >= numSentences)
+    insideDenseOffsets.setArgs(scratch, lengths, numSentences, spanLength)
+    val evoff = insideDenseOffsets.enqueueNDRange(queue, Array(1024), Array(32), ev:_*)
+    val evr = scan(workArrayOffsets,  scratch, numSentences, evoff)
+    evr
+  }
+
+    def computeDenseOutsideOffsets(lengths: CLBuffer[Integer], numSentences: Integer,
+                                spanLength: Integer, scratch: CLBuffer[Integer], workArrayOffsets: CLBuffer[Integer], ev: CLEvent*)(implicit queue: CLQueue):CLEvent = simpleScan.synchronized {
+    require(lengths.getElementCount >= numSentences)
+    require(scratch.getElementCount  >= numSentences)
+    require(workArrayOffsets.getElementCount  >= numSentences)
+    insideDenseOffsets.setArgs(scratch, lengths, numSentences, spanLength)
+    val evoff = insideDenseOffsets.enqueueNDRange(queue, Array(1024), Array(32), ev:_*)
+    val evr = scan(workArrayOffsets,  scratch, numSentences, evoff)
+    evr
+  }
+
 
   def scan(arr: Array[Int], ev: CLEvent*)(implicit queue: CLQueue):Array[Int] = simpleScan.synchronized {
     val src = queue.getContext.createIntBuffer(Usage.InputOutput, IntBuffer.wrap(arr), true)
@@ -37,7 +64,8 @@ class CLParserQueue(simpleScan: CLKernel) {
 object CLParserQueue {
 
   def make(implicit context: CLContext) = {
-    new CLParserQueue(context.createProgram(computeWorkArrayOffsetsText).build().createKernel("simpleScan"))
+    val program: CLProgram = context.createProgram(computeWorkArrayOffsetsText).build()
+    new CLParserQueue(program.createKernel("simpleScan"), program.createKernel("offsetsNeededInsideDense"),  program.createKernel("offsetsNeededOutsideDense"))
 
   }
   val computeWorkArrayOffsetsText =
@@ -81,6 +109,25 @@ object CLParserQueue {
       |  }
       |
       |
+      |}
+      |
+      |
+      |__kernel void offsetsNeededInsideDense(__global int* dest, __global int* lengths, int n, int spanLength) {
+      |  int id = get_global_id(0);
+      |  for(int i = id; i < n; i += get_global_size(0)) {
+      |    int len = lengths[i] ;
+      |    // numSpans * (numSplitPoints)
+      |    dest[i] = (len - spanLength + 1) * (spanLength - 1);
+      |  }
+      |}
+      |
+      |__kernel void offsetsNeededOutsideDense(__global int* dest, __global int* lengths, int n, int spanLength) {
+      |  int id = get_global_id(0);
+      |  for(int i = id; i < n; i += get_global_size(0)) {
+      |    int len = lengths[i] ;
+      |    // \sum_{endPoint=spanLength}^len (len - endPoint) == the below
+      |    dest[i] = (len - spanLength + 1) * (len - spanLength) / 2;
+      |  }
       |}
     """.stripMargin
 }
