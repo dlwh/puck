@@ -1,13 +1,14 @@
 package puck.parser.gen;
 
+import puck.parser.RuleSemiring;
 import puck.parser.RuleStructure;
 
 import java.util.*;
 
 public class VariableSizeGreedyGenRuleMultiply<C, L>  extends SimpleGenRuleMultiply<C, L> {
 	
-	public VariableSizeGreedyGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, boolean logSpace) {
-		super(structure, directWrite, logSpace);
+	public VariableSizeGreedyGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, RuleSemiring semiring) {
+		super(structure, directWrite, semiring);
 	}
 
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {

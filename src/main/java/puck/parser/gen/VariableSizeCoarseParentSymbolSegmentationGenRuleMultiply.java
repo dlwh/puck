@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import puck.parser.RuleSemiring;
 import puck.parser.RuleStructure;
 
 public class VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultiply<C, L> {
@@ -21,8 +22,8 @@ public class VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply<C, L> ext
 	
 //	public static final int MAX_BADNESS = 60;
 
-	public VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, boolean logSpace) {
-		super(structure, directWrite, logSpace);
+	public VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, RuleSemiring semiring) {
+		super(structure, directWrite, semiring);
 	}
 
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {
