@@ -11,8 +11,8 @@ public class RandomSegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultip
 
 	public static final int BINARY_SEGMENT_SIZE = 2000;
 	
-	public RandomSegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite) {
-		super(structure, directWrite);
+	public RandomSegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, boolean logSpace) {
+		super(structure, directWrite, logSpace);
 	}
     
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {

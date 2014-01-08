@@ -6,8 +6,8 @@ import java.util.*;
 
 public class VariableSizeGreedyGenRuleMultiply<C, L>  extends SimpleGenRuleMultiply<C, L> {
 
-	public VariableSizeGreedyGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite) {
-		super(structure, directWrite);
+	public VariableSizeGreedyGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, boolean logSpace) {
+		super(structure, directWrite, logSpace);
 	}
 
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {
@@ -24,7 +24,7 @@ public class VariableSizeGreedyGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 	}
 
 	public List<IndexedBinaryRule<C, L>>[][] segmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules) {
-        List<IndexedBinaryRule<C, L>>[][]  segmentation = naiveSegmentBinaries(indexedBinaryRules);
+        List<IndexedBinaryRule<C, L>>[][]  segmentation = variableSizeSegmentBinaries(indexedBinaryRules);
         double min = Double.POSITIVE_INFINITY;
         double max = Double.NEGATIVE_INFINITY;
         for (List[] segment : segmentation) {
@@ -44,10 +44,10 @@ public class VariableSizeGreedyGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
         return left.size() + right.size();
     }
 	
-	private List<IndexedBinaryRule<C, L>>[][] naiveSegmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules) {
-		List<List<IndexedBinaryRule<C, L>>[]> segmentation = new ArrayList<>();
-        Deque<IndexedBinaryRule<C, L>> allRules = new ArrayDeque<>();
-        List<IndexedBinaryRule<C, L>> sortedRules = new ArrayList<>(indexedBinaryRules);
+	private List<IndexedBinaryRule<C, L>>[][] variableSizeSegmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules) {
+		List<List<IndexedBinaryRule<C, L>>[]> segmentation = new ArrayList<List<IndexedBinaryRule<C, L>>[]>();
+        Deque<IndexedBinaryRule<C, L>> allRules = new ArrayDeque<IndexedBinaryRule<C, L>>();
+        List<IndexedBinaryRule<C, L>> sortedRules = new ArrayList<IndexedBinaryRule<C, L>>(indexedBinaryRules);
         Collections.sort(sortedRules, new Comparator<IndexedBinaryRule<C, L>>() {
             public int compare(IndexedBinaryRule<C, L> o1, IndexedBinaryRule<C, L> o2) {
                 int parent = Integer.compare(o1.rule().parent().gpu(), o2.rule().parent().gpu());
@@ -64,19 +64,19 @@ public class VariableSizeGreedyGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
         while(!allRules.isEmpty()) {
             List<IndexedBinaryRule<C, L>>[] segment = new List[NUM_SM];
             for(int sub = 0; sub < NUM_SM; sub++) {
-                segment[sub] = new ArrayList<>();
+                segment[sub] = new ArrayList<IndexedBinaryRule<C, L>>();
             }
             segmentation.add(segment);
 
             // use parent only once per segment
-            Set<Integer> usedParents = new HashSet<>();
-            List<IndexedBinaryRule<C, L>> skippedRules = new ArrayList<>();
+            Set<Integer> usedParents = new HashSet<Integer>();
+            List<IndexedBinaryRule<C, L>> skippedRules = new ArrayList<IndexedBinaryRule<C, L>>();
 
             for(int sub = 0; sub < NUM_SM; sub++) {
                 List<IndexedBinaryRule<C, L>> subseg = segment[sub];
-                Set<Integer> parents = new HashSet<>();
-                Set<Integer> lefts = new HashSet<>();
-                Set<Integer> rights = new HashSet<>();
+                Set<Integer> parents = new HashSet<Integer>();
+                Set<Integer> lefts = new HashSet<Integer>();
+                Set<Integer> rights = new HashSet<Integer>();
 
                 while(!allRules.isEmpty() && badness(subseg, parents, lefts, rights) < MAX_BADNESS) {
                     IndexedBinaryRule<C, L> rule = allRules.pop();
@@ -100,17 +100,6 @@ public class VariableSizeGreedyGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 
         return segmentation.toArray(new List[0][0]);
     }
-
-	
-    private Set<Integer> getParentIndices(List<IndexedBinaryRule<C, L>> indexedBinaryRules) {
-    	Set<Integer> parents = new HashSet<Integer>();
-    	for (IndexedBinaryRule<C, L> rule : indexedBinaryRules) {
-    		parents.add(rule.parent().gpu());
-    	}
-    	return parents;
-    }
-    
-
 
 }
 

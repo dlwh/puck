@@ -70,8 +70,8 @@ object CLOutsideKernels {
     UnaryRule(r._1.child, r._1.parent, r._1.chain) -> r._2
   }
 
-  def make[C, L](structure: RuleStructure[C, L], directWrite: Boolean, genType: GenType = GenType.VariableLength)(implicit context: CLContext, semiring: RuleSemiring) = {
-    val parserGen = genType.generator(structure, directWrite)
+  def make[C, L](structure: RuleStructure[C, L], directWrite: Boolean, logAdd: Boolean, genType: GenType = GenType.VariableLength)(implicit context: CLContext, semiring: RuleSemiring) = {
+    val parserGen = genType.generator(structure, directWrite, logAdd)
     val outside_L_NNKernels = parserGen.binaryRuleApplication(structure.nontermRules.map(rotateLeftToParent), "outside_L_nn_binaries")
 
     val outside_R_NNKernels =

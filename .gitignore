@@ -26,3 +26,5 @@ project/user.sbt
 /.cache
 /grammar.out
 /refs.txt
+
+compiled/

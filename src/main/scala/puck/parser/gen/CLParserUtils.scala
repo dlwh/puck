@@ -102,6 +102,8 @@ object CLParserUtils {
     }
 
     val prog = context.createProgram(splitPointSumKernel(blockSize, structure))
+    if(!semiring.plusIsIdempotent)
+      prog.addBuildOption("-DLOGSUM")
 
     CLParserUtils(sumCellsKernel,
       prog.createKernel("splitPointSum"),
