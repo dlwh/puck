@@ -1,6 +1,6 @@
 package puck.parser.gen
 
-import puck.parser.{SymId, RuleSemiring, RuleStructure}
+import puck.parser.{LogSumRuleSemiring, SymId, RuleSemiring, RuleStructure}
 import scala.collection.JavaConverters._
 import puck.linalg.CLMatrix
 import com.nativelibs4java.opencl._
@@ -99,7 +99,6 @@ object CLMBRKernels {
   }
 
   def programText[L, C](cellSize: Int, structure: RuleStructure[C, L], semiring: RuleSemiring): String = {
-    semiring.includes+
     """
     typedef struct {float score; int symbol; int ignoreMe[2];} decode_t;
       #define NUM_SYMS """ + cellSize + """
@@ -142,11 +141,11 @@ __kernel void computeMBR(__global decode_t* decodeOut,
       coarseMargs[coarseSym] = 0.0f;
     }
     for(int sym = 0; sym < NUM_SYMS; ++sym) {
-""" + if (semiring.isInstanceOf[LogSumRuleSemiring.type]) {
-    "coarseMargs[projections[sym]] = semiring_add(coarseMargs[projections[sym]], in[sym] - root_score + out[sym]);\n"
+""" + {if (semiring.isInstanceOf[LogSumRuleSemiring.type]) {
+    "coarseMargs[projections[sym]] += exp(in[sym] - root_score + out[sym]);\n"
   } else {
     "coarseMargs[projections[sym]] += in[sym]/root_score * out[sym];\n"
-  } + """
+  } }+ """
     }
       
     decode_t myDecode;

@@ -613,8 +613,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           bestScores(begin, end) = {
             val topFloat = java.lang.Float.intBitsToFloat(topMask(0))
             val botFloat = java.lang.Float.intBitsToFloat(botMask(0))
-            var topScaled = topFloat * math.exp(batch.masks.insideTopScaleFor(s, begin, end) + batch.masks.outsideTopScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length))
-            var botScaled = botFloat * math.exp(batch.masks.insideScaleFor(s, begin, end) + batch.masks.outsideScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length))
+            var topScaled = topFloat
+            var botScaled = botFloat
+
+            if(data.isScaling) {
+              topScaled *= math.exp(batch.masks.insideScaleFor(s, begin, end) + batch.masks.outsideScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length)).toFloat
+              botScaled *= math.exp(batch.masks.insideScaleFor(s, begin, end) + batch.masks.outsideScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length)).toFloat
+            }
             if(topScaled.isInfinite || botScaled.isInfinite) {
               println("Overflow! taking counter measures")
             }
