@@ -306,12 +306,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
 
 //      if(CLParser.this.data.last eq this.data) {
-        queue.finish()
-        println("=======")
-        println(batch.insideCharts.head.bot.toString(structure, _zero))
-        println("-------")
-        println(batch.insideCharts.head.top.toString(structure, _zero))
-        println("=======")
+//        queue.finish()
+//        println("=======")
+//        println(batch.insideCharts.head.bot.toString(structure, _zero))
+//        println("-------")
+//        println(batch.insideCharts.head.top.toString(structure, _zero))
+//        println("=======")
 //      }
 
       if (profile) {
