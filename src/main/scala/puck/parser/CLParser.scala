@@ -1169,7 +1169,7 @@ object CLParserData {
     val ruleScores: Array[Float] = Array.tabulate(grammar.refinedGrammar.index.size){r =>
       val projectedRule = grammar.refinements.rules.project(r)
       if(projectedRule < 0) {
-        -12
+        viterbi.fromLogSpace(-12)
       } else {
         val score = grammar.ruleScoreArray(projectedRule)(grammar.refinements.rules.localize(r))
         viterbi.fromLogSpace(score.toFloat)
