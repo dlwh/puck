@@ -639,7 +639,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
           if(span > 1) {
             var bestSplitScore = 0.0f
-            var bestSplit = -1
+            var bestSplit = begin + 1
             for(split <- (begin+1) until end) {
               val splitScore = bestScores(begin, split) + bestScores(split, end)
               if(splitScore > bestSplitScore) {
@@ -648,11 +648,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
               }
             }
             bestSplits(begin, end) = bestSplit
-            if(bestSplitScore < 0.1) {
-              bestScores(begin, end) = 0.0f
-            } else {
-              bestScores(begin, end) += bestSplitScore
-            }
+            bestScores(begin, end) += bestSplitScore
           }
         }
 
