@@ -76,8 +76,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private def computeMasks(sentences: IndexedSeq[IndexedSeq[W]]): PruningMask = {
     val ev = maskCharts.assignAsync(-1)
     ev.waitFor()
-    if(parsers.length == 1) NoPruningMask
-    else  parsers.dropRight(1).last.updateMasks(sentences, NoPruningMask)
+    parsers.dropRight(1).foldLeft(NoPruningMask:PruningMask)( (a,b) => b.updateMasks(sentences, a))
   }
 
   private implicit val queue = if (profile) context.createDefaultProfilingQueue() else context.createDefaultQueue()
@@ -215,9 +214,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           val dest = context.createFloatBuffer(CLMem.Usage.Output, sentences.length)
           ev = devParentPtrs.writeArray(queue, batch.rootIndices.toArray, batch.numSentences, ev) profileIn hdTransferEvents
           ev = data.util.getRootScores(dest, devInside, devParentPtrs, batch.numSentences, structure.root, ev)
-          val scaledScores = dest.read(queue, ev).getFloats(batch.numSentences)
-
-          for(i <- 0 until batch.numSentences) yield semiring.toLogSpace(scaledScores(i), mask.insideScaleFor(i, 0, batch.lengths(i)))
+          if(semiring.needsScaling) {
+            val scaledScores = dest.read(queue, ev).getFloats(batch.numSentences)
+            for(i <- 0 until batch.numSentences) yield semiring.toLogSpace(scaledScores(i), mask.insideScaleFor(i, 0, batch.lengths(i)))
+          } else {
+            dest.read(queue, ev).getFloats(batch.numSentences)
+          }
         }.toIndexedSeq
       }
     }
@@ -287,13 +289,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       var ev = evZeroCharts
 
       if(batch.hasMasks && semiring.needsScaling) {
-        println(batch.masks.getIScales.toArray.toIndexedSeq)
-        println(batch.masks.getOScales.toArray.toIndexedSeq)
         ev = devInsideScale.write(queue, batch.masks.getIScales, false, ev).profileIn(hdTransferEvents)
         ev = devOutsideScale.write(queue, batch.masks.getOScales, false, ev).profileIn(hdTransferEvents)
+        queue.finish()
+//        println(devInsideScale.read(queue).getFloats(batch.numCellsUsed).toIndexedSeq)
       }
 
       ev = initializeTagScores(batch, ev, evZeroOutside)
+
 
       ev = insideTU.doUpdates(batch, 1, ev)
 
@@ -308,9 +311,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 //      if(CLParser.this.data.last eq this.data) {
 //        queue.finish()
 //        println("=======")
-//        println(batch.insideCharts.head.bot.toString(structure, _zero))
+//        println(batch.insideCharts(1).bot.toString(structure, _zero))
 //        println("-------")
-//        println(batch.insideCharts.head.top.toString(structure, _zero))
+//        println(batch.insideCharts(1).top.toString(structure, _zero))
 //        println("=======")
 //      }
 
@@ -389,7 +392,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val lexAnch = data.grammar.lexicon.anchor(sent)
         var offset = batch.lengthOffsets(i)
         for (pos <- 0 until sent.length) {
-          val myScale = if(semiring.needsScaling) math.exp(-batch.masks.insideScaleFor(0, pos, pos + 1)) else 1.0
+          val myScale = if(semiring.needsScaling) math.exp(-batch.masks.insideScaleFor(i, pos, pos + 1)) else 1.0
           for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
             val index = ref
             val score = anch.scoreTag(pos, data.grammar.refinedGrammar.labelIndex.get(index))

@@ -174,8 +174,7 @@ __kernel void computeMasks(__global mask_t* masksOut,
       int keep = score >= cutoff;
       int field = projections[sym];
 
-      //set_bit(&myMask, field, keep);
-      set_bit(&myMask, field, 1);
+      set_bit(&myMask, field, keep);
     }
 
 
