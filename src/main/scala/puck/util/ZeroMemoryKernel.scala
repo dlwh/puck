@@ -48,7 +48,7 @@ __kernel void shaped_fill(__global float* data, int beginOffset, int rows, int c
     shapedKernel.setArgs(data.data.safeBuffer, Integer.valueOf(data.offset), Integer.valueOf(r), Integer.valueOf(c), Integer.valueOf(data.majorStride), java.lang.Float.valueOf(f))
 
     val ev = shapedKernel.enqueueNDRange(queue, Array(roundUpToMultipleOf(r, groupSize), c), Array(groupSize, 1), eventsToWaitFor:_*)
-    queue.finish()
+//    queue.finish()
     ev
   }
 
@@ -63,7 +63,7 @@ __kernel void shaped_fill(__global float* data, int beginOffset, int rows, int c
     // but, we want to ensure that we do coalesced reads and rights, which
     // means aligned reads and writes.
     val ev = kernel.enqueueNDRange(queue, Array(roundUpToMultipleOf(data.getElementCount.toInt, groupSize)), Array(groupSize), eventsToWaitFor:_*)
-    queue.finish()
+//    queue.finish()
     ev
   }
 

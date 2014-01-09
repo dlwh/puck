@@ -41,7 +41,7 @@ class CLMatrixTransposeCopy private(wgSize: Array[Int], kernel: CLKernel, kernel
         Integer.valueOf(colOff),
         Integer.valueOf(numCols))
       val ev = kernel.enqueueNDRange(queue, Array(wgSize(0) * 40, wgSize(0) * 10, 1), wgSize, (events): _*)
-      queue.finish()
+//      queue.finish()
       ev
     }
   }
@@ -83,7 +83,7 @@ class CLMatrixTransposeCopy private(wgSize: Array[Int], kernel: CLKernel, kernel
     val adjustedSrcRowBlocks = ((numCols + blockSize - 1)/blockSize)
     //val res = kernelOut.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), (ev +: events):_*)
     val ev = kernelOut.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), events:_*)
-    queue.finish()
+//    queue.finish()
     ev
   }
 

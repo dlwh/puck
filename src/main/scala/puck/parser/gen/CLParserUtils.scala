@@ -33,7 +33,7 @@ case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKer
 
 
     val ev = sumSplitPointsKernel.enqueueNDRange(queue, Array(numGroups * groupSize, rowBlocks), Array(groupSize, 1), events :_*)
-    queue.finish()
+//    queue.finish()
     ev
   }
 

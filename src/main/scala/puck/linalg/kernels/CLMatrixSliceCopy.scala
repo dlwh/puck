@@ -40,7 +40,7 @@ class CLMatrixSliceCopy private(blockSize: Int, kernel: CLKernel, kernelOut: CLK
         Integer.valueOf(src.cols))
       val adjustedSrcRowBlocks = puck.roundUpToMultipleOf(src.rows, blockSize)
       val ev = kernel.enqueueNDRange(queue, Array(numCols, 1, 1), Array(1, 1, 1), (events): _*)
-      queue.finish()
+//      queue.finish()
       ev
     }
   }
@@ -79,7 +79,7 @@ class CLMatrixSliceCopy private(blockSize: Int, kernel: CLKernel, kernelOut: CLK
     val adjustedSrcCols = puck.roundUpToMultipleOf(src.cols, blockSize)
     //val res = kernelOut.enqueueNDRange(queue, Array(adjustedSrcCols, adjustedSrcRowBlocks, 1), Array(blockSize, 1, 1), (ev +: events):_*)
     val ev = kernelOut.enqueueNDRange(queue, Array(adjustedSrcCols, puck.roundUpToMultipleOf(src.rows, blockSize), 1), Array(1, blockSize, 1), events:_*)
-    queue.finish()
+//    queue.finish()
     ev
   }
 
