@@ -46,7 +46,7 @@ class ChartHalf(val length: Int, val matrix: CLMatrix[Float], isBot: Boolean) {
           structure.termIndex.get(k) -> v
       else
         structure.nontermIndex.get(k) -> v
-    }.mkString(s"$r ${cellOffset(begin, end)} ($begin,$end) ${if(isBot) "bot" else "top"} {",", ", "}")
+    }.toIndexedSeq.sortBy(-_._2).mkString(s"$r ${cellOffset(begin, end)} ($begin,$end) ${if(isBot) "bot" else "top"} {",", ", "}")
 
   }
 

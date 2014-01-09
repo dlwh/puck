@@ -18,13 +18,13 @@ case class CLUnaryRuleUpdater(kernels: IndexedSeq[RuleKernel]) {
 
   def update(profiler: CLProfiler,
              parent: CLMatrix[Float], parentScale: CLBuffer[Float], parentPointers: CLBuffer[Int],
-             child: CLMatrix[Float], childScale: CLBuffer[Float], childPointers: CLBuffer[Int],
+             child: CLMatrix[Float], childScale: CLBuffer[Float], childPointers: CLBuffer[Int], childOff: Int,
              events: CLEvent*)(implicit queue: CLQueue) = synchronized {
     require(parent.rows == child.rows)
     require(parent.cols == child.cols)
     require(parent.majorStride == child.majorStride)
     kernels.flatMap(_.kernels).map { k =>
-      k.setArgs(parent.data.safeBuffer, parentScale, parentPointers, child.data.safeBuffer, childScale, childPointers,
+      k.setArgs(parent.data.safeBuffer, parentScale, parentPointers, child.data.safeBuffer, childScale, childPointers, Integer.valueOf(childOff),
         Integer.valueOf(parent.majorStride), Integer.valueOf(parent.rows) )
       k.enqueueNDRange(queue, Array(parent.rows), events: _*) profileIn profiler
     }

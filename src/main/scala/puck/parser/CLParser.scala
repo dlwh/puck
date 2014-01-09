@@ -305,14 +305,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       }
 
-      if(CLParser.this.data.last eq this.data) {
+//      if(CLParser.this.data.last eq this.data) {
         queue.finish()
         println("=======")
         println(batch.insideCharts.head.bot.toString(structure, _zero))
         println("-------")
         println(batch.insideCharts.head.top.toString(structure, _zero))
         println("=======")
-      }
+//      }
 
       if (profile) {
         queue.finish()
@@ -608,7 +608,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
           val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), scoreMatrix, offsetBuffer.buffer, offset, offset, evx) profileIn transferEvents
 
-          val endEvents = kernels.update(unaryEvents, devParent(0 until offset, ::), parentScale, offsetBuffer.buffer, devLeft(0 until offset, ::), childScale, offsetBuffer.buffer.createSubBuffer(CLMem.Usage.Input, offset * 4, offset * 4), wl, zz)
+          val endEvents = kernels.update(unaryEvents, devParent(0 until offset, ::), parentScale, offsetBuffer.buffer, devLeft(0 until offset, ::), childScale, offsetBuffer.buffer, offset, wl, zz)
 
           val _ev = transposeCopy.permuteTransposeCopyOut(scoreMatrix, offsetBuffer.buffer, offset, devParent(0 until offset, ::), (evx +: endEvents):_*) profileIn sumToChartsEvents
 
@@ -718,8 +718,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
            val targetChart = if(updateDirectToChart) parentChartMatrix else devParent(0 until offset, ::)
            val kEvents = updater.update(block, binaryEvents,
              targetChart, parentScale, offsetBuffer.buffer,
-             devLeft(0 until offset, ::), leftScale, offsetBuffer.buffer.createSubBuffer(CLMem.Usage.Input, offset * 4, offset * 4),
-             devRight(0 until offset, ::), rightScale, offsetBuffer.buffer.createSubBuffer(CLMem.Usage.Input, offset * 4 * 2, offset * 4),
+             devLeft(0 until offset, ::), leftScale, offsetBuffer.buffer, offset,
+             devRight(0 until offset, ::), rightScale, offsetBuffer.buffer, offset * 2,
              maskCharts, evTransLeft, evTransRight, evx, zeroParent)
 
            val sumEv: CLEvent = if((skipFineWork && batch.hasMasks) || updateDirectToChart) null else sumSplitPoints(span, Seq(evx, evWriteDevSplitPoint) ++ kEvents: _*)

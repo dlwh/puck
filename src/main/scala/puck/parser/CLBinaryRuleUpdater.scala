@@ -29,8 +29,8 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
 
   def update(block: IndexedSeq[Int], profiler: CLProfiler,
              parent: CLMatrix[Float], parentScale: CLBuffer[Float], parentPointers: CLBuffer[Int],
-             left: CLMatrix[Float], leftScale: CLBuffer[Float], leftPointers: CLBuffer[Int],
-             right: CLMatrix[Float], rightScale: CLBuffer[Float], rightPointers: CLBuffer[Int],
+             left: CLMatrix[Float], leftScale: CLBuffer[Float], leftPointers: CLBuffer[Int], leftOff: Integer,
+             right: CLMatrix[Float], rightScale: CLBuffer[Float], rightPointers: CLBuffer[Int], rightOff: Integer,
              masks: CLMatrix[Int], events: CLEvent*)(implicit queue: CLQueue) = synchronized {
     require(!directWriteToChart || parent.rows == left.cols)
     require(directWriteToChart || parent.cols == left.cols)
@@ -44,8 +44,8 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
 
     block.flatMap(kernels(_).kernels).foldLeft(events) { (ev, k) =>
       k.setArgs(parent.data.safeBuffer, parentScale, parentPointers,
-        left.data.safeBuffer, leftScale, leftPointers,
-        right.data.safeBuffer, rightScale, rightPointers,
+        left.data.safeBuffer, leftScale, leftPointers, leftOff,
+        right.data.safeBuffer, rightScale, rightPointers, rightOff,
         masks.data.safeBuffer,
         Integer.valueOf(left.majorStride), Integer.valueOf(left.rows) )
       buffer.foreach(buf => k.setArg(7, buf))

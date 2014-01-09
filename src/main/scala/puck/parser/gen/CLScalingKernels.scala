@@ -67,7 +67,6 @@ __kernel void getScalingConstants(__global float* scaling,
       m = 0;
 
     scaling[cell] = m;
-    scaling[cell] = 0.0f;
 }
     """
   }
