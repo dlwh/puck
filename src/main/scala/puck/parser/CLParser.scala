@@ -188,7 +188,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           var ev = inside(batch)
           ev = outside(batch, ev)
 
-          if(data.isScaling) {
+          if(!data.isScaling) {
             val ev3 = computeViterbiMasks(batch, ev)
             Option(ev3).foreach(_.waitFor())
             val parseMask = extractMasks(batch)
@@ -196,7 +196,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
             maskCharts.data.waitUnmap()
             parses
           } else {
-            IndexedSeq.empty
+            val ev3 = computeMBRParts(batch, ev)
+            Option(ev3).foreach(_.waitFor())
+            val parseMask = extractMasks(batch)
+            val parses = extractMBRParses(batch, parseMask, ev3)
+            maskCharts.data.waitUnmap()
+            parses
           }
         }.toIndexedSeq
       }
@@ -222,7 +227,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           ev = data.util.getRootScores(dest, devInside, devParentPtrs, batch.numSentences, structure.root, ev)
           if(semiring.needsScaling) {
             val scaledScores = dest.read(queue, ev).getFloats(batch.numSentences)
-            for(i <- 0 until batch.numSentences) yield semiring.toLogSpace(scaledScores(i), mask.insideScaleFor(i, 0, batch.lengths(i)))
+            for(i <- 0 until batch.numSentences) yield semiring.toLogSpace(scaledScores(i), mask.insideTopScaleFor(i, 0, batch.lengths(i)))
           } else {
             dest.read(queue, ev).getFloats(batch.numSentences)
           }
@@ -582,8 +587,84 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       trees
     }
 
+    def extractMBRParses(batch: Batch[W], mask: PruningMask, events: CLEvent*): ParSeq[BinarizedTree[C]] = {
+      require(mask.hasMasks, "Can't use null pruning mask for parse extraction!")
+      events.foreach(_.waitFor())
+      val in = if (profile) System.currentTimeMillis() else 0L
+      val trees = for (s <- 0 until batch.numSentences par) yield try {
+        val length = batch.sentences(s).length
 
-    private[CLParser] def getBatches(sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask): IndexedSeq[Batch[W]] = {
+        val bestScores = new TriangularArray[Float](length + 1)
+        val bestSplits = new TriangularArray[Int](length + 1)
+
+
+        for(span <- 1 to length; begin <- 0 to length - span) {
+          val end = begin + span
+          val topMask:DenseVector[Int] = mask.maskForTopCell(s, begin, end).get
+          val botMask:DenseVector[Int] = mask.maskForBotCell(s, begin, end).get
+
+          bestScores(begin, end) = {
+            val topFloat = java.lang.Float.intBitsToFloat(topMask(0))
+            val botFloat = java.lang.Float.intBitsToFloat(botMask(0))
+            val topScaled = topFloat * math.exp(mask.insideTopScaleFor(s, begin, end) + mask.outsideTopScaleFor(s, begin, end) - mask.insideTopScaleFor(s, 0, length))
+            val botScaled = botFloat * math.exp(mask.insideScaleFor(s, begin, end) + mask.outsideScaleFor(s, begin, end) - mask.insideTopScaleFor(s, 0, length))
+            assert(!topScaled.isInfinite, topScaled + " " + topFloat)
+            assert(!botScaled.isInfinite, botScaled + " " + botFloat)
+//            println(topScaled + botScaled)
+            (topScaled + botScaled).toFloat
+          }
+          if(span > 1) {
+            var bestSplitScore = Float.NegativeInfinity
+            var bestSplit = begin + 1
+            for(split <- (begin+1) until end) {
+              val splitScore = bestScores(begin, split) + bestScores(split, end)
+              if(splitScore > bestSplitScore) {
+                bestSplit = split
+                bestSplitScore = splitScore
+              }
+            }
+            bestSplits(begin, end) = bestSplit
+            bestScores(begin, end) += bestSplitScore
+          }
+        }
+
+        def extract(begin: Int, end: Int):BinarizedTree[C] = {
+          val topMask:DenseVector[Int] = mask.maskForTopCell(s, begin, end).get
+          val botMask:DenseVector[Int] = mask.maskForBotCell(s, begin, end).get
+          val bestBot = botMask(1)
+          val bestTop = topMask(1)
+          val lower = if(begin + 1 == end) {
+            val label = structure.refinements.labels.coarseIndex.get(bestBot)
+            NullaryTree(label, Span(begin, end))
+          } else {
+            val label = structure.refinements.labels.coarseIndex.get(bestBot)
+            val split = bestSplits(begin, end)
+            val left = extract(begin, split)
+            val right = extract(split, end)
+            BinaryTree(label, left, right, Span(begin, end))
+          }
+
+          val topLabel = structure.refinements.labels.coarseIndex.get(bestTop)
+
+          UnaryTree(topLabel, lower, IndexedSeq.empty, Span(begin, end))
+        }
+
+        extract(0, length)
+
+      } catch {
+        case ex: Throwable => ex.printStackTrace(); null
+      }
+      val out = if (profile) System.currentTimeMillis() else 0L
+      if (profile) {
+        println(s"Parse extraction took:  ${(out - in)/1000.0}s")
+      }
+      trees
+
+    }
+
+
+
+      private[CLParser] def getBatches(sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask): IndexedSeq[Batch[W]] = {
       val result = ArrayBuffer[Batch[W]]()
       var current = ArrayBuffer[IndexedSeq[W]]()
       var currentCellTotal = 0
