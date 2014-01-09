@@ -227,7 +227,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           ev = data.util.getRootScores(dest, devInside, devParentPtrs, batch.numSentences, structure.root, ev)
           if(semiring.needsScaling) {
             val scaledScores = dest.read(queue, ev).getFloats(batch.numSentences)
-            for(i <- 0 until batch.numSentences) yield semiring.toLogSpace(scaledScores(i), mask.insideScaleFor(i, 0, batch.lengths(i)))
+            for(i <- 0 until batch.numSentences) yield semiring.toLogSpace(scaledScores(i), mask.insideTopScaleFor(i, 0, batch.lengths(i)))
           } else {
             dest.read(queue, ev).getFloats(batch.numSentences)
           }
@@ -594,54 +594,62 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val trees = for (s <- 0 until batch.numSentences par) yield try {
         val length = batch.sentences(s).length
 
-        def recTop(begin: Int, end: Int):BinarizedTree[C] = {
-          val column:DenseVector[Int] = mask.maskForTopCell(s, begin, end).get
-          val x = firstSetBit(column:DenseVector[Int])
-          if (x == -1) {
-            assert(begin == end - 1, s"$column ($begin, $end) $length $s ${batch.numSentences}")
-            recBot(begin, end)
-          } else {
-            assert(column.valuesIterator.exists(_ != 0), (begin, end))
-            //            val label = structure.nontermIndex.get(x)
-            val label = structure.refinements.labels.coarseIndex.get(x)
-            val t = recBot(begin, end)
-            new UnaryTree[C](label, t, IndexedSeq.empty, Span(begin, end))
-          }
-        }
+        val bestScores = new TriangularArray[Float](length + 1)
+        val bestSplits = new TriangularArray[Int](length + 1)
 
-        def recBot(begin: Int, end: Int):BinarizedTree[C] = {
-          val column:DenseVector[Int] = mask.maskForBotCell(s, begin, end).get
-          val x = firstSetBit(column:DenseVector[Int])
-          if (begin == end - 1) {
-            //            val label = structure.termIndex.get(x)
-            val label = structure.refinements.labels.coarseIndex.get(x)
-            NullaryTree(label, Span(begin, end))
-          } else {
-            //            val label = structure.nontermIndex.get(x)
-            val label = structure.refinements.labels.coarseIndex.get(x)
-            for (split <- (begin+1) until end) {
-              val leftIsTerminal = begin == split - 1
-              val rightIsTerminal = end == split + 1
-              val left = if(leftIsTerminal) mask.isAllowedSpan(s, begin, split) else mask.isAllowedTopSpan(s, begin, split)
-              val right = if(rightIsTerminal) mask.isAllowedSpan(s, split, end) else mask.isAllowedTopSpan(s, split, end)
-              if (left && right) {
-                return BinaryTree[C](label, recTop(begin, split), recTop(split, end), Span(begin, end))
+
+        for(span <- 1 to length; begin <- 0 to length - span) {
+          val end = begin + span
+          val topMask:DenseVector[Int] = mask.maskForTopCell(s, begin, end).get
+          val botMask:DenseVector[Int] = mask.maskForBotCell(s, begin, end).get
+
+          bestScores(begin, end) = {
+            val topFloat = java.lang.Float.intBitsToFloat(topMask(0))
+            val botFloat = java.lang.Float.intBitsToFloat(botMask(0))
+            val topScaled = topFloat * math.exp(mask.insideTopScaleFor(s, begin, end) + mask.outsideTopScaleFor(s, begin, end) - mask.insideTopScaleFor(s, 0, length))
+            val botScaled = botFloat * math.exp(mask.insideScaleFor(s, begin, end) + mask.outsideScaleFor(s, begin, end) - mask.insideTopScaleFor(s, 0, length))
+            assert(!topScaled.isInfinite, topScaled + " " + topFloat)
+            assert(!botScaled.isInfinite, botScaled + " " + botFloat)
+//            println(topScaled + botScaled)
+            (topScaled + botScaled).toFloat
+          }
+          if(span > 1) {
+            var bestSplitScore = Float.NegativeInfinity
+            var bestSplit = begin + 1
+            for(split <- (begin+1) until end) {
+              val splitScore = bestScores(begin, split) + bestScores(split, end)
+              if(splitScore > bestSplitScore) {
+                bestSplit = split
+                bestSplitScore = splitScore
               }
             }
-
-            error(s"nothing here $length!" + " "+ (begin, end) +
-              {for (split <- (begin+1) until end) yield {
-                val leftIsTerminal = begin == split - 1
-                val rightIsTerminal = end == split + 1
-                val left = if(leftIsTerminal) mask.isAllowedSpan(s, begin, split) else mask.isAllowedTopSpan(s, begin, split)
-                val right = if(rightIsTerminal) mask.isAllowedSpan(s, split, end) else mask.isAllowedTopSpan(s, split, end)
-                (ChartHalf.chartIndex(begin, split, length), ChartHalf.chartIndex(split, end, length), split, left,right)
-
-              }} + " " +batch.sentences(s))
+            bestSplits(begin, end) = bestSplit
+            bestScores(begin, end) += bestSplitScore
           }
         }
 
-        recTop(0, length)
+        def extract(begin: Int, end: Int):BinarizedTree[C] = {
+          val topMask:DenseVector[Int] = mask.maskForTopCell(s, begin, end).get
+          val botMask:DenseVector[Int] = mask.maskForBotCell(s, begin, end).get
+          val bestBot = botMask(1)
+          val bestTop = topMask(1)
+          val lower = if(begin + 1 == end) {
+            val label = structure.refinements.labels.coarseIndex.get(bestBot)
+            NullaryTree(label, Span(begin, end))
+          } else {
+            val label = structure.refinements.labels.coarseIndex.get(bestBot)
+            val split = bestSplits(begin, end)
+            val left = extract(begin, split)
+            val right = extract(split, end)
+            BinaryTree(label, left, right, Span(begin, end))
+          }
+
+          val topLabel = structure.refinements.labels.coarseIndex.get(bestTop)
+
+          UnaryTree(topLabel, lower, IndexedSeq.empty, Span(begin, end))
+        }
+
+        extract(0, length)
 
       } catch {
         case ex: Throwable => ex.printStackTrace(); null

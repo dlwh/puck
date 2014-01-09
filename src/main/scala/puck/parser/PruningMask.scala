@@ -19,7 +19,9 @@ trait PruningMask {
   def isAllowedTopSpan(sent: Int, begin: Int, end: Int) = !hasMasks || maskForTopCell(sent, begin, end).forall(BitHacks.any)
 
   def insideScaleFor(sent: Int, begin: Int, end: Int): Float
+  def insideTopScaleFor(sent: Int, begin: Int, end: Int): Float
   def outsideScaleFor(sent: Int, begin: Int, end: Int): Float
+  def outsideTopScaleFor(sent: Int, begin: Int, end: Int): Float
 
   def maskForBotCell(sent: Int, begin: Int, end: Int):Option[DenseVector[Int]]
   def maskForTopCell(sent: Int, begin: Int, end: Int):Option[DenseVector[Int]]
@@ -45,9 +47,13 @@ object NoPruningMask extends PruningMask {
 
 
   def insideScaleFor(sent: Int, begin: Int, end: Int): Float = 0.0f
-
-
   def outsideScaleFor(sent: Int, begin: Int, end: Int): Float = 0.0f
+
+
+  def insideTopScaleFor(sent: Int, begin: Int, end: Int): Float = 0.0f
+
+
+  def outsideTopScaleFor(sent: Int, begin: Int, end: Int): Float = 0.0f
 
   def maskForBotCell(sent: Int, begin: Int, end: Int): Option[DenseVector[Int]] = None
 
@@ -69,6 +75,9 @@ case class DenseMatrixMask(matrix: DenseMatrix[Int],
 
   def insideScaleFor(sent: Int, begin: Int, end: Int) = insideScale(cellOffsets(sent) + ChartHalf.chartIndex(begin, end, lengths(sent)))
   def outsideScaleFor(sent: Int, begin: Int, end: Int) = outsideScale(cellOffsets(sent) + ChartHalf.chartIndex(begin, end, lengths(sent)))
+
+  def insideTopScaleFor(sent: Int, begin: Int, end: Int) = insideScale((cellOffsets(sent + 1) + cellOffsets(sent))/2 + ChartHalf.chartIndex(begin, end, lengths(sent)))
+  def outsideTopScaleFor(sent: Int, begin: Int, end: Int) = outsideScale((cellOffsets(sent + 1) + cellOffsets(sent))/2 + ChartHalf.chartIndex(begin, end, lengths(sent)))
 
 
   def hasMasks: Boolean = true
