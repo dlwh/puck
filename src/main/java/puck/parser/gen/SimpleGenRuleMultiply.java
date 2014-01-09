@@ -143,8 +143,10 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         			declaredRight.put(rightIndex, right);
         		}
 
-        		sb.append(String.format("%s = semiring_mad(%s, %s, %ff);\n", parent, parent, semiring.times(left, right), semiring.fromLogSpace((float)structure.scores()[rule.ruleId()])));
-        		
+        		sb.append(String.format("%s = semiring_mad(%s, %s, %ff);\n", parent, parent, semiring.times(left, right),structure.scores()[rule.ruleId()]));
+//                if(writeDirectToChart && semiring.needsScaling() && name.startsWith("inside_tn"))
+//                    sb.append(String.format("if(pi == 5 && %s >= 1.0f) printf(\"%d %%e %%e %%e\\n\", %s, %s, %s);\n", parent, parentIndex, parent,left, right));
+
         		parentCounts.put(parentIndex, parentCounts.get(parentIndex)-1);
         		if (parentCounts.get(parentIndex) == 0) {
 
