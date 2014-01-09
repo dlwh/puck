@@ -339,12 +339,12 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
             "      }\n"+
             "     \n" +
             " #endif \n" +
-            "     inline void write_parent_atomic(volatile __global float* loc, float value) {\n" +
+            "     inline void write_parent_atomic(volatile __global float* loc, const float value) {\n" +
             "       intbox old;\n" +
-            "       value = semiring_add(*loc, value);\n" +
-            "       old.oldf = value;\n" +
+            "       old.oldf = *loc;\n" +
+            "       float z = semiring_add(old.oldf, value);\n" +
             "     \n" +
-            "       while((old.old = atomic_cmpxchg((volatile __global int*)loc, old.old, *(int*)&value)) !=  *(int*)&value) value = semiring_add(value, old.oldf);\n" +
+            "       while((old.old = atomic_cmpxchg((volatile __global int*)loc, old.old, *(int*)&z)) !=  *(int*)&z) z = semiring_add(old.oldf, value);\n" +
             "     }\n\n\n";
 
 }
