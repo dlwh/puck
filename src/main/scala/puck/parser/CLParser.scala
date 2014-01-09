@@ -287,6 +287,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       var ev = evZeroCharts
 
       if(batch.hasMasks && semiring.needsScaling) {
+        println(batch.masks.getIScales.toArray.toIndexedSeq)
+        println(batch.masks.getOScales.toArray.toIndexedSeq)
         ev = devInsideScale.write(queue, batch.masks.getIScales, false, ev).profileIn(hdTransferEvents)
         ev = devOutsideScale.write(queue, batch.masks.getOScales, false, ev).profileIn(hdTransferEvents)
       }
@@ -298,10 +300,18 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       for (span <- 2 to batch.maxLength) {
         print(s"$span ")
         ev = insideBinaryPass(batch, span, ev)
-//        queue.finish()
-//        println(batch.insideCharts.head.bot.toString(structure, _zero))
+
         ev = insideNU.doUpdates(batch, span, ev)
 
+      }
+
+      if(CLParser.this.data.last eq this.data) {
+        queue.finish()
+        println("=======")
+        println(batch.insideCharts.head.bot.toString(structure, _zero))
+        println("-------")
+        println(batch.insideCharts.head.top.toString(structure, _zero))
+        println("=======")
       }
 
       if (profile) {
