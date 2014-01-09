@@ -91,7 +91,7 @@ object RealSemiring extends RuleSemiring {
 
   def plusIsIdempotent: Boolean = false
 
-  def includes= "inline float semiring_mad(float x, float y, float z) {\n" + "	/*return mad(y, z, x);*/ return x + y * z;\n" + "} inline float semiring_add(float x, float y) { return x + y; }\n\n\n"
+  def includes= "inline float semiring_mad(float x, float y, float z) {\n" + "	return mad(y, z, x);\n" + "} inline float semiring_add(float x, float y) { return x + y; }\n\n\n"
 
 
   override def needsScaling: Boolean = true
