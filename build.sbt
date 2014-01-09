@@ -18,7 +18,7 @@ libraryDependencies ++= Seq(
 
 fork := true
 
-javaOptions ++= Seq("-Xmx12g", "-Xrunhprof:cpu=samples,depth=12")
+javaOptions ++= Seq("-Xmx12g")
 
 
 

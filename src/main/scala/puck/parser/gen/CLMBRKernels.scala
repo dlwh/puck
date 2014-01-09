@@ -73,7 +73,7 @@ object CLMBRKernels {
     val cellSize = (structure.numNonTerms max structure.numTerms)
     val maskSize = puck.roundUpToMultipleOf(structure.numCoarseSyms, 32) / 32
 
-    val prog = context.createProgram(programText(cellSize, structure))
+    val prog = context.createProgram(programText(cellSize, structure, semiring))
 
     CLMBRKernels(maskSize, prog.createKernel("computeMBR"))
   }
@@ -98,9 +98,8 @@ object CLMBRKernels {
     maskStrings.mkString("(!((", ") | (", ")) )")
   }
 
-  def programText[L, C](cellSize: Int, structure: RuleStructure[C, L]): String = {
-
-
+  def programText[L, C](cellSize: Int, structure: RuleStructure[C, L], semiring: RuleSemiring): String = {
+    semiring.includes+
     """
     typedef struct {float score; int symbol; int ignoreMe[2];} decode_t;
       #define NUM_SYMS """ + cellSize + """
@@ -143,7 +142,11 @@ __kernel void computeMBR(__global decode_t* decodeOut,
       coarseMargs[coarseSym] = 0.0f;
     }
     for(int sym = 0; sym < NUM_SYMS; ++sym) {
-      coarseMargs[projections[sym]] += in[sym]/root_score * out[sym];
+""" + if (semiring.isInstanceOf[LogSumRuleSemiring.type]) {
+    "coarseMargs[projections[sym]] = semiring_add(coarseMargs[projections[sym]], in[sym] - root_score + out[sym]);\n"
+  } else {
+    "coarseMargs[projections[sym]] += in[sym]/root_score * out[sym];\n"
+  } + """
     }
       
     decode_t myDecode;

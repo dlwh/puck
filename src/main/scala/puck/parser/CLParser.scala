@@ -188,7 +188,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           var ev = inside(batch)
           ev = outside(batch, ev)
 
-          if(!data.isScaling) {
+          if(!data.isScaling && !data.isLogSum) {
             val ev3 = computeViterbiMasks(batch, ev)
             Option(ev3).foreach(_.waitFor())
             val parseMask = extractMasks(batch, false)
@@ -1052,6 +1052,7 @@ object CLParser extends Logging {
                     mem: String = "1g",
                     reproject: Boolean = true,
                     viterbi: Boolean = true,
+                    logsum: Boolean = false,
                     printTrees: Boolean = false)
 
   def main(args: Array[String]) = {
@@ -1105,13 +1106,17 @@ object CLParser extends Logging {
       null
     }
 
-    val defaultGenerator = GenType.VariableLength
+    val defaultGenerator = GenType.CoarseParent
     val prunedGenerator = GenType.CoarseParent
 
-    val finePassSemiring = if(viterbi || grammars.length == 1) {
+    val finePassSemiring = if(viterbi) {
       ViterbiRuleSemiring
     } else {
-      RealSemiring
+      if (logsum) {
+    	  LogSumRuleSemiring
+      } else {
+    	  RealSemiring
+      }
     }
 
     if (parserData == null || parserData.grammar.signature != grammar.signature) {
@@ -1312,6 +1317,7 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 
   def isViterbi = semiring.plusIsIdempotent
   def isScaling = semiring.isInstanceOf[RealSemiring.type]
+  def isLogSum = semiring.isInstanceOf[LogSumRuleSemiring.type]
 
   def numSyms = structure.nontermIndex.size max structure.termIndex.size
   def maskSize = masks.maskSize

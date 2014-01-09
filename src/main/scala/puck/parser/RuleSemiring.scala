@@ -42,7 +42,7 @@ object ViterbiRuleSemiring extends RuleSemiring {
       "inline float semiring_add(float x, float y) { return max(x,y); }\n\n\n"
 }
 
-object LogSpaceRuleSemiring extends RuleSemiring {
+object LogSumRuleSemiring extends RuleSemiring {
   def zero: Float = -1000000.0f
 
   def one: Float = 0.0f
