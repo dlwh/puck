@@ -613,17 +613,27 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           bestScores(begin, end) = {
             val topFloat = java.lang.Float.intBitsToFloat(topMask(0))
             val botFloat = java.lang.Float.intBitsToFloat(botMask(0))
-            val topScaled = topFloat * math.exp(batch.masks.insideTopScaleFor(s, begin, end) + batch.masks.outsideTopScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length))
-            val botScaled = botFloat * math.exp(batch.masks.insideScaleFor(s, begin, end) + batch.masks.outsideScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length))
-            assert(!topScaled.isInfinite, topScaled + " " + topFloat)
-            assert(!botScaled.isInfinite, botScaled + " " + botFloat)
-//            println(topScaled + botScaled)
+            var topScaled = topFloat * math.exp(batch.masks.insideTopScaleFor(s, begin, end) + batch.masks.outsideTopScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length))
+            var botScaled = botFloat * math.exp(batch.masks.insideScaleFor(s, begin, end) + batch.masks.outsideScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length))
+            if(topScaled.isInfinite || botScaled.isInfinite) {
+              println("Overflow! taking counter measures")
+            }
+            if (topScaled.isNaN) {
+              topScaled = 0.0f
+            }
+            if (botScaled.isNaN) {
+              botScaled = 0.0f
+            }
+
+            topScaled = math.min(topScaled, 1.0f)
+            botScaled = math.min(botScaled, 1.0f)
+            //            println(topScaled + botScaled)
             useUnary(begin, end) = (begin + 1 < end) || topScaled > unaryThreshold
             val score = if(useUnary(begin, end))
               (topScaled + botScaled).toFloat
             else
               botScaled.toFloat
-//            assert(score < 2.2, botScaled + " " + topScaled)
+            //            assert(score < 2.2, botScaled + " " + topScaled)
             score
           }
 
