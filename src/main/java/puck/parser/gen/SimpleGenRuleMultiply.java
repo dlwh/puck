@@ -92,7 +92,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         }
 
         for (int m=0; m<NUM_SM; ++m) {
-        	sb.append("static void subpart"+m+"(const mask_t mask, __global volatile float* parents, __global int* parentIndex, int row, __global float* left, __global float* right, int numRows) {\n");
+        	sb.append("static void subpart"+m+"(const mask_t mask, __global volatile float* parents, __global int* parentIndex, int row, __global float* left, __global float* right, float scale, int numRows) {\n");
 //        	if (!subsegments[m].isEmpty()) sb.append(String.format("if (%s) return;\n", CLMaskKernels.genCheckIfMaskIsEmpty(structure, "mask", getParents(subsegments[m]))));
         	Map<Integer,String> declaredParents = new HashMap<Integer, String>();
         	Map<Integer,String> declaredLeft = new HashMap<Integer, String>();
@@ -149,6 +149,9 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         		if (parentCounts.get(parentIndex) == 0) {
 
                     if(writeDirectToChart) {
+                        if(semiring.needsScaling()) {
+                            sb.append(parent + " *= scale;");
+                        }
                         String dest = String.format("parents[pi * "+cellSize+" + %d]", parentIndex);
                         String src = parent;
                         sb.append(genWriteSymbol(dest, src, false, supportsExtendedAtomics));
@@ -180,19 +183,30 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 
         sb.append(String.format(
                 " __kernel void %s(__global volatile float* parents," +
-                "                  __global int* parentIndex, " +
+                                "__global const float* parentScale," +
+                "                  __global int* parentIndex, " + // cell offset into parents column if writeDirect, and always parentScale
                 "                  __global float* left," +
+                "                  __global const float* leftScale," +
+                        "                  __global int* leftIndex, " +
                 "                  __global float* right,"  +
+                "                  __global const float* rightScale," +
+                        "                  __global int* rightIndex, " +
                 "                  __global const mask_t* masks, int numRows, int cellsToDo) {\n" +
                 "    int numWorkers = get_global_size(0);\n" +
                 "    int grammarSubPartition = get_group_id(1);\n" +
                 "    for (int row = get_global_id(0); row < cellsToDo; row += numWorkers) {\n" +
                 "      const mask_t mask = masks[parentIndex[row]];\n", name));
         sb.append("\n\n");
-        
+
+        if(semiring.needsScaling()) {
+            sb.append("float scale = native_exp(parentScale[parentIndex[row]] - rightScale[rightIndex[row]] - leftScale[leftIndex[row]] );");
+        } else {
+            sb.append("float scale = 1.0f;");
+        }
+
         sb.append("switch (grammarSubPartition) {\n");
         for (int m=0; m<NUM_SM; ++m) {
-        	sb.append("case "+m+": subpart"+m+"(mask, parents, parentIndex, row, left, right, numRows); continue;\n");
+        	sb.append("case "+m+": subpart"+m+"(mask, parents, parentIndex, row, left, right, scale, numRows); continue;\n");
         }
         sb.append("default: continue;\n");
         sb.append("}\n");
@@ -225,7 +239,13 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         appendAddition(sb);
         sb.append("\n\n\n");
         sb.append(String.format(
-                " __kernel void %s(__global volatile float* parents, __global float* child, int numRows, int cellsToDo) {\n" +
+                " __kernel void %s(__global volatile float* parents," +
+                        "__global const float* parentScale," +
+                        "                  __global int* parentIndex, " + // cell offset into parents column if writeDirect, and always parentScale
+                        " __global float* child, " +
+                        "__global const float* childScale," +
+                        "                  __global int* childIndex, " + // cell offset into childs column if writeDirect, and always childScale
+                        "int numRows, int cellsToDo) {\n" +
                 "    int numWorkers = get_global_size(0);\n" +
                 "    int grammarSubPartition = get_group_id(1);\n" +
                 "    for (int row = get_global_id(0); row < cellsToDo; row += numWorkers) {\n", name));
@@ -233,6 +253,12 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 
         Map<Integer,String> declaredParents = new HashMap<Integer, String>(),
                 declaredLeft = new HashMap<Integer, String>();
+
+        if(semiring.needsScaling()) {
+            sb.append("float scale = native_exp(parentScale[parentIndex[row]] - childScale[childIndex[row]]);");
+        } else {
+            sb.append("float scale = 1.0f;");
+        }
 
         // todo: reorder to sensible groupings
         for(IndexedUnaryRule<C, L> rule : segment) {
@@ -257,7 +283,11 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 
         sb.append("// write out\n");
         for(Map.Entry<Integer, String> e: declaredParents.entrySet()) {
-            sb.append(String.format("parents[%d * numRows + row] = %s;\n", e.getKey(), e.getValue()));
+            if(semiring.needsScaling()) {
+                sb.append(String.format("parents[%d * numRows + row] = %s * scale;\n", e.getKey(), e.getValue()));
+            } else {
+              sb.append(String.format("parents[%d * numRows + row] = %s;\n", e.getKey(), e.getValue()));
+            }
         }
 
         sb.append("}\n");
