@@ -170,7 +170,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val zmk = ZeroMemoryKernel()
   private val transposeCopy = CLMatrixTransposeCopy()
 
-  private val parsers = (0 until data.length).map(i => new ActualParser(data(i), i < data.length - 1 && data(i).isScaling))
+  private val parsers = (0 until data.length).map(i => new ActualParser(data(i), i < data.length - 1 && data(i + 1).isScaling))
   var pruned = 0
   var total = 0
   var rulesEvaled = 0L
