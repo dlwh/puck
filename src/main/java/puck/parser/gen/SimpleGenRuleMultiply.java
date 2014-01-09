@@ -118,10 +118,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         		String parent = declaredParents.get(parentIndex);
         		if(parent == null) {
         			parent = "parent_" + parentIndex;
-                    if(writeDirectToChart)
-                        sb.append(String.format("float parent_%d = %s;\n", parentIndex, floatToString(semiring.zero())));
-        			else
-                        sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
+                    sb.append(String.format("float parent_%d = %s;\n", parentIndex, floatToString(semiring.zero())));
 
         			declaredParents.put(parentIndex, parent);
         		}
@@ -276,8 +273,8 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         	String parent = declaredParents.get(parentIndex);
         	if(parent == null) {
         		parent = "parent_" + parentIndex;
-//        		sb.append(String.format("float parent_%d = %s;\n", parentIndex, floatToString(semiring.zero())));
-                sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
+        		sb.append(String.format("float parent_%d = %s;\n", parentIndex, floatToString(semiring.zero())));
+//                sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
         		declaredParents.put(parentIndex, parent);
         	}
         	
@@ -295,7 +292,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         sb.append("// write out\n");
         for(Map.Entry<Integer, String> e: declaredParents.entrySet()) {
             if(semiring.needsScaling()) {
-                sb.append(String.format("parents[%d * numRows + row] = %s * scale;\n", e.getKey(), e.getValue()));
+                sb.append(String.format("parents[%d * numRows + row] += %s * scale;\n", e.getKey(), e.getValue()));
             } else {
               sb.append(String.format("parents[%d * numRows + row] = %s;\n", e.getKey(), e.getValue()));
             }
@@ -312,7 +309,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
     public String genWriteSymbol(String dest, String src, boolean symIsUniqueToSubsegmentation, boolean supportsExtendedAtomics) {
 //        return String.format("write_parent_atomic_nvidia_gen(&%s, %s);\n", dest, src);
     	if(symIsUniqueToSubsegmentation) {
-            return String.format("%s = %s;\n", dest, src);
+            return String.format("%s = semiring_add(%s, %s);\n", dest, dest, src);
         } else if(semiringIsViterbi() && GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics && NVIDIA_IS_STILL_STUPID) {
             return String.format("write_parent_atomic_nvidia_gen(&%s, %s);\n", dest, src);
         } else if(semiringIsViterbi() & GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics) {
