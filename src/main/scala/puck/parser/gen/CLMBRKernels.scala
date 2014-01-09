@@ -19,7 +19,7 @@ case class CLMBRKernels(maskSize: Int, getMasksKernel: CLKernel) {
 
 
   def write(out: ZipOutputStream) {
-    ZipUtil.addKernel(out, "computeMasksKernel", getMasksKernel)
+    ZipUtil.addKernel(out, "computeMBRKernel", getMasksKernel)
     ZipUtil.serializedEntry(out, "MasksInts", Array(maskSize))
   }
 
@@ -28,7 +28,7 @@ case class CLMBRKernels(maskSize: Int, getMasksKernel: CLKernel) {
                outside: CLMatrix[Float],
                chartIndices: Array[Int],
                lengths: Array[Int],
-               root: Int, threshold: Float,
+               root: Int,
                events: CLEvent*)(implicit queue: CLQueue):CLEvent = {
     require(masks.rows == maskSize, masks.rows + " " + maskSize)
     require(masks.cols == inside.cols)
@@ -48,7 +48,7 @@ case class CLMBRKernels(maskSize: Int, getMasksKernel: CLKernel) {
     getMasksKernel.setArgs(masks.data.safeBuffer,
       inside.data.safeBuffer, outside.data.safeBuffer, intBufferCI, intBufferL,
       Integer.valueOf(chartIndices(chartIndices.length-1)), Integer.valueOf(inside.rows),
-      Integer.valueOf(root), java.lang.Float.valueOf(threshold))
+      Integer.valueOf(root))
     //, LocalSize.ofIntArray(fieldSize * groupSize * 5))
 
     val ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices.length-1, 1), Array(1, 1), evCI, evL)
@@ -66,7 +66,7 @@ case class CLMBRKernels(maskSize: Int, getMasksKernel: CLKernel) {
 object CLMBRKernels {
   def read(zf: ZipFile)(implicit ctxt: CLContext) = {
     val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("MasksInts")))
-    CLMaskKernels(ints(0), ZipUtil.readKernel(zf, "computeMasksKernel"))
+    CLMBRKernels(ints(0), ZipUtil.readKernel(zf, "computeMBRKernel"))
   }
 
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
@@ -75,7 +75,7 @@ object CLMBRKernels {
 
     val prog = context.createProgram(programText(cellSize, structure))
 
-    CLMaskKernels(maskSize, prog.createKernel("computeMasks"))
+    CLMBRKernels(maskSize, prog.createKernel("computeMBR"))
   }
 
 
@@ -124,15 +124,13 @@ __kernel void computeMBR(__global decode_t* decodeOut,
                            __global const int* lengths,
                            const int numIndices,
                            int numSyms,
-                           int root,
-                           float thresh) {
+                           int root) {
   const int sentence = get_global_id(0);
   const int firstCell = indices[sentence];
   const int lastCell = indices[sentence + 1];
   int length = lengths[sentence];
   const float root_score = inside[(lastCell-1) * numSyms + root];
 
-  float cutoff = root_score + thresh;
 
   for(int cell = firstCell; cell < lastCell; cell++) {
     __constant const int* projections = (cell-firstCell >= length) ? nonterminalProjections : terminalProjections;
@@ -140,12 +138,12 @@ __kernel void computeMBR(__global decode_t* decodeOut,
     __global const float* in = inside + (cell * numSyms);
     __global const float* out = outside + (cell * numSyms);
       
-    float["""+structure.numCoarseSyms+"""] coarseMargs;
+    float coarseMargs["""+structure.numCoarseSyms+"""];
     for(int coarseSym = 0; coarseSym < """+structure.numCoarseSyms+"""; ++coarseSym) {
       coarseMargs[coarseSym] = 0.0f;
     }
     for(int sym = 0; sym < NUM_SYMS; ++sym) {
-      coarseMargs[projections[sym]] += in[sym] * out[sym];
+      coarseMargs[projections[sym]] += in[sym]/root_score * out[sym];
     }
       
     decode_t myDecode;

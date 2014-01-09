@@ -159,7 +159,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private lazy val devSplitPointOffsets = context.createIntBuffer(CLMem.Usage.Input, maxNumWorkCells + 1)
   // transposed
   private val devInsideRaw, devOutsideRaw = context.createFloatBuffer(CLMem.Usage.InputOutput, numDefaultChartCells/2 * cellSize)
-  private val devInsideScale, devOutsideScale = context.createFloatBuffer(CLMem.Usage.InputOutput, numDefaultChartCells / 2)
+  private lazy val devInsideScale, devOutsideScale = context.createFloatBuffer(CLMem.Usage.InputOutput, maxNumChartCells)
+  private lazy val ptrScale = Pointer.allocateFloats(devInsideScale.getElementCount)
   //  private val maskCharts = new CLMatrix[Int](maskSize, numDefaultChartCells)
   private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
   lazy val defaultInsideScales = DenseVector.zeros[Float](maxNumChartCells)
@@ -169,7 +170,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val zmk = ZeroMemoryKernel()
   private val transposeCopy = CLMatrixTransposeCopy()
 
-  private val parsers = data.map(new ActualParser(_))
+  private val parsers = (0 until data.length).map(i => new ActualParser(data(i), i < data.length - 1 && data(i).isScaling))
   var pruned = 0
   var total = 0
   var rulesEvaled = 0L
@@ -177,7 +178,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   var rulesTotal = 0L
   var sortTime = 0L
 
-  private class ActualParser(val data: CLParserData[C, L, W]) {
+  private class ActualParser(val data: CLParserData[C, L, W], nextParserNeedsScales: Boolean) {
     import data._
 
 
@@ -186,12 +187,17 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         getBatches(sentences, mask).iterator.flatMap { batch =>
           var ev = inside(batch)
           ev = outside(batch, ev)
-          val ev3 = computeViterbiMasks(batch, ev)
-          Option(ev3).foreach(_.waitFor())
-          val parseMask = extractMasks(batch)
-          val parses = extractParses(batch, parseMask, ev3)
-          maskCharts.data.waitUnmap()
-          parses
+
+          if(data.isScaling) {
+            val ev3 = computeViterbiMasks(batch, ev)
+            Option(ev3).foreach(_.waitFor())
+            val parseMask = extractMasks(batch)
+            val parses = extractParses(batch, parseMask, ev3)
+            maskCharts.data.waitUnmap()
+            parses
+          } else {
+            IndexedSeq.empty
+          }
         }.toIndexedSeq
       }
     }
@@ -201,7 +207,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         getBatches(sentences, mask).iterator.foreach { batch =>
           var ev = inside(batch)
           ev = outside(batch, ev)
-          val ev3 = computeViterbiMasks(batch, ev)
+          val ev3 = if(data.isViterbi) computeViterbiMasks(batch, ev) else computeMBRParts(batch, ev)
           Option(ev3).foreach(_.waitFor())
         }
       }
@@ -248,11 +254,18 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def extractMasks(batch: Batch[W]): DenseMatrixMask = {
       val denseMasks = maskCharts(::, 0 until batch.numCellsUsed).toDense
       maskCharts.data.waitUnmap()
-      val insideEv = data.scaling.getScaling(devInsideScale, devInside(::, 0 until batch.numCellsUsed))
-      val outsideEv = data.scaling.getScaling(devOutsideScale, devOutside(::, 0 until batch.numCellsUsed))
-      val inside = new DenseVector(devInsideScale.read(queue, insideEv).getFloats(batch.numCellsUsed))
-      val outside = new DenseVector(devOutsideScale.read(queue, outsideEv).getFloats(batch.numCellsUsed))
-      new DenseMatrixMask(denseMasks, inside, outside, batch.sentences.map(_.length).toArray, batch.cellOffsets)
+      if(nextParserNeedsScales) {
+        val insideEv = data.scaling.getScaling(devInsideScale, devInside(::, 0 until batch.numCellsUsed))
+        val outsideEv = data.scaling.getScaling(devOutsideScale, devOutside(::, 0 until batch.numCellsUsed))
+        devInsideScale.read(queue, 0, batch.numCellsUsed, ptrScale, true, insideEv)
+        val inside = new DenseVector(ptrScale.getFloats(batch.numCellsUsed))
+        devOutsideScale.read(queue, 0, batch.numCellsUsed, ptrScale, true, outsideEv)
+        val outside = new DenseVector(ptrScale.getFloats(batch.numCellsUsed))
+        new DenseMatrixMask(denseMasks, inside, outside, batch.lengths, batch.cellOffsets)
+      } else {
+        new DenseMatrixMask(denseMasks, defaultInsideScales(0 until batch.numCellsUsed), defaultOutsideScales(0 until batch.numCellsUsed), batch.lengths, batch.cellOffsets)
+
+      }
     }
 
     def myCellSize:Int = roundUpToMultipleOf(data.numSyms, 32)
@@ -382,6 +395,25 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       computeMasks(batch, -4E-3f, events:_*)
     }
 
+    private def computeMBRParts(batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
+      if(profile) {
+        allProfilers.foreach(_.clear())
+        allProfilers.foreach(_.tick())
+      }
+
+      val evr = data.mbr.getMasks(maskCharts(::, 0 until batch.numCellsUsed),
+        devInside(::, 0 until batch.numCellsUsed),
+        devOutside(::, 0 until batch.numCellsUsed),
+        batch.cellOffsets, batch.lengths, structure.root, events:_*) profileIn masksEvents
+      if (profile) {
+        queue.finish()
+        allProfilers.foreach(_.tock())
+        allProfilers.foreach(p => println(s"Masks $p"))
+      }
+
+      evr
+    }
+
     def initializeTagScores(batch: Batch[W], events: CLEvent*) = {
       val totalLength = batch.totalLength
       val tagScores = DenseMatrix.zeros[Float](totalLength, myCellSize)
@@ -430,6 +462,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       evr
     }
+
+
 
     private def insideBinaryPass(batch: Batch[W], span: Int, events: CLEvent*) = {
       var ev = events
@@ -1152,6 +1186,7 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
                                  inside: CLInsideKernels,
                                  outside: CLOutsideKernels,
                                  masks: CLMaskKernels,
+                                 mbr: CLMBRKernels,
                                  scaling: CLScalingKernels,
                                  util: CLParserUtils) {
 
@@ -1170,6 +1205,7 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     outside.write(zout)
     util.write(zout)
     masks.write(zout)
+    mbr.write(zout)
     scaling.write(zout)
     zout.close()
   }
@@ -1193,9 +1229,10 @@ object CLParserData {
     val outside =  CLOutsideKernels.make(structure, directWrite, semiring, genType)
     val util = CLParserUtils.make(structure)
     val masks = CLMaskKernels.make(structure)
+    val mbr = CLMBRKernels.make(structure)
     val scaling = CLScalingKernels.make(structure)
 
-    new CLParserData(grammar, structure, viterbi, inside, outside, masks, scaling, util)
+    new CLParserData(grammar, structure, viterbi, inside, outside, masks, mbr, scaling, util)
   }
 
   def read[C, L, W](file: ZipFile)(implicit context: CLContext) = {
@@ -1206,8 +1243,9 @@ object CLParserData {
     val outside = CLOutsideKernels.read(file)
     val util = CLParserUtils.read(file)
     val masks = CLMaskKernels.read(file)
+    val mbr = CLMBRKernels.read(file)
     val scaling = CLScalingKernels.read(file)
 
-    CLParserData(gr, structure, semiring, inside, outside, masks, scaling, util)
+    CLParserData(gr, structure, semiring, inside, outside, masks, mbr, scaling, util)
   }
 }
