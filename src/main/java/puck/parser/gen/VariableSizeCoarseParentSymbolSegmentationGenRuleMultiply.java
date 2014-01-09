@@ -27,17 +27,16 @@ public class VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply<C, L> ext
 	}
 
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {
-//		List<IndexedUnaryRule<C, L>>[] segmentation = maxSizeSegmentUnaries(indexedUnaryRules, MAX_RULES_PER_UNARY_SEGMENT);
-//		double min = Double.POSITIVE_INFINITY;
-//		double max = Double.NEGATIVE_INFINITY;
-//		for (List segment : segmentation) {
-//			min = Math.min(segment.size(), min);
-//			max = Math.max(segment.size(), max);
-//		}
-//		System.out.println("min unary segment size: "+min);
-//		System.out.println("max unary segment size: "+max);
-//		return segmentation;
-        return new List[] {indexedUnaryRules};
+		List<IndexedUnaryRule<C, L>>[] segmentation = new List[] {indexedUnaryRules};
+		double min = Double.POSITIVE_INFINITY;
+		double max = Double.NEGATIVE_INFINITY;
+		for (List segment : segmentation) {
+			min = Math.min(segment.size(), min);
+			max = Math.max(segment.size(), max);
+		}
+		System.out.println("min unary segment size: "+min);
+		System.out.println("max unary segment size: "+max);
+		return segmentation;
 	}
 	
 	public List<IndexedUnaryRule<C, L>>[] maxSizeSegmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules, int maxSize) {

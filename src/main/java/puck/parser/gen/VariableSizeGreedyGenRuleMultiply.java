@@ -12,9 +12,7 @@ public class VariableSizeGreedyGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 	}
 
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {
-		double numUnaries = indexedUnaryRules.size();
 		List<IndexedUnaryRule<C, L>>[] segmentation = new List[] {indexedUnaryRules};
-		
 		double min = Double.POSITIVE_INFINITY;
 		double max = Double.NEGATIVE_INFINITY;
 		for (List segment : segmentation) {
