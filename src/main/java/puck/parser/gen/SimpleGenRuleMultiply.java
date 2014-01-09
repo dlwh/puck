@@ -121,8 +121,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
                     if(writeDirectToChart)
                         sb.append(String.format("float parent_%d = %s;\n", parentIndex, floatToString(semiring.zero())));
         			else
-                        sb.append(String.format("float parent_%d = %s;\n", parentIndex, floatToString(semiring.zero())));
-
+                        sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
 
         			declaredParents.put(parentIndex, parent);
         		}
@@ -277,7 +276,8 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         	String parent = declaredParents.get(parentIndex);
         	if(parent == null) {
         		parent = "parent_" + parentIndex;
-        		sb.append(String.format("float parent_%d = %s;\n", parentIndex, floatToString(semiring.zero())));
+//        		sb.append(String.format("float parent_%d = %s;\n", parentIndex, floatToString(semiring.zero())));
+                sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
         		declaredParents.put(parentIndex, parent);
         	}
         	
