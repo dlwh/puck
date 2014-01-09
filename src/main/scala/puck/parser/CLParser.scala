@@ -587,6 +587,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       trees
     }
 
+    val unaryThreshold = 0.2
+
     def extractMBRParses(batch: Batch[W], mask: PruningMask, events: CLEvent*): ParSeq[BinarizedTree[C]] = {
       require(mask.hasMasks, "Can't use null pruning mask for parse extraction!")
       events.foreach(_.waitFor())
@@ -596,12 +598,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
         val bestScores = new TriangularArray[Float](length + 1)
         val bestSplits = new TriangularArray[Int](length + 1)
+        val useUnary = new TriangularArray[Boolean](length + 1)
 
 
         for(span <- 1 to length; begin <- 0 to length - span) {
           val end = begin + span
           val topMask:DenseVector[Int] = mask.maskForTopCell(s, begin, end).get
           val botMask:DenseVector[Int] = mask.maskForBotCell(s, begin, end).get
+
 
           bestScores(begin, end) = {
             val topFloat = java.lang.Float.intBitsToFloat(topMask(0))
@@ -611,7 +615,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
             assert(!topScaled.isInfinite, topScaled + " " + topFloat)
             assert(!botScaled.isInfinite, botScaled + " " + botFloat)
 //            println(topScaled + botScaled)
-            (topScaled + botScaled).toFloat
+            useUnary(begin, end) = (begin + 1 < end) || topScaled > unaryThreshold
+            if(useUnary(begin, end))
+              (topScaled + botScaled).toFloat
+            else
+              botScaled.toFloat
           }
           if(span > 1) {
             var bestSplitScore = Float.NegativeInfinity
@@ -644,9 +652,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
             BinaryTree(label, left, right, Span(begin, end))
           }
 
-          val topLabel = structure.refinements.labels.coarseIndex.get(bestTop)
-
-          UnaryTree(topLabel, lower, IndexedSeq.empty, Span(begin, end))
+          if(useUnary(begin, end)) {
+            val topLabel = structure.refinements.labels.coarseIndex.get(bestTop)
+            UnaryTree(topLabel, lower, IndexedSeq.empty, Span(begin, end))
+          } else {
+            lower
+          }
         }
 
         extract(0, length)
@@ -1168,12 +1179,14 @@ object CLParser extends Logging {
       val tree: Tree[String] = chainReplacer.replaceUnaries(guess).map(_.label)
       val guessTree = Trees.debinarize(Trees.deannotate(tree))
       val deBgold: Tree[String] = Trees.debinarize(Trees.deannotate(chainReplacer.replaceUnaries(gold).map(_.label)))
+      val stats = eval.apply(guessTree, deBgold)
       if(printTrees) {
-        println("Gold: "  + tree.render(words))
-        println("Guess: "  + tree.render(words))
+        println("Guess:\n"  + guessTree.render(words))
+        println("Gold:\n"  + deBgold.render(words))
+        println(stats)
         println("=====")
       }
-      eval.apply(guessTree, deBgold)
+      stats
     } reduceLeft (_ + _)
   }
 
