@@ -188,7 +188,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           var ev = inside(batch)
           ev = outside(batch, ev)
 
-          if(data.isScaling) {
+          if(!data.isScaling) {
             val ev3 = computeViterbiMasks(batch, ev)
             Option(ev3).foreach(_.waitFor())
             val parseMask = extractMasks(batch)
@@ -196,7 +196,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
             maskCharts.data.waitUnmap()
             parses
           } else {
-            IndexedSeq.empty
+            val ev3 = computeMBRParts(batch, ev)
+            Option(ev3).foreach(_.waitFor())
+            val parseMask = extractMasks(batch)
+            val parses = extractMBRParses(batch, parseMask, ev3)
+            maskCharts.data.waitUnmap()
+            parses
           }
         }.toIndexedSeq
       }
@@ -582,8 +587,76 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       trees
     }
 
+    def extractMBRParses(batch: Batch[W], mask: PruningMask, events: CLEvent*): ParSeq[BinarizedTree[C]] = {
+      require(mask.hasMasks, "Can't use null pruning mask for parse extraction!")
+      events.foreach(_.waitFor())
+      val in = if (profile) System.currentTimeMillis() else 0L
+      val trees = for (s <- 0 until batch.numSentences par) yield try {
+        val length = batch.sentences(s).length
 
-    private[CLParser] def getBatches(sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask): IndexedSeq[Batch[W]] = {
+        def recTop(begin: Int, end: Int):BinarizedTree[C] = {
+          val column:DenseVector[Int] = mask.maskForTopCell(s, begin, end).get
+          val x = firstSetBit(column:DenseVector[Int])
+          if (x == -1) {
+            assert(begin == end - 1, s"$column ($begin, $end) $length $s ${batch.numSentences}")
+            recBot(begin, end)
+          } else {
+            assert(column.valuesIterator.exists(_ != 0), (begin, end))
+            //            val label = structure.nontermIndex.get(x)
+            val label = structure.refinements.labels.coarseIndex.get(x)
+            val t = recBot(begin, end)
+            new UnaryTree[C](label, t, IndexedSeq.empty, Span(begin, end))
+          }
+        }
+
+        def recBot(begin: Int, end: Int):BinarizedTree[C] = {
+          val column:DenseVector[Int] = mask.maskForBotCell(s, begin, end).get
+          val x = firstSetBit(column:DenseVector[Int])
+          if (begin == end - 1) {
+            //            val label = structure.termIndex.get(x)
+            val label = structure.refinements.labels.coarseIndex.get(x)
+            NullaryTree(label, Span(begin, end))
+          } else {
+            //            val label = structure.nontermIndex.get(x)
+            val label = structure.refinements.labels.coarseIndex.get(x)
+            for (split <- (begin+1) until end) {
+              val leftIsTerminal = begin == split - 1
+              val rightIsTerminal = end == split + 1
+              val left = if(leftIsTerminal) mask.isAllowedSpan(s, begin, split) else mask.isAllowedTopSpan(s, begin, split)
+              val right = if(rightIsTerminal) mask.isAllowedSpan(s, split, end) else mask.isAllowedTopSpan(s, split, end)
+              if (left && right) {
+                return BinaryTree[C](label, recTop(begin, split), recTop(split, end), Span(begin, end))
+              }
+            }
+
+            error(s"nothing here $length!" + " "+ (begin, end) +
+              {for (split <- (begin+1) until end) yield {
+                val leftIsTerminal = begin == split - 1
+                val rightIsTerminal = end == split + 1
+                val left = if(leftIsTerminal) mask.isAllowedSpan(s, begin, split) else mask.isAllowedTopSpan(s, begin, split)
+                val right = if(rightIsTerminal) mask.isAllowedSpan(s, split, end) else mask.isAllowedTopSpan(s, split, end)
+                (ChartHalf.chartIndex(begin, split, length), ChartHalf.chartIndex(split, end, length), split, left,right)
+
+              }} + " " +batch.sentences(s))
+          }
+        }
+
+        recTop(0, length)
+
+      } catch {
+        case ex: Throwable => ex.printStackTrace(); null
+      }
+      val out = if (profile) System.currentTimeMillis() else 0L
+      if (profile) {
+        println(s"Parse extraction took:  ${(out - in)/1000.0}s")
+      }
+      trees
+
+    }
+
+
+
+      private[CLParser] def getBatches(sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask): IndexedSeq[Batch[W]] = {
       val result = ArrayBuffer[Batch[W]]()
       var current = ArrayBuffer[IndexedSeq[W]]()
       var currentCellTotal = 0
