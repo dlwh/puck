@@ -191,14 +191,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           if(!data.isScaling) {
             val ev3 = computeViterbiMasks(batch, ev)
             Option(ev3).foreach(_.waitFor())
-            val parseMask = extractMasks(batch)
+            val parseMask = extractMasks(batch, false)
             val parses = extractParses(batch, parseMask, ev3)
             maskCharts.data.waitUnmap()
             parses
           } else {
             val ev3 = computeMBRParts(batch, ev)
             Option(ev3).foreach(_.waitFor())
-            val parseMask = extractMasks(batch)
+            val parseMask = extractMasks(batch, false)
             val parses = extractMBRParses(batch, parseMask, ev3)
             maskCharts.data.waitUnmap()
             parses
@@ -252,18 +252,18 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val outsideEvents = outside(batch, insideEvents)
       val ev2 = computeMasks(batch, -9, outsideEvents)
       ev2.waitFor()
-      extractMasks(batch)
+      extractMasks(batch, true)
    }
 
 
-    def extractMasks(batch: Batch[W]): DenseMatrixMask = {
+    def extractMasks(batch: Batch[W], updateScales: Boolean): DenseMatrixMask = {
       val denseMasks = maskCharts(::, 0 until batch.numCellsUsed).toDense
       maskCharts.data.waitUnmap()
       if(nextParserNeedsScales) {
-        val insideEv = data.scaling.getScaling(devInsideScale, devInside(::, 0 until batch.numCellsUsed))
-        val outsideEv = data.scaling.getScaling(devOutsideScale, devOutside(::, 0 until batch.numCellsUsed))
+        val insideEv = if(updateScales) data.scaling.getScaling(devInsideScale, devInside(::, 0 until batch.numCellsUsed)) else null
         devInsideScale.read(queue, 0, batch.numCellsUsed, ptrScale, true, insideEv)
         val inside = new DenseVector(ptrScale.getFloats(batch.numCellsUsed))
+        val outsideEv = if(updateScales) data.scaling.getScaling(devOutsideScale, devOutside(::, 0 until batch.numCellsUsed)) else null
         devOutsideScale.read(queue, 0, batch.numCellsUsed, ptrScale, true, outsideEv)
         val outside = new DenseVector(ptrScale.getFloats(batch.numCellsUsed))
         new DenseMatrixMask(denseMasks, inside, outside, batch.lengths, batch.cellOffsets)
@@ -311,6 +311,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         ev = devOutsideScale.write(queue, batch.masks.getOScales, false, ev).profileIn(hdTransferEvents)
         queue.finish()
 //        println(devInsideScale.read(queue).getFloats(batch.numCellsUsed).toIndexedSeq)
+//        println(devOutsideScale.read(queue).getFloats(batch.numCellsUsed).toIndexedSeq)
       }
 
       ev = initializeTagScores(batch, ev, evZeroOutside)
@@ -329,7 +330,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 //      if(CLParser.this.data.last eq this.data) {
 //        queue.finish()
 //        println("=======")
-//        println(batch.insideCharts(1).bot.toString(structure, _zero))
+//        println(batch.insideCharts(2).bot.cellString(4, 5, structure, data.semiring, batch.masks.insideScaleFor(2, _, _)))
 //        println("-------")
 //        println(batch.insideCharts(1).top.toString(structure, _zero))
 //        println("=======")
@@ -381,6 +382,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev = outsideNT_R.doUpdates(batch, 1, ev)
       ev = outsideTN_L.doUpdates(batch, 1, ev)
       ev = outsideTT_R.doUpdates(batch, 1, ev)
+//      queue.finish()
+//      println(batch.outsideCharts(2).bot.cellString(4, 5, structure, data.semiring, batch.masks.outsideScaleFor(2, _, _)))
 
       if (profile) {
         queue.finish()
@@ -587,7 +590,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       trees
     }
 
-    val unaryThreshold = 0.2
+    val unaryThreshold = 0.5
 
     def extractMBRParses(batch: Batch[W], mask: PruningMask, events: CLEvent*): ParSeq[BinarizedTree[C]] = {
       require(mask.hasMasks, "Can't use null pruning mask for parse extraction!")
@@ -610,20 +613,23 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           bestScores(begin, end) = {
             val topFloat = java.lang.Float.intBitsToFloat(topMask(0))
             val botFloat = java.lang.Float.intBitsToFloat(botMask(0))
-            val topScaled = topFloat * math.exp(mask.insideTopScaleFor(s, begin, end) + mask.outsideTopScaleFor(s, begin, end) - mask.insideTopScaleFor(s, 0, length))
-            val botScaled = botFloat * math.exp(mask.insideScaleFor(s, begin, end) + mask.outsideScaleFor(s, begin, end) - mask.insideTopScaleFor(s, 0, length))
+            val topScaled = topFloat * math.exp(batch.masks.insideTopScaleFor(s, begin, end) + batch.masks.outsideTopScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length))
+            val botScaled = botFloat * math.exp(batch.masks.insideScaleFor(s, begin, end) + batch.masks.outsideScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length))
             assert(!topScaled.isInfinite, topScaled + " " + topFloat)
             assert(!botScaled.isInfinite, botScaled + " " + botFloat)
 //            println(topScaled + botScaled)
             useUnary(begin, end) = (begin + 1 < end) || topScaled > unaryThreshold
-            if(useUnary(begin, end))
+            val score = if(useUnary(begin, end))
               (topScaled + botScaled).toFloat
             else
               botScaled.toFloat
+//            assert(score < 2.2, botScaled + " " + topScaled)
+            score
           }
+
           if(span > 1) {
-            var bestSplitScore = Float.NegativeInfinity
-            var bestSplit = begin + 1
+            var bestSplitScore = 0.0f
+            var bestSplit = -1
             for(split <- (begin+1) until end) {
               val splitScore = bestScores(begin, split) + bestScores(split, end)
               if(splitScore > bestSplitScore) {
@@ -632,13 +638,21 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
               }
             }
             bestSplits(begin, end) = bestSplit
-            bestScores(begin, end) += bestSplitScore
+            if(bestSplitScore < 0.1) {
+              bestScores(begin, end) = 0.0f
+            } else {
+              bestScores(begin, end) += bestSplitScore
+            }
           }
         }
 
         def extract(begin: Int, end: Int):BinarizedTree[C] = {
           val topMask:DenseVector[Int] = mask.maskForTopCell(s, begin, end).get
           val botMask:DenseVector[Int] = mask.maskForBotCell(s, begin, end).get
+          val score = bestScores(begin, end)
+          if(score < 0.1) {
+            println("... " + score + (begin,end,length))
+          }
           val bestBot = botMask(1)
           val bestTop = topMask(1)
           val lower = if(begin + 1 == end) {
