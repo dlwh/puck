@@ -40,6 +40,8 @@ import puck.parser.RuleStructure
 import scala.io.Source
 import epic.lexicon.Lexicon
 import breeze.util.Index
+import org.bridj.Pointer
+import java.nio.FloatBuffer
 
 /**
  * TODO
@@ -213,7 +215,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           val dest = context.createFloatBuffer(CLMem.Usage.Output, sentences.length)
           ev = devParentPtrs.writeArray(queue, batch.rootIndices.toArray, batch.numSentences, ev) profileIn hdTransferEvents
           ev = data.util.getRootScores(dest, devInside, devParentPtrs, batch.numSentences, structure.root, ev)
-          dest.read(queue, ev).getFloats(batch.numSentences)
+          val scaledScores = dest.read(queue, ev).getFloats(batch.numSentences)
+
+          for(i <- 0 until batch.numSentences) yield semiring.toLogSpace(scaledScores(i), mask.insideScaleFor(i, 0, batch.lengths(i)))
         }.toIndexedSeq
       }
     }
@@ -279,9 +283,17 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       val evZeroCharts = zmk.fillMemory(devInside.data, _zero, events:_*) profileIn initMemFillEvents
       val evZeroOutside = zmk.fillMemory(devOutside.data, _zero, events:_*) profileIn initMemFillEvents
-      val init = initializeTagScores(batch, evZeroCharts, evZeroOutside)
 
-      var ev = insideTU.doUpdates(batch, 1, init)
+      var ev = evZeroCharts
+
+      if(batch.hasMasks && semiring.needsScaling) {
+        ev = devInsideScale.write(queue, batch.masks.getIScales, false, ev).profileIn(hdTransferEvents)
+        ev = devOutsideScale.write(queue, batch.masks.getOScales, false, ev).profileIn(hdTransferEvents)
+      }
+
+      ev = initializeTagScores(batch, ev, evZeroOutside)
+
+      ev = insideTU.doUpdates(batch, 1, ev)
 
       for (span <- 2 to batch.maxLength) {
         print(s"$span ")
@@ -367,13 +379,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val lexAnch = data.grammar.lexicon.anchor(sent)
         var offset = batch.lengthOffsets(i)
         for (pos <- 0 until sent.length) {
+          val myScale = if(semiring.needsScaling) math.exp(-batch.masks.insideScaleFor(0, pos, pos + 1)) else 1.0
           for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
             val index = ref
             val score = anch.scoreTag(pos, data.grammar.refinedGrammar.labelIndex.get(index))
             val gpuIndex = data.structure.labelIndexToTerminal(index)
             //        if(pos == 0) println(pos,t,ref,data.grammar.refinements.labels.fineIndex.get(ref), gpuIndex,score)
             pArray(offset) = batch.insideBotCell(i, pos, pos + 1)
-            tagScores(offset, gpuIndex) = data.semiring.fromLogSpace(score.toFloat)
+            tagScores(offset, gpuIndex) = data.semiring.fromLogSpace(score.toFloat) * myScale.toFloat
           }
           offset += 1
         }

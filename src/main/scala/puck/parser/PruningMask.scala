@@ -2,6 +2,7 @@ package puck.parser
 
 import breeze.linalg._
 import puck.util.BitHacks
+import org.bridj.Pointer
 
 /**
  * TODO
@@ -9,6 +10,9 @@ import puck.util.BitHacks
  * @author dlwh
  **/
 trait PruningMask {
+  def getIScales: Pointer[java.lang.Float]
+  def getOScales: Pointer[java.lang.Float]
+
   def hasMasks: Boolean
 
   def isAllowedSpan(sent: Int, begin: Int, end: Int) = !hasMasks || maskForBotCell(sent, begin, end).forall(BitHacks.any)
@@ -50,12 +54,18 @@ object NoPruningMask extends PruningMask {
   def maskForTopCell(sent: Int, begin: Int, end: Int): Option[DenseVector[Int]] = None
 
   def slice(fromSentence: Int, toSentence: Int): PruningMask = NoPruningMask
+
+
+  def getIScales: Pointer[java.lang.Float] = Pointer.pointerToFloat(0)
+  def getOScales: Pointer[java.lang.Float] = Pointer.pointerToFloat(0)
 }
 
 case class DenseMatrixMask(matrix: DenseMatrix[Int],
                            insideScale: DenseVector[Float],
                            outsideScale: DenseVector[Float],
                            lengths: Array[Int], cellOffsets: Array[Int]) extends PruningMask {
+  lazy val getIScales: Pointer[java.lang.Float] = Pointer.pointerToFloats(insideScale.toArray:_*)
+  lazy val getOScales: Pointer[java.lang.Float] = Pointer.pointerToFloats(outsideScale.toArray:_*)
 
   def insideScaleFor(sent: Int, begin: Int, end: Int) = insideScale(cellOffsets(sent) + ChartHalf.chartIndex(begin, end, lengths(sent)))
   def outsideScaleFor(sent: Int, begin: Int, end: Int) = outsideScale(cellOffsets(sent) + ChartHalf.chartIndex(begin, end, lengths(sent)))

@@ -10,6 +10,8 @@ trait RuleSemiring extends Serializable {
 
   def fromLogSpace(float: Float): Float
 
+  def toLogSpace(float: Float, scale: Float):Float
+
   def includes: String
 
   def needsScaling: Boolean = false
@@ -29,6 +31,7 @@ object ViterbiRuleSemiring extends RuleSemiring {
   def fromLogSpace(float: Float): Float = float
 
   def plusIsIdempotent: Boolean = true
+  def toLogSpace(float: Float, scale: Float):Float = float
 
 
   def includes: String =
@@ -52,6 +55,7 @@ object LogSpaceRuleSemiring extends RuleSemiring {
 
   def plusIsIdempotent: Boolean = false
 
+  def toLogSpace(float: Float, scale: Float):Float = float
 
   def includes: String = "inline float semiring_mad(float x, float _y, float z) {\n " +
     "  float y = _y + z;\n	" +
@@ -81,6 +85,9 @@ object RealSemiring extends RuleSemiring {
   def add(left: String, right: String): String = s"($left + $right)"
 
   def fromLogSpace(float: Float): Float = math.exp(float).toFloat
+
+
+  def toLogSpace(float: Float, scale: Float): Float = math.log(float).toFloat + scale
 
   def plusIsIdempotent: Boolean = false
 

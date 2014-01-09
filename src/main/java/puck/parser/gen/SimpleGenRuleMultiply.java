@@ -199,7 +199,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         sb.append("\n\n");
 
         if(semiring.needsScaling()) {
-            sb.append("float scale = native_exp(parentScale[parentIndex[row]] - rightScale[rightIndex[row]] - leftScale[leftIndex[row]] );");
+            sb.append("float scale = native_exp(-parentScale[parentIndex[row]] + rightScale[rightIndex[row]] + leftScale[leftIndex[row]] );");
         } else {
             sb.append("float scale = 1.0f;");
         }
@@ -255,7 +255,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
                 declaredLeft = new HashMap<Integer, String>();
 
         if(semiring.needsScaling()) {
-            sb.append("float scale = native_exp(parentScale[parentIndex[row]] - childScale[childIndex[row]]);");
+            sb.append("float scale = native_exp(-parentScale[parentIndex[row]] + childScale[childIndex[row]]);");
         } else {
             sb.append("float scale = 1.0f;");
         }
