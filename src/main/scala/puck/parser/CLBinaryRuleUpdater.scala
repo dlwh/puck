@@ -51,7 +51,7 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
       buffer.foreach(buf => k.setArg(7, buf))
 
       val evv = k.enqueueNDRange(queue, globalSize, wgSize, ev:_*) profileIn profiler
-      queue.finish()
+//      queue.finish()
       IndexedSeq(evv)
     }
 
