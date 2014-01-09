@@ -63,7 +63,11 @@ __kernel void getScalingConstants(__global float* scaling,
       m = max(score, m);
 
     }
+    if(m < -9000.0f)
+      m = 0;
+
     scaling[cell] = m;
+    scaling[cell] = 0.0f;
 }
     """
   }
