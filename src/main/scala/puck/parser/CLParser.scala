@@ -650,9 +650,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           val topMask:DenseVector[Int] = mask.maskForTopCell(s, begin, end).get
           val botMask:DenseVector[Int] = mask.maskForBotCell(s, begin, end).get
           val score = bestScores(begin, end)
-          if(score < 0.1) {
-            println("... " + score + (begin,end,length))
-          }
           val bestBot = botMask(1)
           val bestTop = topMask(1)
           val lower = if(begin + 1 == end) {
