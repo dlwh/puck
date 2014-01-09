@@ -1019,7 +1019,8 @@ object CLParser extends Logging {
                     noExtraction: Boolean = false,
                     mem: String = "1g",
                     reproject: Boolean = true,
-                    viterbi: Boolean = true)
+                    viterbi: Boolean = true,
+                    printTrees: Boolean = false)
 
   def main(args: Array[String]) = {
     import ParserParams.JointParams
@@ -1123,11 +1124,10 @@ object CLParser extends Logging {
 
 
     val trees = logTime("CL Parsing:", toParse.length)(kern.parse(toParse))
-    println(eval(trees zip gold.map(_.tree)))
-    //println(trees zip toParse map {case (k,v) if k != null => k render v; case (k,v) => ":("})
+    println(eval(trees zip gold.map(_.tree) zip toParse, printTrees))
     if (parseTwice) {
       val trees = logTime("CL Parsing x2:", toParse.length)(kern.parse(toParse))
-      println(eval(trees zip gold.map(_.tree)))
+      println(eval(trees zip gold.map(_.tree) zip toParse))
     }
     if (jvmParse) {
       val parser = if(grammars.length > 1) {
@@ -1143,7 +1143,7 @@ object CLParser extends Logging {
           m
         }.seq.toIndexedSeq
       }
-      println(eval(margs zip gold.map(_.tree)))
+      println(eval(margs zip gold.map(_.tree) zip toParse))
     }
 
     kern.release()
@@ -1161,13 +1161,18 @@ object CLParser extends Logging {
     kern
   }
 
-  def eval(trees: IndexedSeq[(BinarizedTree[AnnotatedLabel], BinarizedTree[AnnotatedLabel])]) = {
+  def eval(trees: IndexedSeq[((BinarizedTree[AnnotatedLabel], BinarizedTree[AnnotatedLabel]), IndexedSeq[String])], printTrees: Boolean = false) = {
     val chainReplacer = AnnotatedLabelChainReplacer
     val eval: ParseEval[String] = new ParseEval(Set("","''", "``", ".", ":", ",", "TOP"))
-    trees filter (_._1 ne null) map { case (guess, gold) =>
+    trees filter (_._1 ne null) map { case ((guess, gold), words) =>
       val tree: Tree[String] = chainReplacer.replaceUnaries(guess).map(_.label)
       val guessTree = Trees.debinarize(Trees.deannotate(tree))
       val deBgold: Tree[String] = Trees.debinarize(Trees.deannotate(chainReplacer.replaceUnaries(gold).map(_.label)))
+      if(printTrees) {
+        println("Gold: "  + tree.render(words))
+        println("Guess: "  + tree.render(words))
+        println("=====")
+      }
       eval.apply(guessTree, deBgold)
     } reduceLeft (_ + _)
   }
