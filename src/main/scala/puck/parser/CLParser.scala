@@ -74,7 +74,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private def computeMasks(sentences: IndexedSeq[IndexedSeq[W]]): PruningMask = {
     val ev = maskCharts.assignAsync(-1)
     ev.waitFor()
-    parsers.dropRight(1).last.updateMasks(sentences, NoPruningMask)
+    if(parsers.length == 1) NoPruningMask
+    else  parsers.dropRight(1).last.updateMasks(sentences, NoPruningMask)
   }
 
   private implicit val queue = if (profile) context.createDefaultProfilingQueue() else context.createDefaultQueue()
