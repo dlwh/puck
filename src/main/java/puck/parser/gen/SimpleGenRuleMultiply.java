@@ -143,7 +143,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         			declaredRight.put(rightIndex, right);
         		}
 
-        		sb.append(String.format("%s = semiring_mad(%s, %s, %ff);\n", parent, parent, semiring.times(left, right), structure.scores()[rule.ruleId()]));
+        		sb.append(String.format("%s = semiring_mad(%s, %s, %ff);\n", parent, parent, semiring.times(left, right), semiring.fromLogSpace((float)structure.scores()[rule.ruleId()])));
         		
         		parentCounts.put(parentIndex, parentCounts.get(parentIndex)-1);
         		if (parentCounts.get(parentIndex) == 0) {
@@ -278,7 +278,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         		declaredLeft.put(childIndex, child);
         	}
         	
-        	sb.append(String.format("%s = semiring_mad(%s, %s, %ff);\n", parent, parent, child, structure.scores()[rule.ruleId()]));
+        	sb.append(String.format("%s = semiring_mad(%s, %s, %ff);\n", parent, parent, child, semiring.fromLogSpace((float)structure.scores()[rule.ruleId()])));
         }
 
         sb.append("// write out\n");
