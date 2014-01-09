@@ -52,7 +52,7 @@ case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
     //, LocalSize.ofIntArray(fieldSize * groupSize * 5))
 
     val ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices.length-1, 1), Array(1, 1), evCI, evL)
-    queue.finish()
+//    queue.finish()
     PointerFreer.enqueue(ptrCI.release(), ev)
     PointerFreer.enqueue(intBufferCI.release(), ev)
 
