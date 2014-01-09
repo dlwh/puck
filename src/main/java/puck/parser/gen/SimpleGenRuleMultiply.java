@@ -119,10 +119,10 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         		if(parent == null) {
         			parent = "parent_" + parentIndex;
                     if(writeDirectToChart)
-                        sb.append(String.format("float parent_%d = parents[pi * "+cellSize+" + %d];\n", parentIndex, parentIndex));
+                        sb.append(String.format("float parent_%d = %s;\n", parentIndex, floatToString(semiring.zero())));
         			else
-                        sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
-        			
+                        sb.append(String.format("float parent_%d = %s;\n", parentIndex, floatToString(semiring.zero())));
+
 
         			declaredParents.put(parentIndex, parent);
         		}
@@ -216,6 +216,11 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         return sb.toString();
     }
 
+    protected String floatToString(float zero) {
+        if(zero == Float.NEGATIVE_INFINITY) return "-INFINITY";
+        else return zero +"f";
+    }
+
     private void appendAddition(StringBuilder sb) {
         sb.append(semiring.includes());
     }
@@ -266,7 +271,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         	String parent = declaredParents.get(parentIndex);
         	if(parent == null) {
         		parent = "parent_" + parentIndex;
-        		sb.append(String.format("float parent_%d = parents[%d * numRows + row];\n", parentIndex, parentIndex));
+        		sb.append(String.format("float parent_%d = %s;\n", parentIndex, floatToString(semiring.zero())));
         		declaredParents.put(parentIndex, parent);
         	}
         	
@@ -278,7 +283,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         		declaredLeft.put(childIndex, child);
         	}
         	
-        	sb.append(String.format("%s = semiring_mad(%s, %s, %ff);\n", parent, parent, child, semiring.fromLogSpace((float)structure.scores()[rule.ruleId()])));
+        	sb.append(String.format("%s = semiring_mad(%s, %s, %ff);\n", parent, parent, child, structure.scores()[rule.ruleId()]));
         }
 
         sb.append("// write out\n");
