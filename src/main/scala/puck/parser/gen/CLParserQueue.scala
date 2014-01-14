@@ -73,12 +73,18 @@ object CLParserQueue {
       |  l_Data[pos] = 0;
       |  pos += size;
       |  l_Data[pos] = idata;
+      |  barrier(CLK_LOCAL_MEM_FENCE);
       |
       |  if(size >=  2) l_Data[pos] += l_Data[pos -  1];
+      |  barrier(CLK_LOCAL_MEM_FENCE);
       |  if(size >=  4) l_Data[pos] += l_Data[pos -  2];
+      |  barrier(CLK_LOCAL_MEM_FENCE);
       |  if(size >=  8) l_Data[pos] += l_Data[pos -  4];
+      |  barrier(CLK_LOCAL_MEM_FENCE);
       |  if(size >= 16) l_Data[pos] += l_Data[pos -  8];
+      |  barrier(CLK_LOCAL_MEM_FENCE);
       |  if(size >= 32) l_Data[pos] += l_Data[pos - 16];
+      |  barrier(CLK_LOCAL_MEM_FENCE);
       |
       |  return l_Data[pos];
       | }
@@ -117,39 +123,6 @@ object CLParserQueue {
       |
       |
       |
-      |__kernel void insertOffsetsDense(__global int* dest, __global const int* workArrayOffsets,
-      |                                 __global const int* cellOffsets,
-      |                                 __global int* lengths, int spanLength) {
-      |  const int sentence = get_global_id(0);
-      |  const int firstCell = indices[sentence];
-      |  const int lastCell = indices[sentence + 1];
-      |  int length = lengths[sentence];
-      |  int offset = workArrayOffsets[sentence];
-      |  int numOffsets =
-      |  const int lastCell = indices[sentence + 1];
-      |
-      |  for(int cell = firstCell; cell < lastCell; cell++) {
-      |
-      |    __global const float* in = inside + (cell * numSyms);
-      |    __global const float* out = outside + (cell * numSyms);
-      |    mask_t myMask;
-      |    for(int i = 0; i < NUM_FIELDS; ++i) {
-      |      myMask.fields[i] = 0;
-      |    }
-      |
-      |    for(int sym = 0; sym < NUM_SYMS; ++sym) {
-      |      float score = (in[sym] + out[sym]);
-      |      int keep = score >= cutoff;
-      |      int field = projections[sym];
-      |
-      |      set_bit(&myMask, field, keep);
-      |    }
-      |
-      |
-      |    masksOut[cell] = myMask;
-      |  }
-      |
-      |}
       |
       |__kernel void offsetsNeededOutsideDense(__global int* dest, __global int* lengths, int n, int spanLength) {
       |  int id = get_global_id(0);

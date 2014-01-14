@@ -24,7 +24,7 @@ class CLParserDataTest extends FunSuite {
   test("write/read works") {
     implicit val clcontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.GPU)
     val grammar = ParserTestHarness.grammar.asInstanceOf[SimpleRefinedGrammar[String, String, String]]
-    val data = CLParserData.make(grammar, GenType.VariableLength, false, true)
+    val data = CLParserData.make(grammar, GenType.VariableLength, false, ViterbiRuleSemiring)
     val tempFile = File.createTempFile("xxx","parserdata")
     tempFile.deleteOnExit()
     val out = new FileOutputStream(tempFile)
