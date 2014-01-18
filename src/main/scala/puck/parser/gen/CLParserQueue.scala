@@ -23,7 +23,7 @@ class CLParserQueue(simpleScan: CLKernel,
                  events: CLEvent*)(implicit queue: CLQueue) = {
     val offsetsEv = computeOffsets(batch.lengthsDev, batch.numSentences, spanLength, events:_*)
     var numToBeQueued = workArrayOffsets.read(queue, batch.numSentences, 1, offsetsEv).getInt
-    val maxQueueLength = workQueue.getElementCount / 3
+    val maxQueueLength = workQueue.getElementCount.toInt / 3
     var ev = offsetsEv
     while(numToBeQueued > 0) {
       val numToBeQueueThisTime = math.min(maxQueueLength, numToBeQueued)
@@ -48,18 +48,6 @@ class CLParserQueue(simpleScan: CLKernel,
     evr
   }
 
-//    def computeDenseOutsideOffsets(lengths: CLBuffer[Integer], numSentences: Integer,
-//                                spanLength: Integer, scratch: CLBuffer[Integer], workArrayOffsets: CLBuffer[Integer], ev: CLEvent*)(implicit queue: CLQueue):CLEvent = simpleScan.synchronized {
-//    require(lengths.getElementCount >= numSentences)
-//    require(scratch.getElementCount  >= numSentences)
-//    require(workArrayOffsets.getElementCount  >= numSentences)
-//    insideDenseOffsets.setArgs(scratch, lengths, numSentences, spanLength)
-//    val evoff = insideDenseOffsets.enqueueNDRange(queue, Array(1024), Array(32), ev:_*)
-//    val evr = scan(workArrayOffsets,  scratch, numSentences, evoff)
-//    evr
-//  }
-
-
   def scan(arr: Array[Int], ev: CLEvent*)(implicit queue: CLQueue):Array[Int] = simpleScan.synchronized {
     val src = queue.getContext.createIntBuffer(Usage.InputOutput, IntBuffer.wrap(arr), true)
     val dest = queue.getContext.createIntBuffer(Usage.InputOutput, arr.length)
@@ -80,8 +68,7 @@ object CLParserQueue {
 
   def make(implicit context: CLContext) = {
     val program: CLProgram = context.createProgram(computeWorkArrayOffsetsText).build()
-    new CLParserQueue(program.createKernel("simpleScan"), null, null, program.createKernel("offsetsNeededInsideDense"), null)//,  program.createKernel("offsetsNeededOutsideDense"))
-
+    new CLParserQueue(program.createKernel("simpleScan"), null, null, null, null, program.createKernel("offsetsNeededInsideDense"), null)//,  program.createKernel("offsetsNeededOutsideDense"))
   }
   val computeWorkArrayOffsetsText =
     """
