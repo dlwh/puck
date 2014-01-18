@@ -99,19 +99,20 @@ object CLMatrixTransposeCopy {
       import scala.collection.JavaConverters._
       // TODO ??!?!??!
       // not sure what's going on, but Apple's Intel reports 1024/1/1, but can't handle more than 1/1/1...
-      val blockSize = 32
+      val preferredBlockSize = 32
 
-      val wgSize = if (context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel Core")) {
+      val wgSize = if (context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel") && context.getDevices.head.toString.contains("Core")) {
         Array(1, 1, 1)
       } else {
         val wgSizes = context.getDevices.head.getMaxWorkItemSizes
-        val x = wgSizes(0) min blockSize
+        val x = wgSizes(0) min preferredBlockSize
         val maxProduct = context.getDevices.head.getMaxWorkGroupSize
         Array(x toInt, (maxProduct / x toInt) min 4, 1)
       }
-      val prog = context.createProgram(permuteTransposeCopy(blockSize, wgSize))
+      val prog = context.createProgram(permuteTransposeCopy(wgSize.head, wgSize))
       val kernel = prog.createKernel("transpose_copy")
       val kernel2 = prog.createKernel("transpose_copy_out")
+
 
       map.asScala.getOrElseUpdate(context, new CLMatrixTransposeCopy(wgSize, kernel, kernel2))
     }

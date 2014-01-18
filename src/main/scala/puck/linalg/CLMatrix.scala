@@ -13,6 +13,8 @@ import puck.util._
 import com.nativelibs4java.opencl._
 import org.bridj.Pointer
 import kernels._
+import com.android.dx.gen.BinaryOp
+import breeze.generic.UFunc
 
 /**
  * A CLMatrix is a matrix with all elements found in an NativeArray. It is column major unless isTranspose is true,
@@ -296,14 +298,6 @@ object CLMatrix extends LowPriorityNativeMatrix {
 
 
 
-  implicit def negFromScale[V](implicit scale: BinaryOp[CLMatrix[V], V, OpMulScalar, CLMatrix[V]], field: Ring[V]) = {
-    new UnaryOp[CLMatrix[V], OpNeg, CLMatrix[V]] {
-      override def apply(a : CLMatrix[V]) = {
-        scale(a, field.negate(field.one))
-      }
-    }
-  }
-
   implicit def canSlicePartOfRow[V:ClassTag]: CanSlice2[CLMatrix[V], Int, Range, CLMatrix[V]] = {
     new CanSlice2[CLMatrix[V], Int, Range, CLMatrix[V]] {
       def apply(m: CLMatrix[V], row: Int, cols: Range) = {
@@ -428,8 +422,8 @@ object CLMatrix extends LowPriorityNativeMatrix {
   }
   */
 
-  def binaryOpFromBinaryUpdateOp[V, Other, Op<:OpType](implicit copy: CanCopy[CLMatrix[V]], op: BinaryUpdateOp[CLMatrix[V], Other, Op], man: ClassTag[V]) = {
-    new BinaryOp[CLMatrix[V], Other, Op, CLMatrix[V]] {
+  def binaryOpFromBinaryUpdateOp[V, Other, Op<:OpType](implicit copy: CanCopy[CLMatrix[V]], op: UFunc.InPlaceImpl2[Op, CLMatrix[V], Other], man: ClassTag[V]) = {
+    new UFunc.UImpl2[Op, CLMatrix[V], Other, CLMatrix[V]] {
       override def apply(a : CLMatrix[V], b : Other) = {
         val c = copy(a)
         op(c, b)
@@ -565,13 +559,13 @@ trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
     }
   }
 
-  class SetCLMCLMVOp[V] extends BinaryUpdateOp[CLMatrix[V], CLMatrix[V], OpSet] {
+  class SetCLMCLMVOp[V] extends OpSet.InPlaceImpl2[CLMatrix[V], CLMatrix[V]] {
     def apply(a: CLMatrix[V], b: CLMatrix[V]) {
       a.writeFrom(b, true)
     }
   }
 
-  implicit object SetCLMDMFloatOp extends BinaryUpdateOp[CLMatrix[Float], DenseMatrix[Float], OpSet] {
+  implicit object SetCLMDMFloatOp extends OpSet.InPlaceImpl2[CLMatrix[Float], DenseMatrix[Float]] {
     def apply(a: CLMatrix[Float], b: DenseMatrix[Float]) {
       a.writeFrom(b, true)
     }
@@ -606,7 +600,7 @@ trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
   */
 
 
-  implicit object SetMSFloatOp extends BinaryUpdateOp[CLMatrix[Float], Float, OpSet] {
+  implicit object SetMSFloatOp extends OpSet.InPlaceImpl2[CLMatrix[Float], Float] {
     def apply(a: CLMatrix[Float], b: Float) {
       val zmk = ZeroMemoryKernel()(a.queue.getContext)
       import a.queue
@@ -620,7 +614,7 @@ trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
     }
   }
 
-  implicit object SetMSIntOp extends BinaryUpdateOp[CLMatrix[Int], Int, OpSet] {
+  implicit object SetMSIntOp extends OpSet.InPlaceImpl2[CLMatrix[Int], Int] {
     def apply(a: CLMatrix[Int], b: Int) {
       val zmk = ZeroMemoryKernel()(a.queue.getContext)
       import a.queue
