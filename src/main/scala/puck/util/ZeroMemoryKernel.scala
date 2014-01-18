@@ -47,7 +47,9 @@ __kernel void shaped_fill(__global float* data, int beginOffset, int rows, int c
     val c = if(data.isTranspose) data.rows else data.cols
     shapedKernel.setArgs(data.data.safeBuffer, Integer.valueOf(data.offset), Integer.valueOf(r), Integer.valueOf(c), Integer.valueOf(data.majorStride), java.lang.Float.valueOf(f))
 
-    shapedKernel.enqueueNDRange(queue, Array(roundUpToMultipleOf(r, groupSize), c), Array(groupSize, 1), eventsToWaitFor:_*)
+    val ev = shapedKernel.enqueueNDRange(queue, Array(roundUpToMultipleOf(r, groupSize), c), Array(groupSize, 1), eventsToWaitFor:_*)
+//    queue.finish()
+    ev
   }
 
   def fillMemory(data: CLBuffer[java.lang.Float], f: Float, events: CLEvent*)(implicit queue: CLQueue): CLEvent = synchronized {
@@ -60,7 +62,9 @@ __kernel void shaped_fill(__global float* data, int beginOffset, int rows, int c
     // TODO: we possibly waste a lot of time if the offset is >> 0
     // but, we want to ensure that we do coalesced reads and rights, which
     // means aligned reads and writes.
-    kernel.enqueueNDRange(queue, Array(roundUpToMultipleOf(data.getElementCount.toInt, groupSize)), Array(groupSize), eventsToWaitFor:_*)
+    val ev = kernel.enqueueNDRange(queue, Array(roundUpToMultipleOf(data.getElementCount.toInt, groupSize)), Array(groupSize), eventsToWaitFor:_*)
+//    queue.finish()
+    ev
   }
 
 }

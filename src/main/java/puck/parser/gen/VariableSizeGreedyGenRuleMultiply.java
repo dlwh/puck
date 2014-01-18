@@ -1,21 +1,18 @@
 package puck.parser.gen;
 
+import puck.parser.RuleSemiring;
 import puck.parser.RuleStructure;
 
 import java.util.*;
 
 public class VariableSizeGreedyGenRuleMultiply<C, L>  extends SimpleGenRuleMultiply<C, L> {
 	
-	public static int MAX_RULES_PER_UNARY_SEGMENT = 2000;
-
-	public VariableSizeGreedyGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, boolean logSpace) {
-		super(structure, directWrite, logSpace);
+	public VariableSizeGreedyGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, RuleSemiring semiring) {
+		super(structure, directWrite, semiring);
 	}
 
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {
-		double numUnaries = indexedUnaryRules.size();
 		List<IndexedUnaryRule<C, L>>[] segmentation = new List[] {indexedUnaryRules};
-		
 		double min = Double.POSITIVE_INFINITY;
 		double max = Double.NEGATIVE_INFINITY;
 		for (List segment : segmentation) {
@@ -26,7 +23,7 @@ public class VariableSizeGreedyGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 		System.out.println("max unary segment size: "+max);
 		return segmentation;
 	}
-
+	
 	public List<IndexedBinaryRule<C, L>>[][] segmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules) {
         List<IndexedBinaryRule<C, L>>[][]  segmentation = variableSizeSegmentBinaries(indexedBinaryRules);
     

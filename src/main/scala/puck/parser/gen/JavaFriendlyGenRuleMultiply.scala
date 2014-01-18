@@ -36,6 +36,9 @@ abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L],
                      texts: java.util.List[String]):java.util.List[RuleKernel] = {
     require(partitions.size == texts.size)
     val programs = texts.asScala.map(context.createProgram(_))
+
+
+
     programs.foreach(_.setFastRelaxedMath())
     if(context.getDevices.head.toString.toLowerCase.contains("nvidia") && !context.getDevices.head.toString.toLowerCase.contains("apple") ) {
       programs.foreach(_.addBuildOption("-cl-nv-verbose"))
@@ -55,7 +58,14 @@ abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L],
     }.asJava
 
 
-    for(r <- result.asScala) {
+
+
+    for( (r, t) <- result.asScala.zip(texts.asScala)) {
+      val srcOut = new File(s"genSources/${structure.numNonTerms}/${r.kernels.head.getFunctionName}.cl")
+      srcOut.getParentFile.mkdirs()
+      val oout = new FileOutputStream(srcOut)
+      oout.write(t.getBytes("UTF-8"))
+      oout.close()
       for ((plat, ptx) <-  r.kernels.head.getProgram.getBinaries.asScala) {
         val out = new File(s"compiled/${r.kernels.head.getFunctionName}_${plat.toString.filter(_.isLetterOrDigit)}.ptx")
         out.getParentFile.mkdirs()

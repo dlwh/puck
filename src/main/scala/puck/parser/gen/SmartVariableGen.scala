@@ -1,6 +1,6 @@
 package puck.parser.gen
 
-import puck.parser.RuleStructure
+import puck.parser.{RuleSemiring, RuleStructure}
 import java.util._
 import scala.Double
 import scala.collection.mutable.ArrayBuffer
@@ -13,7 +13,7 @@ object SmartVariableGen {
 
 import SimpleGenRuleMultiply.NUM_SM
 
-class SmartVariableGen[C, L](structure: RuleStructure[C, L], directWrite: Boolean, logSpace: Boolean) extends SimpleGenRuleMultiply[C, L](structure, directWrite, logSpace) {
+class SmartVariableGen[C, L](structure: RuleStructure[C, L], directWrite: Boolean, semiring: RuleSemiring) extends SimpleGenRuleMultiply[C, L](structure, directWrite, semiring) {
 
   def segmentUnaries(indexedUnaryRules: List[IndexedUnaryRule[C, L]]): Array[List[IndexedUnaryRule[C, L]]] = {
     val segmentation: Array[List[IndexedUnaryRule[C, L]]] = Array(indexedUnaryRules)
