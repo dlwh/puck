@@ -1,6 +1,6 @@
 package puck.parser
 
-import breeze.linalg.DenseMatrix
+import breeze.linalg.{DenseVector, DenseMatrix}
 import breeze.collection.mutable.TriangularArray
 import puck.linalg.CLMatrix
 import puck.util.BitHacks
@@ -16,7 +16,7 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
                                     masks: PruningMask) {
   val cellOffsets = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2).toArray
 
-  private val lengths = sentences.map(_.length).toArray
+  val lengths = sentences.map(_.length).toArray
   val lengthOffsets = lengths.scan(0)(_ + _)
 
   def numCellsUsed: Int = cellOffsets.last
@@ -37,8 +37,10 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
   def outsideRootIndex(sent: Int) = outsideCharts(sent).top.rootIndex
   def outsideRootIndices = Array.tabulate(sentences.length)(outsideRootIndex)
 
+
   def botMaskFor(sent: Int, begin: Int, end: Int) = masks.maskForBotCell(sent, begin, end)
   def topMaskFor(sent: Int, begin: Int, end: Int) = masks.maskForTopCell(sent, begin, end)
+
 
   def insideBotCell(sent: Int, begin: Int, end: Int) = cellOffsets(sent) + ChartHalf.chartIndex(begin, end, lengths(sent))//insideCharts(sent).bot.cellOffset(begin, end)
   def insideTopCell(sent: Int, begin: Int, end: Int) = cellOffsets(sent)/2 + cellOffsets(sent+1)/2 +  ChartHalf.chartIndex(begin, end, lengths(sent))//insideCharts(sent).bot.cellOffset(begin, end)

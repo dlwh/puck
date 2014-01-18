@@ -8,14 +8,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import puck.parser.RuleSemiring;
 import puck.parser.RuleStructure;
 
 public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMultiply<C, L> {
 
 	public static final int BINARY_NUM_SEGMENTS = 24;
 	
-	public GreedySegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, boolean logSpace) {
-		super(structure, directWrite, logSpace);
+	public GreedySegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, RuleSemiring semiring) {
+		super(structure, directWrite, semiring);
 	}
 
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {

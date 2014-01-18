@@ -5,14 +5,15 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 
+import puck.parser.RuleSemiring;
 import puck.parser.RuleStructure;
 
 public class RandomSegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultiply<C, L> {
 
 	public static final int BINARY_SEGMENT_SIZE = 2000;
 	
-	public RandomSegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, boolean logSpace) {
-		super(structure, directWrite, logSpace);
+	public RandomSegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, RuleSemiring semiring) {
+		super(structure, directWrite, semiring);
 	}
     
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {

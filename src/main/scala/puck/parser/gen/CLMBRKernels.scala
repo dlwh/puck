@@ -1,6 +1,6 @@
 package puck.parser.gen
 
-import puck.parser.{SymId, RuleSemiring, RuleStructure}
+import puck.parser.{LogSumRuleSemiring, SymId, RuleSemiring, RuleStructure}
 import scala.collection.JavaConverters._
 import puck.linalg.CLMatrix
 import com.nativelibs4java.opencl._
@@ -15,11 +15,11 @@ import puck.PointerFreer
  *
  * @author dlwh
  **/
-case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
+case class CLMBRKernels(maskSize: Int, getMasksKernel: CLKernel) {
 
 
   def write(out: ZipOutputStream) {
-    ZipUtil.addKernel(out, "computeMasksKernel", getMasksKernel)
+    ZipUtil.addKernel(out, "computeMBRKernel", getMasksKernel)
     ZipUtil.serializedEntry(out, "MasksInts", Array(maskSize))
   }
 
@@ -28,7 +28,7 @@ case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
                outside: CLMatrix[Float],
                chartIndices: Array[Int],
                lengths: Array[Int],
-               root: Int, threshold: Float,
+               root: Int,
                events: CLEvent*)(implicit queue: CLQueue):CLEvent = {
     require(masks.rows == maskSize, masks.rows + " " + maskSize)
     require(masks.cols == inside.cols)
@@ -48,7 +48,7 @@ case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
     getMasksKernel.setArgs(masks.data.safeBuffer,
       inside.data.safeBuffer, outside.data.safeBuffer, intBufferCI, intBufferL,
       Integer.valueOf(chartIndices(chartIndices.length-1)), Integer.valueOf(inside.rows),
-      Integer.valueOf(root), java.lang.Float.valueOf(threshold))
+      Integer.valueOf(root))
     //, LocalSize.ofIntArray(fieldSize * groupSize * 5))
 
     val ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices.length-1, 1), Array(1, 1), evCI, evL)
@@ -63,45 +63,19 @@ case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
 
 }
 
-object CLMaskKernels {
+object CLMBRKernels {
   def read(zf: ZipFile)(implicit ctxt: CLContext) = {
     val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("MasksInts")))
-    CLMaskKernels(ints(0), ZipUtil.readKernel(zf, "computeMasksKernel"))
+    CLMBRKernels(ints(0), ZipUtil.readKernel(zf, "computeMBRKernel"))
   }
 
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
     val cellSize = (structure.numNonTerms max structure.numTerms)
     val maskSize = puck.roundUpToMultipleOf(structure.numCoarseSyms, 32) / 32
 
-    val prog = context.createProgram(programText(cellSize, structure))
+    val prog = context.createProgram(programText(cellSize, structure, semiring))
 
-    CLMaskKernels(maskSize, prog.createKernel("computeMasks"))
-  }
-
-
-  def maskHeader[C, L](structure: RuleStructure[C, L]) = {
-    val maskSize = puck.roundUpToMultipleOf(structure.numCoarseSyms, 32) / 32
-    """#define NUM_FIELDS """ + maskSize + """
-
-  typedef struct { int fields[NUM_FIELDS]; } mask_t;
-
-  inline void set_bit(mask_t* mask, int bit, int shouldSet) {
-    int field = (bit/32);
-    int modulus = bit%32;
-    mask->fields[field] = mask->fields[field] | (shouldSet<<(modulus));
-  }
-
-  /* Intel gets sad from this one?
-  inline int is_set(mask_t* mask, int bit) {
-    int field = (bit/32);
-    int modulus = bit%32;
-    return mask->fields[field] & (1<<(modulus));
-  }
-  */
-
-   #define is_set(mask, bit)  ((mask)->fields[(bit)/32] & (1<<((bit)%32)))
-
-                                           """
+    CLMBRKernels(maskSize, prog.createKernel("computeMBR"))
   }
 
 
@@ -124,10 +98,9 @@ object CLMaskKernels {
     maskStrings.mkString("(!((", ") | (", ")) )")
   }
 
-  def programText[L, C](cellSize: Int, structure: RuleStructure[C, L]): String = {
-
-
-    maskHeader(structure) ++ """
+  def programText[L, C](cellSize: Int, structure: RuleStructure[C, L], semiring: RuleSemiring): String = {
+    """
+    typedef struct {float score; int symbol; int ignoreMe[2];} decode_t;
       #define NUM_SYMS """ + cellSize + """
 
                                         """ + structure.projectedTerminalMap.padTo(cellSize, 0).mkString("__constant int terminalProjections[] = {", ", ", "};") +
@@ -142,43 +115,50 @@ object CLMaskKernels {
 // the last cell has the root score.
 //
 /** TODO this isn't optimized at all */
-__kernel void computeMasks(__global mask_t* masksOut,
+__kernel void computeMBR(__global decode_t* decodeOut,
                            __global const float* inside,
                            __global const float* outside,
                            __global const int* indices,
                            __global const int* lengths,
                            const int numIndices,
                            int numSyms,
-                           int root,
-                           float thresh) {
+                           int root) {
   const int sentence = get_global_id(0);
   const int firstCell = indices[sentence];
   const int lastCell = indices[sentence + 1];
   int length = lengths[sentence];
   const float root_score = inside[(lastCell-1) * numSyms + root];
 
-  float cutoff = root_score + thresh;
 
   for(int cell = firstCell; cell < lastCell; cell++) {
     __constant const int* projections = (cell-firstCell >= length) ? nonterminalProjections : terminalProjections;
 
     __global const float* in = inside + (cell * numSyms);
     __global const float* out = outside + (cell * numSyms);
-    mask_t myMask;
-    for(int i = 0; i < NUM_FIELDS; ++i) {
-      myMask.fields[i] = 0;
+      
+    float coarseMargs["""+structure.numCoarseSyms+"""];
+    for(int coarseSym = 0; coarseSym < """+structure.numCoarseSyms+"""; ++coarseSym) {
+      coarseMargs[coarseSym] = 0.0f;
     }
-
     for(int sym = 0; sym < NUM_SYMS; ++sym) {
-      float score = (in[sym] + out[sym]);
-      int keep = score >= cutoff;
-      int field = projections[sym];
-
-      set_bit(&myMask, field, keep);
+""" + {if (semiring.isInstanceOf[LogSumRuleSemiring.type]) {
+    "coarseMargs[projections[sym]] += exp(in[sym] - root_score + out[sym]);\n"
+  } else {
+    "coarseMargs[projections[sym]] += in[sym]/root_score * out[sym];\n"
+  } }+ """
+    }
+      
+    decode_t myDecode;
+    myDecode.score = -INFINITY;
+    myDecode.symbol = -1;
+    for(int coarseSym = 0; coarseSym < """+structure.numCoarseSyms+"""; ++coarseSym) {
+      if (coarseMargs[coarseSym] > myDecode.score) {
+      	myDecode.score = coarseMargs[coarseSym];
+      	myDecode.symbol = coarseSym;
+      }
     }
 
-
-    masksOut[cell] = myMask;
+    decodeOut[cell] = myDecode;
   }
 
 }
