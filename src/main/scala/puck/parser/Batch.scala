@@ -4,6 +4,7 @@ import breeze.linalg.{DenseVector, DenseMatrix}
 import breeze.collection.mutable.TriangularArray
 import puck.linalg.CLMatrix
 import puck.util.BitHacks
+import com.nativelibs4java.opencl.CLBuffer
 
 /**
  * TODO
@@ -18,6 +19,9 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
 
   val lengths = sentences.map(_.length).toArray
   val lengthOffsets = lengths.scan(0)(_ + _)
+
+  def lengthsDev: CLBuffer[Integer] = ???
+  def cellOffsetsDev: CLBuffer[Integer] = ???
 
   def numCellsUsed: Int = cellOffsets.last
 
