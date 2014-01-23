@@ -20,7 +20,7 @@ case class CLMBRKernels(maskSize: Int, getMasksKernel: CLKernel) {
 
   def write(out: ZipOutputStream) {
     ZipUtil.addKernel(out, "computeMBRKernel", getMasksKernel)
-    ZipUtil.serializedEntry(out, "MasksInts", Array(maskSize))
+    ZipUtil.serializedEntry(out, "MBRInts", Array(maskSize))
   }
 
   def getMasks(masks: CLMatrix[Int],
@@ -65,7 +65,7 @@ case class CLMBRKernels(maskSize: Int, getMasksKernel: CLKernel) {
 
 object CLMBRKernels {
   def read(zf: ZipFile)(implicit ctxt: CLContext) = {
-    val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("MasksInts")))
+    val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("MBRInts")))
     CLMBRKernels(ints(0), ZipUtil.readKernel(zf, "computeMBRKernel"))
   }
 
