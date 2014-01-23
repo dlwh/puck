@@ -5,12 +5,15 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Random;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import puck.parser.RuleSemiring;
 import puck.parser.RuleStructure;
 
 public class RandomSegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultiply<C, L> {
 
 	public static final int BINARY_SEGMENT_SIZE = 2000;
+    private Logger logger = LoggerFactory.getLogger(this.getClass().getName());
 	
 	public RandomSegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, RuleSemiring semiring) {
 		super(structure, directWrite, semiring);
@@ -24,8 +27,8 @@ public class RandomSegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultip
 			min = Math.min(segment.size(), min);
 			max = Math.max(segment.size(), max);
 		}
-		System.out.println("min unary segment size: "+min);
-		System.out.println("max unary segment size: "+max);
+        logger.info("min unary segment size: "+min);
+		logger.info("max unary segment size: "+max);
 		return segmentation;
 	}
 

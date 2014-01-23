@@ -1066,8 +1066,6 @@ object CLParser extends Logging {
 
     implicit val context: CLContext = {
       val (good, bad) = JavaCL.listPlatforms().flatMap(_.listAllDevices(true)).partition(d => device.r.findFirstIn(d.toString.toLowerCase()).nonEmpty)
-      println(good.toIndexedSeq)
-      println(bad.toIndexedSeq)
       if(good.isEmpty) {
         JavaCL.createContext(Collections.emptyMap(), bad.sortBy(d => d.toString.toLowerCase().contains("geforce")).last)
       } else {

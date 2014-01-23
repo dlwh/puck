@@ -77,7 +77,7 @@ abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L],
       val names = r.kernels.map(_.getFunctionName)
       val parents = BitHacks.asBitSet(r.parents).iterator.map(structure.refinements.labels.coarseIndex.get(_:Int)).toSet
       val ruleCounts = r.rules.length
-      println(names,parents,ruleCounts)
+      //println(names,parents,ruleCounts)
     }
 
     result

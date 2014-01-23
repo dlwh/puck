@@ -6,8 +6,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import org.apache.logging.log4j.core.filter.StructuredDataFilter;
-
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import puck.parser.RuleSemiring;
 import puck.parser.RuleStructure;
 
@@ -20,7 +20,9 @@ public class CannySegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultipl
 	public static final int BINARY_PARENT_NUM_MINOR_SEGMENTS = 2;
 	public static final int BINARY_LEFT_NUM_MINOR_SEGMENTS = 2;
 	public static final int BINARY_RIGHT_NUM_MINOR_SEGMENTS = 2;
-	
+
+    private Logger logger = LoggerFactory.getLogger(this.getClass().getName());
+
 	public CannySegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, RuleSemiring semiring) {
 		super(structure, directWrite, semiring);
 	}
@@ -33,8 +35,8 @@ public class CannySegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultipl
 			min = Math.min(segment.size(), min);
 			max = Math.max(segment.size(), max);
 		}
-		System.out.println("min unary segment size: "+min);
-		System.out.println("max unary segment size: "+max);
+		logger.info("min unary segment size: "+min);
+		logger.info("max unary segment size: "+max);
 		return segmentation;
 	}
 
@@ -46,8 +48,8 @@ public class CannySegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultipl
 			min = Math.min(segment.size(), min);
 			max = Math.max(segment.size(), max);
 		}
-		System.out.println("min binary segment size: "+min);
-		System.out.println("max binary segment size: "+max);
+		logger.info("min binary segment size: "+min);
+		logger.info("max binary segment size: "+max);
 		List<IndexedBinaryRule<C, L>>[][] subsegmentation = new List[segmentation.length][];
 		for (int i=0; i<segmentation.length; ++i) {
 			subsegmentation[i] = cubeSubsegmentBinaries(segmentation[i], BINARY_PARENT_NUM_MINOR_SEGMENTS, BINARY_LEFT_NUM_MINOR_SEGMENTS, BINARY_RIGHT_NUM_MINOR_SEGMENTS);

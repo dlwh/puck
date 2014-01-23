@@ -8,13 +8,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import puck.parser.RuleSemiring;
 import puck.parser.RuleStructure;
 
 public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMultiply<C, L> {
 
 	public static final int BINARY_NUM_SEGMENTS = 24;
-	
+    private Logger logger = LoggerFactory.getLogger(this.getClass().getName());
+
 	public GreedySegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, RuleSemiring semiring) {
 		super(structure, directWrite, semiring);
 	}
@@ -27,8 +30,8 @@ public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 			min = Math.min(segment.size(), min);
 			max = Math.max(segment.size(), max);
 		}
-		System.out.println("min unary segment size: "+min);
-		System.out.println("max unary segment size: "+max);
+		logger.info("min unary segment size: "+min);
+		logger.info("max unary segment size: "+max);
 		return segmentation;
 	}
 
@@ -98,7 +101,7 @@ public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 			segmentation[i] = modSubsegmentBinariesByParent(segment, NUM_SM);
 //			segmentation[i] = balancedSubsegmentBinariesByParent(segment, NUM_SM);
 		}
-		System.out.println("Done with binary segment.");
+        logger.trace("Done with binary segment.");
 		return segmentation;
 	}
 	
@@ -188,7 +191,7 @@ public class GreedySegmentationGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
     	
     	// solve
     	ilp.optimize();
-    	System.out.println("ilp objective value: "+ilp.objectiveValue());
+    	logger.debug("ilp objective value: " + ilp.objectiveValue());
     	Map<String,Double> solution = ilp.solution();
     	
     	List<IndexedBinaryRule<C, L>>[] result = new List[numSegments];
