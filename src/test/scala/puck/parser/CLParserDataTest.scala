@@ -13,6 +13,7 @@ import epic.trees.StandardTreeProcessor
 import epic.trees.TreeInstance
 import epic.trees.annotations.Xbarize
 import java.util
+import puck.parser.gen.GenType
 
 /**
  * TODO
@@ -23,7 +24,7 @@ class CLParserDataTest extends FunSuite {
   test("write/read works") {
     implicit val clcontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.GPU)
     val grammar = ParserTestHarness.grammar.asInstanceOf[SimpleRefinedGrammar[String, String, String]]
-    val data = CLParserData.make(grammar)
+    val data = CLParserData.make(grammar, GenType.CoarseParent, false, ViterbiRuleSemiring)
     val tempFile = File.createTempFile("xxx","parserdata")
     tempFile.deleteOnExit()
     val out = new FileOutputStream(tempFile)
