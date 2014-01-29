@@ -73,6 +73,7 @@ object CLMBRKernels {
     val cellSize = (structure.numNonTerms max structure.numTerms)
     val maskSize = puck.roundUpToMultipleOf(structure.numCoarseSyms, 32) / 32
 
+
     val prog = context.createProgram(programText(cellSize, structure, semiring))
 
     CLMBRKernels(maskSize, prog.createKernel("computeMBR"))

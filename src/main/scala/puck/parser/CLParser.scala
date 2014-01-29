@@ -18,30 +18,20 @@ import java.io._
 import java.util.zip.{ZipFile, ZipOutputStream}
 import scala.collection.mutable.ArrayBuffer
 import BitHacks._
-import epic.trees.UnaryTree
-import scala.Some
-import epic.parser.ViterbiDecoder
-import epic.trees.NullaryTree
-import epic.trees.BinaryTree
-import epic.trees.annotations.Xbarize
-import epic.trees.Span
 import epic.parser.SimpleRefinedGrammar.CloseUnaries
 import epic.parser.projections.{ProjectionIndexer, GrammarRefinements, ParserChartConstraintsFactory, ConstraintCoreGrammarAdaptor}
 import scala.collection.parallel.immutable.ParSeq
 import java.util.Collections
 import epic.trees.UnaryTree
-import scala.Some
 import epic.parser.ViterbiDecoder
 import epic.trees.NullaryTree
 import epic.trees.BinaryTree
 import epic.trees.annotations.Xbarize
 import epic.trees.Span
-import puck.parser.RuleStructure
 import scala.io.Source
 import epic.lexicon.Lexicon
 import breeze.util.Index
 import org.bridj.Pointer
-import java.nio.FloatBuffer
 
 /**
  * TODO
@@ -186,16 +176,16 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       logTime("parse", sentences.length) {
         getBatches(sentences, mask).iterator.flatMap { batch =>
           var ev = inside(batch)
-          ev = outside(batch, ev)
 
           if(!data.isScaling && !data.isLogSum) {
-            val ev3 = computeViterbiMasks(batch, ev)
+            val ev3 = computeViterbiParts(batch, ev)
             Option(ev3).foreach(_.waitFor())
             val parseMask = extractMasks(batch, false)
             val parses = extractParses(batch, parseMask, ev3)
             maskCharts.data.waitUnmap()
             parses
           } else {
+            ev = outside(batch, ev)
             val ev3 = computeMBRParts(batch, ev)
             Option(ev3).foreach(_.waitFor())
             val parseMask = extractMasks(batch, false)
@@ -212,7 +202,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         getBatches(sentences, mask).iterator.foreach { batch =>
           var ev = inside(batch)
           ev = outside(batch, ev)
-          val ev3 = if(data.isViterbi) computeViterbiMasks(batch, ev) else computeMBRParts(batch, ev)
+          val ev3 = if(data.isViterbi) computeViterbiParts(batch, ev) else computeMBRParts(batch, ev)
           Option(ev3).foreach(_.waitFor())
         }
       }
@@ -399,9 +389,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev
     }
 
-    def computeViterbiMasks(batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
-      computeMasks(batch, -4E-3f, events:_*)
-    }
 
     private def computeMBRParts(batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
       if(profile) {
@@ -412,6 +399,24 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val evr = data.mbr.getMasks(maskCharts(::, 0 until batch.numCellsUsed),
         devInside(::, 0 until batch.numCellsUsed),
         devOutside(::, 0 until batch.numCellsUsed),
+        batch.cellOffsets, batch.lengths, structure.root, events:_*) profileIn masksEvents
+      if (profile) {
+        queue.finish()
+        allProfilers.foreach(_.tock())
+        allProfilers.foreach(p => println(s"Masks $p"))
+      }
+
+      evr
+    }
+
+    private def computeViterbiParts(batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
+      if(profile) {
+        allProfilers.foreach(_.clear())
+        allProfilers.foreach(_.tick())
+      }
+
+      val evr = data.viterbi.viterbi(maskCharts(::, 0 until batch.numCellsUsed),
+        devInside(::, 0 until batch.numCellsUsed),
         batch.cellOffsets, batch.lengths, structure.root, events:_*) profileIn masksEvents
       if (profile) {
         queue.finish()
@@ -1310,6 +1315,7 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
                                  inside: CLInsideKernels,
                                  outside: CLOutsideKernels,
                                  masks: CLMaskKernels,
+                                 viterbi: CLViterbi,
                                  mbr: CLMBRKernels,
                                  scaling: CLScalingKernels,
                                  util: CLParserUtils) {
@@ -1331,6 +1337,7 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
     util.write(zout)
     masks.write(zout)
     mbr.write(zout)
+    viterbi.write(zout)
     scaling.write(zout)
     zout.close()
   }
@@ -1338,15 +1345,14 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 
 object CLParserData {
   def make[C, L, W](grammar: SimpleRefinedGrammar[C, L, W], genType: GenType, directWrite: Boolean, semiring: RuleSemiring)(implicit context: CLContext) = {
-//    implicit val viterbi = ViterbiRuleSemiring
-    implicit val viterbi = semiring
+    implicit val semi = semiring
     val ruleScores: Array[Float] = Array.tabulate(grammar.refinedGrammar.index.size){r =>
       val projectedRule = grammar.refinements.rules.project(r)
       if(projectedRule < 0) {
-        viterbi.fromLogSpace(-12)
+        semi.fromLogSpace(-12)
       } else {
         val score = grammar.ruleScoreArray(projectedRule)(grammar.refinements.rules.localize(r))
-        viterbi.fromLogSpace(score.toFloat)
+        semi.fromLogSpace(score.toFloat)
       }
     }
     val structure = new RuleStructure(grammar.refinements, grammar.refinedGrammar, ruleScores)
@@ -1354,10 +1360,11 @@ object CLParserData {
     val outside =  CLOutsideKernels.make(structure, directWrite, semiring, genType)
     val util = CLParserUtils.make(structure)
     val masks = CLMaskKernels.make(structure)
+    val viterbi = CLViterbi.make(structure)
     val mbr = CLMBRKernels.make(structure)
     val scaling = CLScalingKernels.make(structure)
 
-    new CLParserData(grammar, structure, viterbi, inside, outside, masks, mbr, scaling, util)
+    new CLParserData(grammar, structure, semi, inside, outside, masks, viterbi, mbr, scaling, util)
   }
 
   def read[C, L, W](file: ZipFile)(implicit context: CLContext) = {
@@ -1369,8 +1376,9 @@ object CLParserData {
     val util = CLParserUtils.read(file)
     val masks = CLMaskKernels.read(file)
     val mbr = CLMBRKernels.read(file)
+    val viterbi = CLViterbi.read(file)
     val scaling = CLScalingKernels.read(file)
 
-    CLParserData(gr, structure, semiring, inside, outside, masks, mbr, scaling, util)
+    CLParserData(gr, structure, semiring, inside, outside, masks, viterbi, mbr, scaling, util)
   }
 }
