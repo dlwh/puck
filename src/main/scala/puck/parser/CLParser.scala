@@ -180,8 +180,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           if(!data.isScaling && !data.isLogSum) {
             val ev3 = computeViterbiParts(batch, ev)
             Option(ev3).foreach(_.waitFor())
-            val parseMask = extractMasks(batch, false)
-            val parses = extractParses(batch, parseMask, ev3)
+            val parseMask: DenseMatrixMask = extractMasks(batch, false)
+            val parses = extractParses(batch, parseMask.matrix, ev3)
             maskCharts.data.waitUnmap()
             parses
           } else {
@@ -529,64 +529,55 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def outsideTU = new UnaryUpdateManager(data.outside.outsideTUKernels, devOutside, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
     private def outsideNU = new UnaryUpdateManager(data.outside.outsideNUKernels, devOutside, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
 
-    def extractParses(batch: Batch[W], mask: PruningMask, events: CLEvent*): ParSeq[BinarizedTree[C]] = {
-      require(mask.hasMasks, "Can't use null pruning mask for parse extraction!")
+    def extractParses(batch: Batch[W], mask: DenseMatrix[Int], events: CLEvent*): ParSeq[BinarizedTree[C]] = {
       events.foreach(_.waitFor())
       val in = if (profile) System.currentTimeMillis() else 0L
       val trees = for (s <- 0 until batch.numSentences par) yield try {
         val length = batch.sentences(s).length
+        val cellOffset = batch.cellOffsets(s)
+        val treeArray = mask(::, cellOffset until (cellOffset + 2 * length - 1))
 
-        def recTop(begin: Int, end: Int):BinarizedTree[C] = {
-          val column:DenseVector[Int] = mask.maskForTopCell(s, begin, end).get
-          val x = firstSetBit(column:DenseVector[Int])
-          if (x == -1) {
-            assert(begin == end - 1, s"$column ($begin, $end) $length $s ${batch.numSentences}")
-            recBot(begin, end)
+        def top(cell: Int) = treeArray(0, cell)
+        def bot(cell: Int) = treeArray(1, cell)
+        def width(cell: Int) = treeArray(2, cell)
+        def score(cell: Int) = java.lang.Float.intBitsToFloat(treeArray(3, cell))
+        var begin = 0
+        def rec(p: Int):BinarizedTree[C] = {
+          val t = top(p)
+          val b = bot(p)
+          val w = width(p)
+
+          println(begin, if(t < 0) "" else structure.nontermIndex.get(t), t, if(w > 1) structure.nontermIndex.get(b) else structure.termIndex.get(b), b, w, score(p))
+          val botPart = if(w == 1) {
+            begin += 1
+            val botSym: C = structure.refinements.labels.project(structure.termIndex.get(b))
+            NullaryTree(botSym, Span(begin - 1, begin))
           } else {
-            assert(column.valuesIterator.exists(_ != 0), (begin, end))
-//            val label = structure.nontermIndex.get(x)
-            val label = structure.refinements.labels.coarseIndex.get(x)
-            val t = recBot(begin, end)
-            new UnaryTree[C](label, t, IndexedSeq.empty, Span(begin, end))
+            val botSym: C = structure.refinements.labels.project(structure.nontermIndex.get(b))
+            val lc = rec(p + 1)
+            val lcWidth = lc.end - lc.begin
+            assert(begin == lc.end, (begin, lc.begin, lc.end))
+            val rc = rec(p + 2 * lcWidth)
+            assert(begin == rc.end, (begin, rc.begin, rc.end))
+            BinaryTree(botSym, lc, rc, Span(lc.begin, rc.end))
           }
-        }
 
-        def recBot(begin: Int, end: Int):BinarizedTree[C] = {
-          val column:DenseVector[Int] = mask.maskForBotCell(s, begin, end).get
-          val x = firstSetBit(column:DenseVector[Int])
-          if (begin == end - 1) {
-//            val label = structure.termIndex.get(x)
-            val label = structure.refinements.labels.coarseIndex.get(x)
-            NullaryTree(label, Span(begin, end))
+          if(t == -1) {
+            botPart
           } else {
-//            val label = structure.nontermIndex.get(x)
-            val label = structure.refinements.labels.coarseIndex.get(x)
-            for (split <- (begin+1) until end) {
-              val leftIsTerminal = begin == split - 1
-              val rightIsTerminal = end == split + 1
-              val left = if(leftIsTerminal) mask.isAllowedSpan(s, begin, split) else mask.isAllowedTopSpan(s, begin, split)
-              val right = if(rightIsTerminal) mask.isAllowedSpan(s, split, end) else mask.isAllowedTopSpan(s, split, end)
-              if (left && right) {
-                return BinaryTree[C](label, recTop(begin, split), recTop(split, end), Span(begin, end))
-              }
-            }
-
-            error(s"nothing here $length!" + " "+ (begin, end) +
-              {for (split <- (begin+1) until end) yield {
-                val leftIsTerminal = begin == split - 1
-                val rightIsTerminal = end == split + 1
-                val left = if(leftIsTerminal) mask.isAllowedSpan(s, begin, split) else mask.isAllowedTopSpan(s, begin, split)
-                val right = if(rightIsTerminal) mask.isAllowedSpan(s, split, end) else mask.isAllowedTopSpan(s, split, end)
-                (ChartHalf.chartIndex(begin, split, length), ChartHalf.chartIndex(split, end, length), split, left,right)
-
-              }} + " " +batch.sentences(s))
+            val topSym: C = structure.refinements.labels.project(structure.nontermIndex.get(t))
+            UnaryTree(topSym, botPart, IndexedSeq.empty, botPart.span)
           }
+
+
         }
-
-        recTop(0, length)
-
+        val t = rec(0)
+        println(t.render(batch.sentences(s)))
+        t
       } catch {
-        case ex: Throwable => ex.printStackTrace(); null
+        case ex: Exception =>
+          ex.printStackTrace()
+          null
       }
       val out = if (profile) System.currentTimeMillis() else 0L
       if (profile) {
@@ -1141,6 +1132,7 @@ object CLParser extends Logging {
     }
 
 
+
     if (checkPartitions) {
       val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
       println(partsX)
@@ -1150,6 +1142,8 @@ object CLParser extends Logging {
       println("max difference: " + (DenseVector(partsX.map(_.toDouble):_*) - DenseVector(parts2.seq:_*)).norm(Double.PositiveInfinity))
       System.exit(0)
     }
+
+    println(kern.parse(IndexedSeq("He dies".split(" "))))
 
     if (justInsides) {
       val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
