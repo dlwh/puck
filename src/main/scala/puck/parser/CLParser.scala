@@ -1143,7 +1143,7 @@ object CLParser extends Logging {
       System.exit(0)
     }
 
-    println(kern.parse(IndexedSeq("He dies".split(" "))))
+    println(kern.parse(IndexedSeq("Ms. Haag plays Elianti in the death of Figaro .".split(" "))))
 
     if (justInsides) {
       val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))

@@ -180,14 +180,19 @@ case class CLViterbi(wgSize: Array[Int], kernel: CLKernel,
           val unaryOff = if(width == 1) UnaryOffsetsT else UnaryOffsets
 
           botSym = bestUnary(insideBot(::, cellIndex(begin, end, length)), ttop(p), unaryOff);
+          if(width != 1)
+          println(s"($begin, $end) Unary from ${structure.nontermIndex.get(ttop(p))} to ${structure.nontermIndex.get(botSym)}")
+          else
+            println(s"($begin, $end) Unary from ${structure.nontermIndex.get(ttop(p))} to ${structure.termIndex.get(botSym)}")
           sbot(p, botSym)
         }
 
         if(width == 1) {
+          println(s"$begin term ${structure.termIndex.get(botSym)}")
           sscore(p, insideBot(botSym, begin))
           begin += 1
         } else {
-          println((begin,end) + " " + botSym + " " + insideBot(botSym, cellIndex(begin, end, length)), structure.nontermIndex.get(botSym))
+          println(s"${(begin, end)} ${insideBot(botSym, cellIndex(begin, end, length))} ${structure.nontermIndex.get(botSym)}")
           val info = SplitInfo(0, 0, begin + 1, -30000f)
            bestBinary(info, insideTop(::, cellIndex(begin, end -1, length)),
             insideBot(::, cellIndex(end -1, end, length)),
@@ -215,10 +220,12 @@ case class CLViterbi(wgSize: Array[Int], kernel: CLKernel,
           var bestSplit = best.split
           val bestConfig = if(bestSplit < 0) -bestSplit  else NN
 
-          bestSplit = if(bestConfig == NN) bestSplit else if(bestConfig == TN) begin + 1 else end - 1
+          bestSplit = if(bestConfig == NN) bestSplit else if(bestConfig == -TN) begin + 1 else end - 1
           assert(bestSplit > begin && bestSplit < end)
 
-          println(begin,end,info,bestSplit,width)
+          val lsym = if( (bestConfig >> 1) == 0)  structure.nontermIndex.get(info.left) else structure.termIndex.get(info.left)
+          val rsym = if( (bestConfig & 1) == 0)  structure.nontermIndex.get(info.right) else structure.termIndex.get(info.right)
+          println(s"($begin, $end) Binary ${structure.nontermIndex.get(botSym)} to $lsym($begin, $bestSplit) $rsym($bestSplit, $end) mode $bestConfig, score: ${info.score}")
 
           if ( (bestConfig >> 1) == 0) { // Left N
             stop(p+1, info.left)
@@ -575,7 +582,7 @@ __kernel void viterbi(__global tree_t* treeOut, __global float* insides,
           int bestConfig = bestSplit < 0 ? -bestSplit : NN;
 
           bestSplit = (bestConfig == NN) ? bestSplit
-            : bestConfig == TN ? begin + 1
+            : bestConfig == -TN ? begin + 1
             : end - 1; // TT or NT
 
           if ( (bestConfig >> 1) == 0) {// Left N
