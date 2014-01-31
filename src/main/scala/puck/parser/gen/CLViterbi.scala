@@ -1,6 +1,6 @@
 package puck.parser.gen
 
-import puck.parser.{RuleSemiring, SymId, RuleStructure}
+import puck.parser._
 import epic.trees.{BinaryRule, UnaryRule}
 import java.util.zip.{ZipOutputStream, ZipFile}
 import com.nativelibs4java.opencl._
@@ -9,11 +9,14 @@ import puck.linalg.CLMatrix
 import org.bridj.Pointer
 import epic.trees.BinaryRule
 import epic.trees.UnaryRule
-import puck.parser.SymId
-import puck.parser.RuleStructure
 import puck.PointerFreer
 import scala.Array
 import java.nio.{FloatBuffer, IntBuffer}
+import epic.trees.BinaryRule
+import epic.trees.UnaryRule
+import puck.parser.SymId
+import puck.parser.RuleStructure
+import breeze.linalg._
 
 /**
  * Implement's Canny's viterbi algorithm
@@ -24,13 +27,16 @@ case class CLViterbi(wgSize: Array[Int], kernel: CLKernel,
                      parentOffsets: Array[Int],
                      ruleScores: Array[Float],
                      ruleLefts: Array[Int],
-                     ruleRights: Array[Int])(implicit context: CLContext) {
+                     ruleRights: Array[Int],
+                     BinaryOffsetsNN: Int, BinaryOffsetsNT: Int, BinaryOffsetsTN: Int,
+                     BinaryOffsetsTT: Int, UnaryOffsets: Int, UnaryOffsetsT: Int)(implicit context: CLContext) {
   private val parentOffsetsDev = context.createIntBuffer(CLMem.Usage.Input, IntBuffer.wrap(parentOffsets), true)
   private val ruleScoresDev = context.createFloatBuffer(CLMem.Usage.Input, FloatBuffer.wrap(ruleScores), true)
   private val ruleLeftsDev = context.createIntBuffer(CLMem.Usage.Input, IntBuffer.wrap(ruleLefts), true)
   private val ruleRightsDev = context.createIntBuffer(CLMem.Usage.Input, IntBuffer.wrap(ruleRights), true)
 
-  def viterbi(masks: CLMatrix[Int],
+  def viterbi(structure: RuleStructure[_, _],
+              masks: CLMatrix[Int],
               inside: CLMatrix[Float],
               chartIndices: Array[Int],
               lengths: Array[Int],
@@ -38,6 +44,9 @@ case class CLViterbi(wgSize: Array[Int], kernel: CLKernel,
               events: CLEvent*)(implicit queue: CLQueue):CLEvent = {
     require(masks.cols == inside.cols)
     queue.finish()
+//    return cpuViterbi(structure, masks,inside,chartIndices, lengths, root, events:_*)
+
+
 
     val ptrCI = Pointer.pointerToArray[java.lang.Integer](chartIndices)
     val intBufferCI = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, chartIndices.length)
@@ -64,25 +73,197 @@ case class CLViterbi(wgSize: Array[Int], kernel: CLKernel,
 
   def write(out: ZipOutputStream) {
     ZipUtil.addKernel(out, "computeViterbiKernel", kernel)
-    ZipUtil.serializedEntry(out, "ViterbiInts", wgSize)
+    ZipUtil.serializedEntry(out, "ViterbiWGSize", wgSize)
     ZipUtil.serializedEntry(out, "ViterbiParents", parentOffsets)
     ZipUtil.serializedEntry(out, "ViterbiLeft", ruleLefts)
     ZipUtil.serializedEntry(out, "ViterbiRight", ruleRights)
     ZipUtil.serializedEntry(out, "ViterbiScores", ruleScores)
+    ZipUtil.serializedEntry(out, "ViterbiOffsets", Array(BinaryOffsetsNN, BinaryOffsetsNT, BinaryOffsetsTN, BinaryOffsetsTT, UnaryOffsets, UnaryOffsetsT))
   }
 
 
+  val NN = 0
+  val NT = -1
+  val TN = -2
+  val TT = -3
+
+  def bestBinary(
+    info: SplitInfo,
+    leftCell: DenseVector[Float],
+    rightCell: DenseVector[Float],
+    parent: Int,
+    groupOffset: Int,
+    split: Int) = {
+    val firstRule = parentOffsets(parent + groupOffset)
+    val lastRule = parentOffsets(parent + 1 + groupOffset)
+
+    var bestScore = info.score
+    for( r <- firstRule until lastRule) {
+      val lc = ruleLefts(r)
+      val rc = ruleRights(r)
+      val rScore = ruleScores(r)
+      val lcScore = leftCell(lc)
+      val rcScore = rightCell(rc)
+      if (rScore + lcScore + rcScore >= bestScore) {
+        bestScore = rScore + lcScore + rcScore;
+        info.left = lc;
+        info.right = rc;
+        info.split = split;
+        info.score = bestScore;
+      }
+    }
+
+  }
+
+  def bestUnary(
+    childCell: DenseVector[Float],
+    parent: Int,
+    groupOffset: Int) = {
+    val firstRule = parentOffsets(parent + groupOffset)
+    val lastRule = parentOffsets(parent + 1 + groupOffset)
+
+    var bestScore = -3000.0f
+    var bestSym = 0
+    for( r <- firstRule until lastRule) {
+      val lc = ruleLefts(r)
+      val rScore = ruleScores(r)
+      val lcScore = childCell(lc)
+      if (rScore + lcScore>= bestScore) {
+        bestScore = rScore + lcScore
+        bestSym = lc
+      }
+    }
+    assert(childCell(bestSym) != -Float.NegativeInfinity)
+
+    bestSym
+
+  }
+
+
+  def cpuViterbi(structure: RuleStructure[_, _],
+                  masks: CLMatrix[Int],
+                 insides: CLMatrix[Float],
+                 chartIndices: Array[Int],
+                 lengths: Array[Int],
+                 root: Int,
+                 events: CLEvent*)(implicit queue: CLQueue):CLEvent = {
+    CLEvent.waitFor(events:_*)
+    import ChartHalf.{chartIndex=>cellIndex}
+
+    for(s <- 0 until lengths.length) {
+      val length = lengths(s)
+      val insideBot = insides(::, chartIndices(s) until chartIndices(s + 1)).toDense
+      val insideTop = insideBot(::, (length + 1) * length  / 2 until ::)
+      val tree = masks(::, chartIndices(s) until chartIndices(s + 1)).toDense
+
+      def ttop(p: Int) = tree(0, p)
+      def tbot(p: Int) = tree(1, p)
+      def twidth(p: Int) = tree(2, p)
+      def tscore(p: Int) = tree(3, p)
+
+      def stop(p: Int, x: Int) = tree(0, p) = x
+      def sbot(p: Int, x: Int) = tree(1, p) = x
+      def swidth(p: Int, x: Int) = tree(2, p) = x
+      def sscore(p: Int, x: Float) = tree(3, p) = java.lang.Float.floatToRawIntBits(x)
+
+      stop(0, root)
+      swidth(0, length)
+
+      var begin = 0
+
+      for(p <- 0 until 2 * length - 1) {
+        val width = twidth(p)
+        val end = begin + width
+        var botSym = tbot(p)
+
+        if(ttop(p) != -1) {
+          val unaryOff = if(width == 1) UnaryOffsetsT else UnaryOffsets
+
+          botSym = bestUnary(insideBot(::, cellIndex(begin, end, length)), ttop(p), unaryOff);
+          sbot(p, botSym)
+        }
+
+        if(width == 1) {
+          sscore(p, insideBot(botSym, begin))
+          begin += 1
+        } else {
+          println((begin,end) + " " + botSym + " " + insideBot(botSym, cellIndex(begin, end, length)), structure.nontermIndex.get(botSym))
+          val info = SplitInfo(0, 0, begin + 1, -30000f)
+           bestBinary(info, insideTop(::, cellIndex(begin, end -1, length)),
+            insideBot(::, cellIndex(end -1, end, length)),
+            botSym, BinaryOffsetsNT, NT)
+
+
+           bestBinary(info, insideBot(::, cellIndex(begin, begin + 1, length)),
+            insideTop(::, cellIndex(begin + 1, end, length)),
+            botSym, BinaryOffsetsTN, TN)
+
+
+          if(width == 2)
+             bestBinary(info, insideBot(::, cellIndex(begin, end -1, length)),
+              insideBot(::, cellIndex(end -1, end, length)),
+              botSym, BinaryOffsetsTT, TT);
+
+
+          for(split <- begin + 1 until end)
+             bestBinary(info, insideTop(::, cellIndex(begin, split, length)),
+              insideTop(::, cellIndex(split, end, length)),
+              botSym, BinaryOffsetsNN, split)
+
+          val best= info
+          sscore(p, best.score)
+          var bestSplit = best.split
+          val bestConfig = if(bestSplit < 0) -bestSplit  else NN
+
+          bestSplit = if(bestConfig == NN) bestSplit else if(bestConfig == TN) begin + 1 else end - 1
+          assert(bestSplit > begin && bestSplit < end)
+
+          println(begin,end,info,bestSplit,width)
+
+          if ( (bestConfig >> 1) == 0) { // Left N
+            stop(p+1, info.left)
+          } else {
+            stop(p + 1, -1)
+            sbot(p + 1, info.left)
+          }
+
+          if( (bestConfig & 1) == 0) {
+            stop(p + 2 * (bestSplit - begin), info.right)
+          } else {
+            stop(p + 2 * (bestSplit - begin), -1)
+            sbot(p + 2 * (bestSplit - begin), info.right)
+          }
+
+          swidth(p + 1, bestSplit - begin)
+          swidth(p + 2 * (bestSplit - begin), end - bestSplit)
+
+        }
+      }
+
+      masks(::, chartIndices(s) until chartIndices(s + 1)) := tree
+
+    }
+
+    null
+  }
+
+
+  private case class SplitInfo(var left: Int, var right: Int, var split: Int, var score: Float)
 }
 
 object CLViterbi {
   def read(zf: ZipFile)(implicit ctxt: CLContext) = {
-    val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("ViterbiInts")))
+    val wgSize = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("ViterbiWGSize")))
+    val offsets@Array(binaryOffsetsNN, binaryOffsetsNT, binaryOffsetsTN, binaryOffsetsTT, unaryOffsets, unaryOffsetsT) = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("ViterbiOffsets")))
     val parentOffsets = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("ViterbiParents")))
     val ruleLefts = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("ViterbiLeft")))
     val ruleRights = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("ViterbiRight")))
     val ruleScores = ZipUtil.deserializeEntry[Array[Float]](zf.getInputStream(zf.getEntry("ViterbiScores")))
-    CLViterbi(ints, ZipUtil.readKernel(zf, "computeViterbiKernel"), parentOffsets, ruleScores, ruleLefts, ruleRights)
+    CLViterbi(wgSize,
+      ZipUtil.readKernel(zf, "computeViterbiKernel"), parentOffsets, ruleScores, ruleLefts, ruleRights,
+    binaryOffsetsNN, binaryOffsetsNT, binaryOffsetsTN, binaryOffsetsTT, unaryOffsets, unaryOffsetsT)
   }
+
 
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
     val blockSize = 32
@@ -106,11 +287,7 @@ object CLViterbi {
 
     val offsets = Seq(binaryParentsNN, binaryParentsNT, binaryParentsTN, binaryParentsTT, unaryParents, unaryParentsT).foldLeft(Array(0)) { (offsets, parents) =>
       val start = offsets.last
-      val myOffsets = Array.tabulate(g.nontermIndex.size){sym =>
-        var startOfBlock = parents.indexWhere(_ > sym)
-        if(startOfBlock == -1) startOfBlock = parents.length
-        startOfBlock + start
-      }
+      val myOffsets: Array[Int] = mkOffsetsForSortedArray(g, parents, start)
       assert(myOffsets.last - start == parents.length,myOffsets.last + " " + start +  " " + parents.toIndexedSeq)
 
       offsets ++ myOffsets
@@ -123,6 +300,7 @@ object CLViterbi {
     val scores = epic.util.Arrays.concatenate(binaryScoresNN, binaryScoresNT, binaryScoresTN, binaryScoresTT, unaryScores, unaryScoresT)
     val left =   epic.util.Arrays.concatenate(binaryLeftNN,   binaryLeftNT,   binaryLeftTN,   binaryLeftTT,  unaryChildren, unaryChildrenT)
     val right =  epic.util.Arrays.concatenate(binaryRightNN,  binaryRightNT,  binaryRightTN,  binaryRightTT)
+    val parents =  epic.util.Arrays.concatenate(binaryParentsNN,  binaryParentsNT,  binaryParentsTN,  binaryParentsTT)
     assert(offsets.last == scores.length,offsets.last + " " + scores.length)
 
 
@@ -134,17 +312,52 @@ object CLViterbi {
       s"#define $name $off"
     }
 
+    verify(g.nontermIndex.size, parents, groupOffsets(0), offsets, 0)
+    verify(g.nontermIndex.size, parents, groupOffsets(1), offsets, binaryParentsNN.length)
+    verify(g.nontermIndex.size, parents, groupOffsets(2), offsets, binaryParentsNN.length + binaryParentsNT.length)
+    verify(g.nontermIndex.size, parents, groupOffsets(3), offsets, binaryParentsNN.length + binaryParentsNT.length + binaryParentsTN.length)
+    val ssym = structure.nontermIndex.toIndexedSeq.indexWhere(_.toString == "S_0")
+    println(ssym)
+    println(structure.bothTermRules.filter(_._1.parent.gpu == ssym))
+    println(binaryParentsTT.count(_ == ssym))
+    println(parents.slice(offsets(groupOffsets(3) + ssym), offsets(groupOffsets(3) + ssym + 1)).toIndexedSeq)
+
 
     val fullSource = (
-//      offsetsIntoMassiveDataArray.take(1).mkString(s"__constant const int parentOffsets[] = {", ", ", "};\n\n")
         defs.mkString("\n")
         + source(structure, wgSize)
       )
 
     val prog = context.createProgram(fullSource)
 
-    CLViterbi(wgSize, prog.createKernel("viterbi"), offsets, scores, left, right)
+    CLViterbi(wgSize, prog.createKernel("viterbi"), offsets, scores, left, right,
+      groupOffsets(0),
+      groupOffsets(1),
+      groupOffsets(2),
+      groupOffsets(3),
+      groupOffsets(4),
+      groupOffsets(5)
+    )
   }
+
+
+  private def mkOffsetsForSortedArray[L, C](g: RuleStructure[C, L], parents: Array[Int], start: Int): Array[Int] = {
+    val myOffsets = Array.tabulate(g.nontermIndex.size) {
+      sym =>
+        var startOfBlock = parents.indexWhere(_ > sym)
+        if (startOfBlock == -1) startOfBlock = parents.length
+        startOfBlock + start
+    }
+    myOffsets
+  }
+
+  private def verify(numSyms: Int, array: Array[Int], goff: Int, offsets: Array[Int], cnt: Int) {
+    for(i <- 0 until numSyms) {
+      assert(array.slice(offsets(i), offsets(i+1)).forall(_ == i), i + " " + array.slice(offsets(i), offsets(i+1)).toIndexedSeq)
+
+    }
+  }
+
 
 
   private def source[C, L](g: RuleStructure[C, L], wgSize: Array[Int]) = {
@@ -296,7 +509,7 @@ __kernel void viterbi(__global tree_t* treeOut, __global float* insides,
     __global tree_t* tree = treeOut + cellOffsets[sent];
     int length = lengths[sent];
     __global float* insideBot = insides + cellOffsets[sent] * cellSize;
-    __global float* insideTop = insideBot + CHART_SIZE(length + 1) * cellSize;
+    __global float* insideTop = insideBot + CHART_SIZE(length) * cellSize;
 
     if (tid == 0) {
       tree[0].topSym = root;

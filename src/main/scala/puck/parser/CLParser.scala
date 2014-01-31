@@ -415,7 +415,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         allProfilers.foreach(_.tick())
       }
 
-      val evr = data.viterbi.viterbi(maskCharts(::, 0 until batch.numCellsUsed),
+      val evr = data.viterbi.viterbi(structure, maskCharts(::, 0 until batch.numCellsUsed),
         devInside(::, 0 until batch.numCellsUsed),
         batch.cellOffsets, batch.lengths, structure.root, events:_*) profileIn masksEvents
       if (profile) {
@@ -530,7 +530,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def outsideNU = new UnaryUpdateManager(data.outside.outsideNUKernels, devOutside, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
 
     def extractParses(batch: Batch[W], mask: DenseMatrix[Int], events: CLEvent*): ParSeq[BinarizedTree[C]] = {
-      events.foreach(_.waitFor())
+      CLEvent.waitFor(events:_*)
       val in = if (profile) System.currentTimeMillis() else 0L
       val trees = for (s <- 0 until batch.numSentences par) yield try {
         val length = batch.sentences(s).length
