@@ -227,7 +227,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           ev = data.util.getRootScores(dest, devInside, devParentPtrs, batch.numSentences, structure.root, ev)
           if(semiring.needsScaling) {
             val scaledScores = dest.read(queue, ev).getFloats(batch.numSentences)
-            for(i <- 0 until batch.numSentences) yield semiring.toLogSpace(scaledScores(i), mask.insideTopScaleFor(i, 0, batch.lengths(i)))
+            println{for(i <- 0 until batch.numSentences) yield batch.masks.insideTopScaleFor(i, 0, batch.lengths(i))}
+            for(i <- 0 until batch.numSentences) yield semiring.toLogSpace(scaledScores(i), batch.masks.insideTopScaleFor(i, 0, batch.lengths(i))) + batch.partitionScales(i).toFloat
           } else {
             dest.read(queue, ev).getFloats(batch.numSentences)
           }
@@ -430,9 +431,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val sent = batch.sentences(i)
         val anch = data.grammar.tagScorer.anchor(sent)
         val lexAnch = data.grammar.lexicon.anchor(sent)
+        var scoreScale = 0.0
         var offset = batch.lengthOffsets(i)
         for (pos <- 0 until sent.length) {
           val myScale = if(semiring.needsScaling) math.exp(-batch.masks.insideScaleFor(i, pos, pos + 1)) else 1.0
+          var maxScore = _zero
           for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
             val index = ref
             val score = anch.scoreTag(pos, data.grammar.refinedGrammar.labelIndex.get(index))
@@ -440,9 +443,24 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
             //        if(pos == 0) println(pos,t,ref,data.grammar.refinements.labels.fineIndex.get(ref), gpuIndex,score)
             pArray(offset) = batch.insideBotCell(i, pos, pos + 1)
             tagScores(offset, gpuIndex) = data.semiring.fromLogSpace(score.toFloat) * myScale.toFloat
+            maxScore = maxScore + tagScores(offset, gpuIndex)
           }
+
+          if(semiring.needsScaling) {
+            scoreScale += math.log(maxScore/2)
+
+            for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
+              val index = ref
+              val gpuIndex = data.structure.labelIndexToTerminal(index)
+              tagScores(offset, gpuIndex) /= (maxScore/2)
+            }
+
+          }
+
+
           offset += 1
         }
+        batch.partitionScales(i) = scoreScale
       }
 
       val ev2 = devParentPtrs.writeArray(queue, pArray, totalLength, events:_*) profileIn hdTransferEvents
@@ -1054,6 +1072,7 @@ object CLParser extends Logging {
                     reproject: Boolean = true,
                     viterbi: Boolean = true,
                     logsum: Boolean = false,
+                    numToDrop: Int = 0,
                     printTrees: Boolean = false)
 
   def main(args: Array[String]) = {
@@ -1078,7 +1097,7 @@ object CLParser extends Logging {
     println("Training Parser...")
     println(params)
     val transformed = params.treebank.copy(binarization="left", keepUnaryChainsFromTrain = false).trainTrees
-    val gold = params.treebank.trainTrees.filter(_.words.length <= maxParseLength).take(numToParse)
+    val gold = params.treebank.trainTrees.filter(_.words.length <= maxParseLength).drop(numToDrop).take(numToParse)
     val toParse =  gold.map(_.words)
 
     var grammars: IndexedSeq[SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String]] = if (textGrammarPrefix == null) {
@@ -1089,9 +1108,6 @@ object CLParser extends Logging {
     }
 
     if(reproject && grammars.length > 1) {
-      val writer = new FileWriter("qqq")
-      grammars.head.prettyPrint(writer)
-      writer.close()
       val (newc, newr) = reprojectGrammar(grammars.head, textGrammarPrefix.split(":").head, grammars.last, textGrammarPrefix.split(":").last)
       grammars = IndexedSeq(newc, newr)
     }
@@ -1127,28 +1143,29 @@ object CLParser extends Logging {
       }
     }
 
-
-
     val allData = grammars.dropRight(1).map(CLParserData.make(_,  defaultGenerator, false, ViterbiRuleSemiring)) :+ parserData
 
     val kern = {
       fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](allData, profile, parseMemString(mem))
     }
 
-
-    if (checkPartitions) {
-      val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
-      println(partsX)
-      val parser = Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
-      val parts2 = toParse.par.map(parser.marginal(_).logPartition)
-      println(parts2)
-      println("max difference: " + (DenseVector(partsX.map(_.toDouble):_*) - DenseVector(parts2.seq:_*)).norm(Double.PositiveInfinity))
-      System.exit(0)
+    val parser = if(grammars.length > 1) {
+      Parser(new ConstraintCoreGrammarAdaptor(grammar.grammar, grammar.lexicon, new ParserChartConstraintsFactory(Parser(grammars.head, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate)),
+        grammar,
+        if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
+    } else {
+      Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
     }
 
-    if (justInsides) {
+
+    if (justInsides || checkPartitions) {
       val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
       println(partsX)
+      if (checkPartitions) {
+        val parts2 = toParse.par.map(parser.marginal(_).logPartition)
+        println(parts2)
+        println("max difference: " + (DenseVector(partsX.map(_.toDouble):_*) - DenseVector(parts2.seq:_*)).norm(Double.PositiveInfinity))
+      }
       System.exit(0)
     }
 
@@ -1166,13 +1183,7 @@ object CLParser extends Logging {
       println(eval(trees zip gold.map(_.tree) zip toParse))
     }
     if (jvmParse) {
-      val parser = if(grammars.length > 1) {
-        Parser(new ConstraintCoreGrammarAdaptor(grammar.grammar, grammar.lexicon, new ParserChartConstraintsFactory(Parser(grammars.head, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate)),
-          grammar,
-          if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
-      } else {
-        Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
-      }
+
       val margs = logTime("JVM Parse", toParse.length) {
         toParse.par.map { w =>
           val m = parser.apply(w)
