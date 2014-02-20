@@ -227,7 +227,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           ev = data.util.getRootScores(dest, devInside, devParentPtrs, batch.numSentences, structure.root, ev)
           if(semiring.needsScaling) {
             val scaledScores = dest.read(queue, ev).getFloats(batch.numSentences)
-            println{for(i <- 0 until batch.numSentences) yield batch.masks.insideTopScaleFor(i, 0, batch.lengths(i))}
             for(i <- 0 until batch.numSentences) yield semiring.toLogSpace(scaledScores(i), batch.masks.insideTopScaleFor(i, 0, batch.lengths(i))) + batch.partitionScales(i).toFloat
           } else {
             dest.read(queue, ev).getFloats(batch.numSentences)
@@ -1073,6 +1072,7 @@ object CLParser extends Logging {
                     viterbi: Boolean = true,
                     logsum: Boolean = false,
                     numToDrop: Int = 0,
+                    evalReference: Boolean = false,
                     printTrees: Boolean = false)
 
   def main(args: Array[String]) = {
@@ -1097,7 +1097,7 @@ object CLParser extends Logging {
     println("Training Parser...")
     println(params)
     val transformed = params.treebank.copy(binarization="left", keepUnaryChainsFromTrain = false).trainTrees
-    val gold = params.treebank.trainTrees.filter(_.words.length <= maxParseLength).drop(numToDrop).take(numToParse)
+    val gold = params.treebank.devTrees.filter(_.words.length <= maxParseLength).drop(numToDrop).take(numToParse)
     val toParse =  gold.map(_.words)
 
     var grammars: IndexedSeq[SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String]] = if (textGrammarPrefix == null) {
@@ -1145,9 +1145,11 @@ object CLParser extends Logging {
 
     val allData = grammars.dropRight(1).map(CLParserData.make(_,  defaultGenerator, false, ViterbiRuleSemiring)) :+ parserData
 
+
     val kern = {
       fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](allData, profile, parseMemString(mem))
     }
+
 
     val parser = if(grammars.length > 1) {
       Parser(new ConstraintCoreGrammarAdaptor(grammar.grammar, grammar.lexicon, new ParserChartConstraintsFactory(Parser(grammars.head, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate)),
@@ -1156,6 +1158,16 @@ object CLParser extends Logging {
     } else {
       Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
     }
+
+    if(evalReference) {
+      val res = ParserTester.evalParser(gold, parser, "cpu-reference", 4)
+      println(res)
+//      val parses = toParse.par.map(parser.bestParse).toIndexedSeq
+//      println(eval(parses zip gold.map(_.tree) zip toParse, printTrees))
+//      System.exit(0)
+    }
+
+
 
 
     if (justInsides || checkPartitions) {
@@ -1177,10 +1189,10 @@ object CLParser extends Logging {
 
 
     val trees = logTime("CL Parsing:", toParse.length)(kern.parse(toParse))
-    println(eval(trees zip gold.map(_.tree) zip toParse, printTrees))
+    println(eval(trees zip gold.map(_.tree) zip toParse, "opencl", printTrees))
     if (parseTwice) {
       val trees = logTime("CL Parsing x2:", toParse.length)(kern.parse(toParse))
-      println(eval(trees zip gold.map(_.tree) zip toParse))
+      println(eval(trees zip gold.map(_.tree) zip toParse, "opencl-twice"))
     }
     if (jvmParse) {
 
@@ -1190,7 +1202,7 @@ object CLParser extends Logging {
           m
         }.seq.toIndexedSeq
       }
-      println(eval(margs zip gold.map(_.tree) zip toParse))
+      println(eval(margs zip gold.map(_.tree) zip toParse, ""))
     }
 
     kern.release()
@@ -1208,14 +1220,20 @@ object CLParser extends Logging {
     kern
   }
 
-  def eval(trees: IndexedSeq[((BinarizedTree[AnnotatedLabel], BinarizedTree[AnnotatedLabel]), IndexedSeq[String])], printTrees: Boolean = false) = {
+  def eval(trees: IndexedSeq[((BinarizedTree[AnnotatedLabel], BinarizedTree[AnnotatedLabel]), IndexedSeq[String])], name: String, printTrees: Boolean = false) = {
     val chainReplacer = AnnotatedLabelChainReplacer
+    val outDir = new File(s"eval-$name")
+    outDir.mkdirs()
+    val goldOut = new PrintStream(new FileOutputStream(new File(outDir, "gold")))
+    val guessOut = new PrintStream(new FileOutputStream(new File(outDir, "guess")))
     val eval: ParseEval[String] = new ParseEval(Set("","''", "``", ".", ":", ",", "TOP"))
-    trees filter (_._1 ne null) map { case ((guess, gold), words) =>
+    val res = trees filter (_._1 ne null) map { case ((guess, gold), words) =>
       val tree: Tree[String] = chainReplacer.replaceUnaries(guess).map(_.label)
       val guessTree = Trees.debinarize(Trees.deannotate(tree))
       val deBgold: Tree[String] = Trees.debinarize(Trees.deannotate(chainReplacer.replaceUnaries(gold).map(_.label)))
       val stats = eval.apply(guessTree, deBgold)
+      goldOut.println(deBgold.render(words, false))
+      guessOut.println(guessTree.render(words, false))
       if(printTrees) {
         println("Guess:\n"  + guessTree.render(words))
         println("Gold:\n"  + deBgold.render(words))
@@ -1224,6 +1242,10 @@ object CLParser extends Logging {
       }
       stats
     } reduceLeft (_ + _)
+
+    goldOut.close()
+    guessOut.close()
+    res
   }
 
   def parseMemString(x: String) = x.last.toLower match {
