@@ -153,7 +153,7 @@ case class CLViterbi(wgSize: Array[Int], kernel: CLKernel,
     for(s <- 0 until lengths.length) {
       val length = lengths(s)
       val insideBot = insides(::, chartIndices(s) until chartIndices(s + 1)).toDense
-      val insideTop = insideBot(::, (length + 1) * length  / 2 until ::)
+      val insideTop = insideBot(::, (length + 1) * length  / 2 until chartIndices(s + 1))
       val tree = masks(::, chartIndices(s) until chartIndices(s + 1)).toDense
 
       def ttop(p: Int) = tree(0, p)

@@ -14,6 +14,8 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
                                     devInside: CLMatrix[Float],
                                     devOutside: CLMatrix[Float],
                                     masks: PruningMask) {
+  var partitionScales = DenseVector.zeros[Double](sentences.length)
+
   val cellOffsets = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2).toArray
 
   val lengths = sentences.map(_.length).toArray

@@ -21,8 +21,6 @@ fork := true
 javaOptions ++= Seq("-Xmx12g", "-Djava.util.logging.config.file=log.props")
 
 
-
-
 resolvers ++= Seq(
   "Scala Tools Snapshots" at "http://scala-tools.org/repo-snapshots/",
   "Sonatype Snapshots" at "https://oss.sonatype.org/content/repositories/snapshots/"
