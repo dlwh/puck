@@ -126,7 +126,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     // in a fixed sentence is (n/2)^2= n^2/4.
     // Take n = 32, then we want our P/L/R arrays to be of the ratio (3 * 256):992 \approx 3/4 (3/4 exaclty if we exclude the - n term)
     // doesn't quite work the way we want (outside), so we'll bump the number to 4/5
-    val relativeSizeOfChartsToP = 12
+    val relativeSizeOfChartsToP = 7
     val baseSize = numberOfUnitsOf32 / (3 + relativeSizeOfChartsToP)
     val extra = numberOfUnitsOf32 % (3 + relativeSizeOfChartsToP)
     val plrSize = baseSize
@@ -1100,7 +1100,7 @@ object CLParser extends Logging {
     println("Training Parser...")
     println(params)
     val transformed = params.treebank.copy(binarization="left", keepUnaryChainsFromTrain = false).trainTrees
-    val gold = params.treebank.devTrees.filter(_.words.length <= maxParseLength).drop(numToDrop).take(numToParse)
+    val gold = params.treebank.trainTrees.filter(_.words.length <= maxParseLength).drop(numToDrop).take(numToParse)
     val toParse =  gold.map(_.words)
 
     var grammars: IndexedSeq[SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String]] = if (textGrammarPrefix == null) {
