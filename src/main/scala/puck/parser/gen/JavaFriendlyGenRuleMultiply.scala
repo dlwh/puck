@@ -45,9 +45,9 @@ abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L],
       programs.foreach(_.addBuildOption("-DNVIDIA"))
 //      programs.foreach(_.addBuildOption("-cl-nv-opt-level=0"))
 //      programs.foreach(_.addBuildOption("-cl-opt-disable"))
-      programs.foreach(_.addBuildOption("-cl-nv-arch"))
+//      programs.foreach(_.addBuildOption("-cl-nv-arch"))
       //programs.foreach(_.addBuildOption("sm_30"))
-      programs.foreach(_.addBuildOption("sm_35"))
+//      programs.foreach(_.addBuildOption("sm_35"))
 
     }
 

@@ -79,10 +79,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val transferEvents  = new CLProfiler("Transfer")
   private val binaryEvents  = new CLProfiler("Binary")
   private val unaryEvents  = new CLProfiler("Unary")
-  private val sumToChartsEvents  = new CLProfiler("SumToCharts")
-  private val sumEvents  = new CLProfiler("Sum")
+  private val unarySumEvents  = new CLProfiler("Unary Sum")
+  private val binarySum  = new CLProfiler("Binary Sum")
   private val masksEvents  = new CLProfiler("Masks")
-  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, sumToChartsEvents, sumEvents, initMemFillEvents, memFillEvents, hdTransferEvents, masksEvents)
+  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, unarySumEvents, binarySum, initMemFillEvents, memFillEvents, hdTransferEvents, masksEvents)
 
   // TODO:
 
@@ -469,7 +469,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       val ev2 = devParentPtrs.writeArray(queue, pArray, totalLength, events:_*) profileIn hdTransferEvents
       val ev = devParent(0 until totalLength, ::).writeFrom(tagScores, false, ev2) map (_ profileIn  hdTransferEvents)
-      transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, totalLength, devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn sumToChartsEvents
+      transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, totalLength, devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn unarySumEvents
     }
 
 
@@ -781,7 +781,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
           val endEvents = kernels.update(unaryEvents, devParent(0 until offset, ::), parentScale, offsetBuffer.buffer, devLeft(0 until offset, ::), childScale, offsetBuffer.buffer, offset, wl, zz)
 
-          val _ev = transposeCopy.permuteTransposeCopyOut(scoreMatrix, offsetBuffer.buffer, offset, devParent(0 until offset, ::), (evx +: endEvents):_*) profileIn sumToChartsEvents
+          val _ev = transposeCopy.permuteTransposeCopyOut(scoreMatrix, offsetBuffer.buffer, offset, devParent(0 until offset, ::), (evx +: endEvents):_*) profileIn unarySumEvents
 
           offset = 0
           Seq(_ev)
@@ -910,7 +910,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
            parentChartMatrix,
            offsetBuffer.buffer, splitPointOffset,
            devSplitPointOffsets,
-           32 / span max 1, data.numSyms, events:_*) profileIn sumEvents
+           32 / span max 1, data.numSyms, events:_*) profileIn binarySum
          sumEv
        }
 
