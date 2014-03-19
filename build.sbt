@@ -18,7 +18,9 @@ libraryDependencies ++= Seq(
 
 fork := true
 
-javaOptions ++= Seq("-Xmx12g", "-Djava.util.logging.config.file=log.props")
+javaOptions ++= Seq("-Xmx12g")
+
+
 
 
 resolvers ++= Seq(
