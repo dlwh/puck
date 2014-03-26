@@ -79,10 +79,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val transferEvents  = new CLProfiler("Transfer")
   private val binaryEvents  = new CLProfiler("Binary")
   private val unaryEvents  = new CLProfiler("Unary")
-  private val sumToChartsEvents  = new CLProfiler("SumToCharts")
-  private val sumEvents  = new CLProfiler("Sum")
+  private val unarySumEvents  = new CLProfiler("Unary Sum")
+  private val posEvents  = new CLProfiler("POS")
+  private val binarySum  = new CLProfiler("Binary Sum")
   private val masksEvents  = new CLProfiler("Masks")
-  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, sumToChartsEvents, sumEvents, initMemFillEvents, memFillEvents, hdTransferEvents, masksEvents)
+  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, unarySumEvents, binarySum, initMemFillEvents, memFillEvents, hdTransferEvents, masksEvents, posEvents)
 
   // TODO:
 
@@ -177,11 +178,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         getBatches(sentences, mask).iterator.flatMap { batch =>
           var ev = inside(batch)
 
-          if(!data.isScaling && !data.isLogSum) {
+          if(data.isViterbi) {
             val ev3 = computeViterbiParts(batch, ev)
             Option(ev3).foreach(_.waitFor())
-            val parseMask = extractMasks(batch, false)
-            val parses = extractParses(batch, parseMask, ev3)
+            val parseMask: DenseMatrixMask = extractMasks(batch, false)
+            val parses = extractParses(batch, parseMask.matrix, ev3)
             maskCharts.data.waitUnmap()
             parses
           } else {
@@ -217,7 +218,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           ev = data.util.getRootScores(dest, devInside, devParentPtrs, batch.numSentences, structure.root, ev)
           if(semiring.needsScaling) {
             val scaledScores = dest.read(queue, ev).getFloats(batch.numSentences)
-            for(i <- 0 until batch.numSentences) yield semiring.toLogSpace(scaledScores(i), mask.insideTopScaleFor(i, 0, batch.lengths(i)))
+            for(i <- 0 until batch.numSentences) yield semiring.toLogSpace(scaledScores(i), batch.masks.insideTopScaleFor(i, 0, batch.lengths(i))) + batch.partitionScales(i).toFloat
           } else {
             dest.read(queue, ev).getFloats(batch.numSentences)
           }
@@ -415,7 +416,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         allProfilers.foreach(_.tick())
       }
 
-      val evr = data.viterbi.viterbi(maskCharts(::, 0 until batch.numCellsUsed),
+      val evr = data.viterbi.viterbi(structure, maskCharts(::, 0 until batch.numCellsUsed),
         devInside(::, 0 until batch.numCellsUsed),
         batch.cellOffsets, batch.lengths, structure.root, events:_*) profileIn masksEvents
       if (profile) {
@@ -435,9 +436,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         val sent = batch.sentences(i)
         val anch = data.grammar.tagScorer.anchor(sent)
         val lexAnch = data.grammar.lexicon.anchor(sent)
+        var scoreScale = 0.0
         var offset = batch.lengthOffsets(i)
         for (pos <- 0 until sent.length) {
           val myScale = if(semiring.needsScaling) math.exp(-batch.masks.insideScaleFor(i, pos, pos + 1)) else 1.0
+          var maxScore = _zero
           for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
             val index = ref
             val score = anch.scoreTag(pos, data.grammar.refinedGrammar.labelIndex.get(index))
@@ -445,14 +448,29 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
             //        if(pos == 0) println(pos,t,ref,data.grammar.refinements.labels.fineIndex.get(ref), gpuIndex,score)
             pArray(offset) = batch.insideBotCell(i, pos, pos + 1)
             tagScores(offset, gpuIndex) = data.semiring.fromLogSpace(score.toFloat) * myScale.toFloat
+            maxScore = maxScore + tagScores(offset, gpuIndex)
           }
+
+          if(semiring.needsScaling) {
+            scoreScale += math.log(maxScore/2)
+
+            for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
+              val index = ref
+              val gpuIndex = data.structure.labelIndexToTerminal(index)
+              tagScores(offset, gpuIndex) /= (maxScore/2)
+            }
+
+          }
+
+
           offset += 1
         }
+        batch.partitionScales(i) = scoreScale
       }
 
       val ev2 = devParentPtrs.writeArray(queue, pArray, totalLength, events:_*) profileIn hdTransferEvents
       val ev = devParent(0 until totalLength, ::).writeFrom(tagScores, false, ev2) map (_ profileIn  hdTransferEvents)
-      transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, totalLength, devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn sumToChartsEvents
+      transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, totalLength, devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn posEvents
     }
 
 
@@ -529,64 +547,56 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def outsideTU = new UnaryUpdateManager(data.outside.outsideTUKernels, devOutside, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
     private def outsideNU = new UnaryUpdateManager(data.outside.outsideNUKernels, devOutside, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
 
-    def extractParses(batch: Batch[W], mask: PruningMask, events: CLEvent*): ParSeq[BinarizedTree[C]] = {
-      require(mask.hasMasks, "Can't use null pruning mask for parse extraction!")
-      events.foreach(_.waitFor())
+    def extractParses(batch: Batch[W], mask: DenseMatrix[Int], events: CLEvent*): ParSeq[BinarizedTree[C]] = {
+      CLEvent.waitFor(events:_*)
       val in = if (profile) System.currentTimeMillis() else 0L
       val trees = for (s <- 0 until batch.numSentences par) yield try {
         val length = batch.sentences(s).length
+        val cellOffset = batch.cellOffsets(s)
+        val treeArray = mask(::, cellOffset until (cellOffset + 2 * length - 1))
 
-        def recTop(begin: Int, end: Int):BinarizedTree[C] = {
-          val column:DenseVector[Int] = mask.maskForTopCell(s, begin, end).get
-          val x = firstSetBit(column:DenseVector[Int])
-          if (x == -1) {
-            assert(begin == end - 1, s"$column ($begin, $end) $length $s ${batch.numSentences}")
-            recBot(begin, end)
+        def top(cell: Int) = treeArray(0, cell)
+        def bot(cell: Int) = treeArray(1, cell)
+        def width(cell: Int) = treeArray(2, cell)
+        def score(cell: Int) = java.lang.Float.intBitsToFloat(treeArray(3, cell))
+        var begin = 0
+        def rec(p: Int):BinarizedTree[C] = {
+          val t = top(p)
+          val b = bot(p)
+          val w = width(p)
+
+//          println(begin, if(t < 0) "" else structure.nontermIndex.get(t), t, if(w > 1) structure.nontermIndex.get(b) else structure.termIndex.get(b), b, w, score(p))
+          val botPart = if(w == 1) {
+            begin += 1
+            val botSym: C = structure.refinements.labels.project(structure.termIndex.get(b))
+            assert(botSym != "")
+            NullaryTree(botSym, Span(begin - 1, begin))
           } else {
-            assert(column.valuesIterator.exists(_ != 0), (begin, end))
-//            val label = structure.nontermIndex.get(x)
-            val label = structure.refinements.labels.coarseIndex.get(x)
-            val t = recBot(begin, end)
-            new UnaryTree[C](label, t, IndexedSeq.empty, Span(begin, end))
+            val botSym: C = structure.refinements.labels.project(structure.nontermIndex.get(b))
+            val lc = rec(p + 1)
+            val lcWidth = lc.end - lc.begin
+            assert(begin == lc.end, (begin, lc.begin, lc.end))
+            val rc = rec(p + 2 * lcWidth)
+            assert(begin == rc.end, (begin, rc.begin, rc.end))
+            BinaryTree(botSym, lc, rc, Span(lc.begin, rc.end))
           }
-        }
 
-        def recBot(begin: Int, end: Int):BinarizedTree[C] = {
-          val column:DenseVector[Int] = mask.maskForBotCell(s, begin, end).get
-          val x = firstSetBit(column:DenseVector[Int])
-          if (begin == end - 1) {
-//            val label = structure.termIndex.get(x)
-            val label = structure.refinements.labels.coarseIndex.get(x)
-            NullaryTree(label, Span(begin, end))
+          if(t == -1) {
+            botPart
           } else {
-//            val label = structure.nontermIndex.get(x)
-            val label = structure.refinements.labels.coarseIndex.get(x)
-            for (split <- (begin+1) until end) {
-              val leftIsTerminal = begin == split - 1
-              val rightIsTerminal = end == split + 1
-              val left = if(leftIsTerminal) mask.isAllowedSpan(s, begin, split) else mask.isAllowedTopSpan(s, begin, split)
-              val right = if(rightIsTerminal) mask.isAllowedSpan(s, split, end) else mask.isAllowedTopSpan(s, split, end)
-              if (left && right) {
-                return BinaryTree[C](label, recTop(begin, split), recTop(split, end), Span(begin, end))
-              }
-            }
-
-            error(s"nothing here $length!" + " "+ (begin, end) +
-              {for (split <- (begin+1) until end) yield {
-                val leftIsTerminal = begin == split - 1
-                val rightIsTerminal = end == split + 1
-                val left = if(leftIsTerminal) mask.isAllowedSpan(s, begin, split) else mask.isAllowedTopSpan(s, begin, split)
-                val right = if(rightIsTerminal) mask.isAllowedSpan(s, split, end) else mask.isAllowedTopSpan(s, split, end)
-                (ChartHalf.chartIndex(begin, split, length), ChartHalf.chartIndex(split, end, length), split, left,right)
-
-              }} + " " +batch.sentences(s))
+            val topSym: C = structure.refinements.labels.project(structure.nontermIndex.get(t))
+            UnaryTree(topSym, botPart, IndexedSeq.empty, botPart.span)
           }
+
+
         }
-
-        recTop(0, length)
-
+        val t = rec(0)
+//        println(t.render(batch.sentences(s)))
+        t
       } catch {
-        case ex: Throwable => ex.printStackTrace(); null
+        case ex: Exception =>
+          ex.printStackTrace()
+          null
       }
       val out = if (profile) System.currentTimeMillis() else 0L
       if (profile) {
@@ -595,7 +605,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       trees
     }
 
-    val unaryThreshold = 0.5
+    val unaryThreshold = 0.4
 
     def extractMBRParses(batch: Batch[W], mask: PruningMask, events: CLEvent*): ParSeq[BinarizedTree[C]] = {
       require(mask.hasMasks, "Can't use null pruning mask for parse extraction!")
@@ -622,9 +632,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
             var botScaled = botFloat
 
             if(data.isScaling) {
-              topScaled *= math.exp(batch.masks.insideScaleFor(s, begin, end) + batch.masks.outsideScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length)).toFloat
+              topScaled *= math.exp(batch.masks.insideTopScaleFor(s, begin, end) + batch.masks.outsideTopScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length)).toFloat
               botScaled *= math.exp(batch.masks.insideScaleFor(s, begin, end) + batch.masks.outsideScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length)).toFloat
             }
+
+            if(length == 1) {
+              println(batch.sentences(s) + " " + botScaled + " " + topScaled)
+            }
+
             if(topScaled.isInfinite || botScaled.isInfinite) {
               println("Overflow! taking counter measures")
             }
@@ -634,6 +649,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
             if (botScaled.isNaN) {
               botScaled = 0.0f
             }
+
 
             topScaled = math.min(topScaled, 1.0f)
             botScaled = math.min(botScaled, 1.0f)
@@ -766,7 +782,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
           val endEvents = kernels.update(unaryEvents, devParent(0 until offset, ::), parentScale, offsetBuffer.buffer, devLeft(0 until offset, ::), childScale, offsetBuffer.buffer, offset, wl, zz)
 
-          val _ev = transposeCopy.permuteTransposeCopyOut(scoreMatrix, offsetBuffer.buffer, offset, devParent(0 until offset, ::), (evx +: endEvents):_*) profileIn sumToChartsEvents
+          val _ev = transposeCopy.permuteTransposeCopyOut(scoreMatrix, offsetBuffer.buffer, offset, devParent(0 until offset, ::), (evx +: endEvents):_*) profileIn unarySumEvents
 
           offset = 0
           Seq(_ev)
@@ -895,7 +911,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
            parentChartMatrix,
            offsetBuffer.buffer, splitPointOffset,
            devSplitPointOffsets,
-           32 / span max 1, data.numSyms, events:_*) profileIn sumEvents
+           32 / span max 1, data.numSyms, events:_*) profileIn binarySum
          sumEv
        }
 
@@ -1010,7 +1026,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     var i = 0
     assert(blockMask.length == spanMask.length)
     while(i < blockMask.length) {
-      if( (blockMask(i) & spanMask(i)) != 0) return true
+      if( (blockMask.unsafeValueAt(i) & spanMask.unsafeValueAt(i)) != 0) return true
       i += 1
     }
 
@@ -1059,6 +1075,8 @@ object CLParser extends Logging {
                     reproject: Boolean = true,
                     viterbi: Boolean = true,
                     logsum: Boolean = false,
+                    numToDrop: Int = 0,
+                    evalReference: Boolean = false,
                     printTrees: Boolean = false)
 
   def main(args: Array[String]) = {
@@ -1083,7 +1101,7 @@ object CLParser extends Logging {
     println("Training Parser...")
     println(params)
     val transformed = params.treebank.copy(binarization="left", keepUnaryChainsFromTrain = false).trainTrees
-    val gold = params.treebank.trainTrees.filter(_.words.length <= maxParseLength).take(numToParse)
+    val gold = params.treebank.trainTrees.filter(_.words.length <= maxParseLength).drop(numToDrop).take(numToParse)
     val toParse =  gold.map(_.words)
 
     var grammars: IndexedSeq[SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String]] = if (textGrammarPrefix == null) {
@@ -1094,9 +1112,6 @@ object CLParser extends Logging {
     }
 
     if(reproject && grammars.length > 1) {
-      val writer = new FileWriter("qqq")
-      grammars.head.prettyPrint(writer)
-      writer.close()
       val (newc, newr) = reprojectGrammar(grammars.head, textGrammarPrefix.split(":").head, grammars.last, textGrammarPrefix.split(":").last)
       grammars = IndexedSeq(newc, newr)
     }
@@ -1132,28 +1147,41 @@ object CLParser extends Logging {
       }
     }
 
-
-
     val allData = grammars.dropRight(1).map(CLParserData.make(_,  defaultGenerator, false, ViterbiRuleSemiring)) :+ parserData
+
 
     val kern = {
       fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](allData, profile, parseMemString(mem))
     }
 
 
-    if (checkPartitions) {
-      val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
-      println(partsX)
-      val parser = Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
-      val parts2 = toParse.par.map(parser.marginal(_).logPartition)
-      println(parts2)
-      println("max difference: " + (DenseVector(partsX.map(_.toDouble):_*) - DenseVector(parts2.seq:_*)).norm(Double.PositiveInfinity))
-      System.exit(0)
+    val parser = if(grammars.length > 1) {
+      Parser(new ConstraintCoreGrammarAdaptor(grammar.grammar, grammar.lexicon, new ParserChartConstraintsFactory(Parser(grammars.head, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate)),
+        grammar,
+        if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
+    } else {
+      Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
     }
 
-    if (justInsides) {
+    if(evalReference) {
+      val res = ParserTester.evalParser(gold, parser, "cpu-reference", 4)
+      println(res)
+//      val parses = toParse.par.map(parser.bestParse).toIndexedSeq
+//      println(eval(parses zip gold.map(_.tree) zip toParse, printTrees))
+//      System.exit(0)
+    }
+
+
+
+
+    if (justInsides || checkPartitions) {
       val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
       println(partsX)
+      if (checkPartitions) {
+        val parts2 = toParse.par.map(parser.marginal(_).logPartition)
+        println(parts2)
+        println("max difference: " + (DenseVector(partsX.map(_.toDouble):_*) - DenseVector(parts2.seq:_*)).norm(Double.PositiveInfinity))
+      }
       System.exit(0)
     }
 
@@ -1165,26 +1193,20 @@ object CLParser extends Logging {
 
 
     val trees = logTime("CL Parsing:", toParse.length)(kern.parse(toParse))
-    println(eval(trees zip gold.map(_.tree) zip toParse, printTrees))
+    println(eval(trees zip gold.map(_.tree) zip toParse, "opencl", printTrees))
     if (parseTwice) {
       val trees = logTime("CL Parsing x2:", toParse.length)(kern.parse(toParse))
-      println(eval(trees zip gold.map(_.tree) zip toParse))
+      println(eval(trees zip gold.map(_.tree) zip toParse, "opencl-twice"))
     }
     if (jvmParse) {
-      val parser = if(grammars.length > 1) {
-        Parser(new ConstraintCoreGrammarAdaptor(grammar.grammar, grammar.lexicon, new ParserChartConstraintsFactory(Parser(grammars.head, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate)),
-          grammar,
-          if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
-      } else {
-        Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
-      }
+
       val margs = logTime("JVM Parse", toParse.length) {
         toParse.par.map { w =>
           val m = parser.apply(w)
           m
         }.seq.toIndexedSeq
       }
-      println(eval(margs zip gold.map(_.tree) zip toParse))
+      println(eval(margs zip gold.map(_.tree) zip toParse, ""))
     }
 
     kern.release()
@@ -1202,14 +1224,20 @@ object CLParser extends Logging {
     kern
   }
 
-  def eval(trees: IndexedSeq[((BinarizedTree[AnnotatedLabel], BinarizedTree[AnnotatedLabel]), IndexedSeq[String])], printTrees: Boolean = false) = {
+  def eval(trees: IndexedSeq[((BinarizedTree[AnnotatedLabel], BinarizedTree[AnnotatedLabel]), IndexedSeq[String])], name: String, printTrees: Boolean = false) = {
     val chainReplacer = AnnotatedLabelChainReplacer
+    val outDir = new File(s"eval-$name")
+    outDir.mkdirs()
+    val goldOut = new PrintStream(new FileOutputStream(new File(outDir, "gold")))
+    val guessOut = new PrintStream(new FileOutputStream(new File(outDir, "guess")))
     val eval: ParseEval[String] = new ParseEval(Set("","''", "``", ".", ":", ",", "TOP"))
-    trees filter (_._1 ne null) map { case ((guess, gold), words) =>
+    val res = trees filter (_._1 ne null) map { case ((guess, gold), words) =>
       val tree: Tree[String] = chainReplacer.replaceUnaries(guess).map(_.label)
       val guessTree = Trees.debinarize(Trees.deannotate(tree))
       val deBgold: Tree[String] = Trees.debinarize(Trees.deannotate(chainReplacer.replaceUnaries(gold).map(_.label)))
       val stats = eval.apply(guessTree, deBgold)
+      goldOut.println(deBgold.render(words, false))
+      guessOut.println(guessTree.render(words, false))
       if(printTrees) {
         println("Guess:\n"  + guessTree.render(words))
         println("Gold:\n"  + deBgold.render(words))
@@ -1218,6 +1246,10 @@ object CLParser extends Logging {
       }
       stats
     } reduceLeft (_ + _)
+
+    goldOut.close()
+    guessOut.close()
+    res
   }
 
   def parseMemString(x: String) = x.last.toLower match {

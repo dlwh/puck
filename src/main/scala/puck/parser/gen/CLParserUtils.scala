@@ -7,7 +7,7 @@ import java.util.zip.{ZipFile, ZipOutputStream}
 import puck.util.ZipUtil
 import puck.linalg.CLMatrix
 import org.bridj.Pointer
-import puck.parser.{ViterbiRuleSemiring, RuleSemiring, RuleStructure}
+import puck.parser.{LogSumRuleSemiring, ViterbiRuleSemiring, RuleSemiring, RuleStructure}
 
 case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKernel, setRootScoresKernel: CLKernel,
                          getRootScoresKernel: CLKernel,
@@ -103,9 +103,14 @@ object CLParserUtils {
       math.min(size0, blockSize).toInt
     }
 
+    println(s"Group size is $groupSize")
+
+
     val prog = context.createProgram(splitPointSumKernel(blockSize, structure))
-    if(!semiring.plusIsIdempotent)
+    if(semiring == LogSumRuleSemiring) {
+      println("Logsum!!!!")
       prog.addBuildOption("-DLOGSUM")
+    }
 
     CLParserUtils(sumCellsKernel,
       prog.createKernel("splitPointSum"),
@@ -177,12 +182,12 @@ __kernel void splitPointSum(__global float* parent, __global float* chart,
       // copy scores in from the global parent array to local storage, so we can transpose
       for(int sym = firstSym;  sym < lastSym; sym += 1) {
         int localSym = sym - firstSym;
-        event_t event = async_work_group_copy(scores[localSym], parent + parentStride * sym + rowOffset + firstRow, todo, 0);
-        // TODO: should be able to batch these up... but stupid intel is stupid
-        wait_group_events(1, &event);
-//          for(int row = tid; row < todo; row += numThreads) {
-//            scores[localSym][row] = parent[parentStride * sym + rowOffset + firstRow + row];
-//          }
+//        event_t event = async_work_group_copy(scores[localSym], parent + parentStride * sym + rowOffset + firstRow, todo, 0);
+//        TODO: should be able to batch these up... but stupid intel is stupid
+//        wait_group_events(1, &event);
+          for(int row = tid; row < todo; row += numThreads) {
+            scores[localSym][row] = parent[parentStride * sym + rowOffset + firstRow + row];
+          }
       }
 
       // at this point, todo columns of scores are read in.

@@ -17,7 +17,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 	public static final int WARP_SIZE = 32;
 	public static final int NUM_WARPS = 48;
 	public static final int NUM_SM = 8;
-	
+
     public RuleStructure<C, L> structure;
     private boolean writeDirectToChart;
     private RuleSemiring semiring;

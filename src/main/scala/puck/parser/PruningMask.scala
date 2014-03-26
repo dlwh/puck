@@ -70,8 +70,8 @@ case class DenseMatrixMask(matrix: DenseMatrix[Int],
                            insideScale: DenseVector[Float],
                            outsideScale: DenseVector[Float],
                            lengths: Array[Int], cellOffsets: Array[Int]) extends PruningMask {
-  lazy val getIScales: Pointer[java.lang.Float] = Pointer.pointerToFloats(insideScale.toArray:_*)
-  lazy val getOScales: Pointer[java.lang.Float] = Pointer.pointerToFloats(outsideScale.toArray:_*)
+  val getIScales: Pointer[java.lang.Float] = Pointer.pointerToFloats(insideScale.toArray:_*)
+  val getOScales: Pointer[java.lang.Float] = Pointer.pointerToFloats(outsideScale.toArray:_*)
 
   def insideScaleFor(sent: Int, begin: Int, end: Int) = insideScale(cellOffsets(sent) + ChartHalf.chartIndex(begin, end, lengths(sent)))
   def outsideScaleFor(sent: Int, begin: Int, end: Int) = outsideScale(cellOffsets(sent) + ChartHalf.chartIndex(begin, end, lengths(sent)))

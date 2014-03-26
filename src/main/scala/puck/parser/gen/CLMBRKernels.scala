@@ -130,39 +130,46 @@ __kernel void computeMBR(__global decode_t* decodeOut,
   int length = lengths[sentence];
   const float root_score = inside[(lastCell-1) * numSyms + root];
 
+   int firstTop = firstCell + (lastCell-firstCell)/2;
 
   for(int cell = firstCell; cell < lastCell; cell++) {
     __constant const int* projections = (cell-firstCell >= length) ? nonterminalProjections : terminalProjections;
 
+    int isSingleWordTop = (cell - firstTop <= length);
+
     __global const float* in = inside + (cell * numSyms);
     __global const float* out = outside + (cell * numSyms);
-      
+
     float coarseMargs["""+structure.numCoarseSyms+"""];
     for(int coarseSym = 0; coarseSym < """+structure.numCoarseSyms+"""; ++coarseSym) {
       coarseMargs[coarseSym] = 0.0f;
     }
     for(int sym = 0; sym < NUM_SYMS; ++sym) {
-""" + {if (semiring.isInstanceOf[LogSumRuleSemiring.type]) {
-    "coarseMargs[projections[sym]] += exp(in[sym] - root_score + out[sym]);\n"
-  } else {
-    "coarseMargs[projections[sym]] += in[sym]/root_score * out[sym];\n"
-  } }+ """
+ """ + {if (semiring.isInstanceOf[LogSumRuleSemiring.type]) {
+      "coarseMargs[projections[sym]] += exp(in[sym] - root_score + out[sym]);\n"
+    } else {
+      "coarseMargs[projections[sym]] += in[sym]/root_score * out[sym];\n"
+    } }+ """
     }
-      
+
     decode_t myDecode;
     myDecode.score = -INFINITY;
     myDecode.symbol = -1;
+    float totalScore = 0.0f;
     for(int coarseSym = 0; coarseSym < """+structure.numCoarseSyms+"""; ++coarseSym) {
+      totalScore += coarseMargs[coarseSym];
       if (coarseMargs[coarseSym] > myDecode.score) {
       	myDecode.score = coarseMargs[coarseSym];
       	myDecode.symbol = coarseSym;
       }
     }
 
+    //if(isSingleWordTop) myDecode.score = totalScore;
+
     decodeOut[cell] = myDecode;
   }
 
 }
-      """
+                                                                   """
   }
 }

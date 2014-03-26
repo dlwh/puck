@@ -99,7 +99,13 @@ package object puck {
       } else {
         Pointer.allocateInts(lengthOfArray).setIntsAtOffset(0, arr, 0, lengthOfArray)
       }
+//      val in = System.currentTimeMillis()
       val ev = buffer.write(queue, ptr, false, events:_*)
+//      val out = System.currentTimeMillis()
+//      val trace = new Exception
+//      val t = trace.getStackTrace.apply(1)
+      //println(s"Write took ${(out -in)/1000.0}s from $t. ${lengthOfArray} elements.")
+
 
       PointerFreer.enqueue({ptr.release()}, ev)
 

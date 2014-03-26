@@ -561,6 +561,12 @@ trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
   }
 
 
+  implicit object SetCLMDMIntOp extends OpSet.InPlaceImpl2[CLMatrix[Int], DenseMatrix[Int]] {
+    def apply(a: CLMatrix[Int], b: DenseMatrix[Int]) {
+      a.writeFrom(b, true)
+    }
+  }
+
 
   implicit object setCLMCLMFloat extends SetCLMCLMVOp[Float]
   implicit object setCLMCLMLong extends SetCLMCLMVOp[Long]
