@@ -80,9 +80,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val binaryEvents  = new CLProfiler("Binary")
   private val unaryEvents  = new CLProfiler("Unary")
   private val unarySumEvents  = new CLProfiler("Unary Sum")
+  private val posEvents  = new CLProfiler("POS")
   private val binarySum  = new CLProfiler("Binary Sum")
   private val masksEvents  = new CLProfiler("Masks")
-  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, unarySumEvents, binarySum, initMemFillEvents, memFillEvents, hdTransferEvents, masksEvents)
+  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, unarySumEvents, binarySum, initMemFillEvents, memFillEvents, hdTransferEvents, masksEvents, posEvents)
 
   // TODO:
 
@@ -469,7 +470,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       val ev2 = devParentPtrs.writeArray(queue, pArray, totalLength, events:_*) profileIn hdTransferEvents
       val ev = devParent(0 until totalLength, ::).writeFrom(tagScores, false, ev2) map (_ profileIn  hdTransferEvents)
-      transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, totalLength, devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn unarySumEvents
+      transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, totalLength, devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn posEvents
     }
 
 
@@ -1025,7 +1026,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     var i = 0
     assert(blockMask.length == spanMask.length)
     while(i < blockMask.length) {
-      if( (blockMask(i) & spanMask(i)) != 0) return true
+      if( (blockMask.unsafeValueAt(i) & spanMask.unsafeValueAt(i)) != 0) return true
       i += 1
     }
 
