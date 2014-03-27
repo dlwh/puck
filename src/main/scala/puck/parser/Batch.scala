@@ -46,7 +46,10 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
 
   def insideBotCell(sent: Int, begin: Int, end: Int) = cellOffsets(sent) + ChartHalf.chartIndex(begin, end, lengths(sent))//insideCharts(sent).bot.cellOffset(begin, end)
   def insideTopCell(sent: Int, begin: Int, end: Int) = cellOffsets(sent)/2 + cellOffsets(sent+1)/2 +  ChartHalf.chartIndex(begin, end, lengths(sent))//insideCharts(sent).bot.cellOffset(begin, end)
-//  def insideTopCell(sent: Int, begin: Int, end: Int) = insideCharts(sent).top.cellOffset(begin, end)
+  def insideBotOffset(sent: Int) = cellOffsets(sent)
+  def insideTopOffset(sent: Int) = cellOffsets(sent)/2 + cellOffsets(sent+1)/2
+  def outsideBotOffset(sent: Int) = cellOffsets(sent)
+  def outsideTopOffset(sent: Int) = cellOffsets(sent)/2 + cellOffsets(sent+1)/2
 
   def outsideBotCell(sent: Int, begin: Int, end: Int) = cellOffsets(sent) + ChartHalf.chartIndex(begin, end, lengths(sent))//outsideCharts(sent).bot.cellOffset(begin, end)
   def outsideTopCell(sent: Int, begin: Int, end: Int) = cellOffsets(sent)/2 + cellOffsets(sent+1)/2 +  ChartHalf.chartIndex(begin, end, lengths(sent))//outsideCharts(sent).bot.cellOffset(begin, end)
