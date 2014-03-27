@@ -519,10 +519,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev
     }
 
-    private val insideBot = {(b: Batch[W], s: Int, beg: Int, end: Int) =>  b.insideBotCell(s, beg, end) }
-    private val insideTop = {(b: Batch[W], s: Int, beg: Int, end: Int) =>  b.insideTopCell(s, beg, end) }
-    private val outsideBot = {(b: Batch[W], s: Int, beg: Int, end: Int) =>  b.outsideBotCell(s, beg, end) }
-    private val outsideTop = {(b: Batch[W], s: Int, beg: Int, end: Int) =>  b.outsideTopCell(s, beg, end) }
+    private val insideBot = {(b: Batch[W], s: Int) =>  b.insideBotOffset(s)}
+    private val insideTop = {(b: Batch[W], s: Int) =>  b.insideTopOffset(s) }
+    private val outsideBot = {(b: Batch[W], s: Int) =>  b.outsideBotOffset(s) }
+    private val outsideTop = {(b: Batch[W], s: Int) =>  b.outsideTopOffset(s) }
 
     private def insideTU = new UnaryUpdateManager(data.inside.insideTUKernels, devInside, devInsideScale, devInsideScale, insideTop, insideBot)
     private def insideNU = new UnaryUpdateManager(data.inside.insideNUKernels, devInside, devInsideScale, devInsideScale, insideTop, insideBot)
@@ -751,8 +751,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                                      scoreMatrix: CLMatrix[Float],
                                      parentScale: CLBuffer[Float],
                                      childScale: CLBuffer[Float],
-                                     parentChart: (Batch[W],Int, Int, Int)=>Int,
-                                     childChart: (Batch[W],Int, Int, Int)=>Int) {
+                                     parentChart: (Batch[W],Int)=>Int,
+                                     childChart: (Batch[W],Int)=>Int) {
 
       var offset = 0 // number of cells used so far.
 
@@ -796,14 +796,15 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
         for {
           sent <- 0 until batch.numSentences
+          len = batch.lengths(sent)
           start <- 0 to batch.sentences(sent).length - span
           if batch.isAllowedSpan(sent, start, start + span)
         } {
           val end = start + span
-          val parentTi = parentChart(batch, sent, start, end)
-          val child = childChart(batch, sent, start, end)
+          val parentCell = parentChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
+          val childCell = childChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
 
-          ev = enqueue(batch, span, parentTi, child, ev)
+          ev = enqueue(batch, span, parentCell, childCell, ev)
         }
 
         if (offset > 0) {
@@ -824,9 +825,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                                       leftScale: CLBuffer[Float],
                                       rightChartMatrix: CLMatrix[Float],
                                       rightScale: CLBuffer[Float],
-                                      parentChart: (Batch[W], Int, Int, Int)=>Int,
-                                      leftChart: (Batch[W], Int, Int, Int)=>Int,
-                                      rightChart: (Batch[W], Int, Int, Int)=>Int,
+                                      parentChart: (Batch[W], Int)=>Int,
+                                      leftChart: (Batch[W], Int)=>Int,
+                                      rightChart: (Batch[W], Int)=>Int,
                                       ranger: (Int, Int, Int)=>Range,
                                       trackRulesForThisSetOfRules: Boolean = false) {
       lazy val totalRulesInKernels = (updater.kernels.map(_.rules.length).sum)
@@ -963,6 +964,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
              }
              if(mask == null || oldPruning || intersects(blockParents, mask)) {
 
+               val len = batch.lengths(sent)
+
+               val parentCell = parentChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
+               val leftChartOffset = leftChart(batch, sent)
+               val rightChartOffset = rightChart(batch, sent)
+
 
                val splitRange = ranger(start, start + span, batch.sentences(sent).length)
                var split =  splitRange.start
@@ -971,14 +978,18 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                while (split != splitEnd) {
                  if (split >= 0 && split <= batch.sentences(sent).length) {
                    val end = start + span
-                   val parentTi = parentChart(batch, sent, start, end)
                    val leftChildAllowed = if (split < start) batch.isAllowedSpan(sent,split, start) else batch.isAllowedSpan(sent, start, split)
                    val rightChildAllowed = if (split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
 
                    if (doEmptySpans || (leftChildAllowed && rightChildAllowed)) {
-                     val leftChild = if (split < start) leftChart(batch, sent, split,start) else leftChart(batch, sent, start, split)
-                     val rightChild = if (split < end) rightChart(batch, sent, split,end) else rightChart(batch, sent, end, split)
-                     ev = enqueue(block, batch, span, parentTi, leftChild, rightChild, ev)
+                     val leftChild = leftChartOffset + {
+                       if (split < start) ChartHalf.chartIndex(split, start, len) else ChartHalf.chartIndex(start, split, len)
+                     }
+                     val rightChild = rightChartOffset + {
+                       if (split < end) ChartHalf.chartIndex(split, end, len) else ChartHalf.chartIndex(end, split, len)
+                     }
+
+                     ev = enqueue(block, batch, span, parentCell, leftChild, rightChild, ev)
                      if(profile && trackRules && mask != null) {
                        val mask2 = BitHacks.asBitSet(mask)
                        for(m <- mask2.iterator) {
