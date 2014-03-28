@@ -32,7 +32,7 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
   val totalLength = sentences.map(_.length).sum
   assert(numCellsUsed <= devInside.cols)
 
-  def isAllowedSpan(sent: Int, begin: Int, end: Int) = botMaskFor(sent, begin, end).forall(BitHacks.any)
+  def isAllowedSpan(sent: Int, begin: Int, end: Int) = masks.isAllowedSpan(sent, begin, end)
 
   def rootIndex(sent: Int) = insideCharts(sent).top.rootIndex
   def rootIndices = Array.tabulate(sentences.length)(rootIndex)
