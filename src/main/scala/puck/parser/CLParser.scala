@@ -931,7 +931,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
              start <- 0 to batch.sentences(sent).length - span
              _ = total += 1
              mask <- if(parentIsBot) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
-             if {val x = any(mask); if(!x) pruned += 1; x || doEmptySpans || trackRulesForThisSetOfRules }
+             if {val x = batch.isAllowedSpan(sent, start, start + span); if(!x) pruned += 1; x || doEmptySpans || trackRulesForThisSetOfRules }
            } yield (sent, start, start+span, mask)
 
            val ordered = orderSpansBySimilarity(allSpans)

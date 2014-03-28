@@ -3,6 +3,8 @@ package puck.parser
 import breeze.linalg._
 import puck.util.BitHacks
 import org.bridj.Pointer
+import scala.collection.parallel.mutable.ParArray
+import breeze.collection.mutable.TriangularArray
 
 /**
  * TODO
@@ -15,8 +17,8 @@ trait PruningMask {
 
   def hasMasks: Boolean
 
-  def isAllowedSpan(sent: Int, begin: Int, end: Int) = !hasMasks || maskForBotCell(sent, begin, end).forall(BitHacks.any)
-  def isAllowedTopSpan(sent: Int, begin: Int, end: Int) = !hasMasks || maskForTopCell(sent, begin, end).forall(BitHacks.any)
+  def isAllowedSpan(sent: Int, begin: Int, end: Int):Boolean = !hasMasks || maskForBotCell(sent, begin, end).forall(BitHacks.any)
+  def isAllowedTopSpan(sent: Int, begin: Int, end: Int):Boolean = !hasMasks || maskForTopCell(sent, begin, end).forall(BitHacks.any)
 
   def insideScaleFor(sent: Int, begin: Int, end: Int): Float
   def insideTopScaleFor(sent: Int, begin: Int, end: Int): Float
@@ -78,6 +80,12 @@ case class DenseMatrixMask(matrix: DenseMatrix[Int],
 
   def insideTopScaleFor(sent: Int, begin: Int, end: Int) = insideScale((cellOffsets(sent + 1) + cellOffsets(sent))/2 + ChartHalf.chartIndex(begin, end, lengths(sent)))
   def outsideTopScaleFor(sent: Int, begin: Int, end: Int) = outsideScale((cellOffsets(sent + 1) + cellOffsets(sent))/2 + ChartHalf.chartIndex(begin, end, lengths(sent)))
+
+  val allowedSpans = ParArray.tabulate(lengths.length)(sent => TriangularArray.tabulate(lengths(sent)+1)((beg, end) => BitHacks.any(maskForBotCell(sent, beg, end).get))).seq
+  val allowedTopSpans = ParArray.tabulate(lengths.length)(sent => TriangularArray.tabulate(lengths(sent)+1)((beg, end) => BitHacks.any(maskForTopCell(sent, beg, end).get))).seq
+
+  override def isAllowedSpan(sent: Int, begin: Int, end: Int):Boolean = allowedSpans(sent)(begin, end)
+  override def isAllowedTopSpan(sent: Int, begin: Int, end: Int):Boolean = allowedSpans(sent)(begin, end)
 
 
   def hasMasks: Boolean = true
