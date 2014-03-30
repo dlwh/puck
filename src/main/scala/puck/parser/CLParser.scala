@@ -146,7 +146,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val devParentRaw, devLeftRaw, devRightRaw = context.createFloatBuffer(CLMem.Usage.InputOutput, numDefaultWorkCells.toLong * cellSize)
   private lazy val maskParent = new CLMatrix[Int](maskSize, maxNumWorkCells)
   private lazy val devParentPtrs = context.createIntBuffer(CLMem.Usage.Input, maxNumWorkCells)
-  private lazy val offsetBuffer = new CLBufferPointerPair[Integer](context.createIntBuffer(CLMem.Usage.Input, maxNumWorkCells * 3))
+  private lazy val offsetBuffer = context.createIntBuffer(CLMem.Usage.Input, maxNumWorkCells * 3)
   private lazy val devSplitPointOffsets = context.createIntBuffer(CLMem.Usage.Input, maxNumWorkCells + 1)
   // transposed
   private val devInsideRaw, devOutsideRaw = context.createFloatBuffer(CLMem.Usage.InputOutput, numDefaultChartCells/2 * cellSize)
@@ -331,7 +331,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         queue.finish()
         allProfilers.foreach(_.tock())
         allProfilers.foreach(p => println(s"Inside $p"))
-        println(f"Time accounted for: ${allProfilers.map(_.processingTime).sum}%.3f")
+        println(f"Time accounted for in processing: ${allProfilers.map(_.processingTime).sum}%.3f")
+        println(s"Enqueuing writes took ${writeTimer.clear()}s")
+        println(s"Spin up for writes took ${allTimer.clear()}s")
         println("Sorting took: " + sortTime/1000.0)
         println(s"Pruned $pruned/$total")
         println(s"Rules evaled: $rulesEvaled/$rulesTotal ${(rulesEvaled.toDouble/rulesTotal)}")
@@ -352,8 +354,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       pruned  = 0
       total = 0
 
-     ev = offsetBuffer.writeInts(0, batch.outsideRootIndices, 0, batch.numSentences, ev) profileIn hdTransferEvents
-      ev = data.util.setRootScores(devOutside, offsetBuffer.buffer, batch.numSentences, structure.root, data.semiring.one, ev) profileIn memFillEvents
+     ev = offsetBuffer.writeArray(queue, batch.outsideRootIndices, batch.numSentences, ev) profileIn hdTransferEvents
+      ev = data.util.setRootScores(devOutside, offsetBuffer, batch.numSentences, structure.root, data.semiring.one, ev) profileIn memFillEvents
 //      ev = data.util.setRootScores(devOutside, devParentPtrs, batch.numSentences, structure.root, data.semiring.one, ev) profileIn memFillEvents
 
       ev = outsideNU.doUpdates(batch, batch.maxLength, ev)
@@ -382,6 +384,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         Thread.sleep(15)
         allProfilers.foreach(p => println(s"Outside $p"))
         println(f"Time accounted for: ${allProfilers.map(_.processingTime).sum}%.3f")
+        println(s"Enqueuing writes took ${writeTimer.clear()}s")
+        println(s"Spin up for writes took ${allTimer.clear()}s")
         println("Sorting took: " + sortTime/1000.0)
         println(s"Pruned $pruned/$total")
         println(s"Rules evaled: $rulesEvaled/$rulesTotal ${(rulesEvaled.toDouble/rulesTotal)}")
@@ -776,13 +780,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           val bufArray = new Array[Int](offset * 3)
           System.arraycopy(pArray, 0, bufArray, 0, offset)
           System.arraycopy(lArray, 0, bufArray, offset, offset)
-          val evx = offsetBuffer.buffer.writeArray(queue, bufArray, offset * 3, ev:_*) profileIn hdTransferEvents
+          val evx = offsetBuffer.writeArray(queue, bufArray, offset * 3, ev:_*) profileIn hdTransferEvents
 
-          val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), scoreMatrix, offsetBuffer.buffer, offset, offset, evx) profileIn transferEvents
+          val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), scoreMatrix, offsetBuffer, offset, offset, evx) profileIn transferEvents
 
-          val endEvents = kernels.update(unaryEvents, devParent(0 until offset, ::), parentScale, offsetBuffer.buffer, devLeft(0 until offset, ::), childScale, offsetBuffer.buffer, offset, wl, zz)
+          val endEvents = kernels.update(unaryEvents, devParent(0 until offset, ::), parentScale, offsetBuffer, devLeft(0 until offset, ::), childScale, offsetBuffer, offset, wl, zz)
 
-          val _ev = transposeCopy.permuteTransposeCopyOut(scoreMatrix, offsetBuffer.buffer, offset, devParent(0 until offset, ::), (evx +: endEvents):_*) profileIn unarySumEvents
+          val _ev = transposeCopy.permuteTransposeCopyOut(scoreMatrix, offsetBuffer, offset, devParent(0 until offset, ::), (evx +: endEvents):_*) profileIn unarySumEvents
 
           offset = 0
           Seq(_ev)
@@ -867,32 +871,32 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
          if (offset != 0) {
            splitPointOffsets(splitPointOffset) = offset
 
-           // copy ptrs to opencl
-
-           val bufArray = new Array[Int](offset * 3)
-           System.arraycopy(pArray, 0, bufArray, 0, offset)
-           System.arraycopy(lArray, 0, bufArray, offset, offset)
-           System.arraycopy(rArray, 0, bufArray, offset * 2, offset)
-
-           val evx = offsetBuffer.buffer.writeArray(queue, bufArray, offset * 3, ev:_*)
-
-           // do transpose based on ptrs
-           val evTransLeft  = if(skipFineWork && batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), leftChartMatrix, offsetBuffer.buffer, offset, offset, evx) profileIn transferEvents
-           val evTransRight = if(skipFineWork && batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), rightChartMatrix, offsetBuffer.buffer, offset * 2, offset, evx) profileIn transferEvents
-
            val updateDirectToChart = updater.directWriteToChart
-           
-           // copy parent pointers
-           // corresponding splits
+
+           // corresponding number of splits for eachp point
            val evWriteDevSplitPoint =  if ((skipFineWork && batch.hasMasks) || updateDirectToChart) null else devSplitPointOffsets.writeArray(queue, splitPointOffsets, splitPointOffset + 1, ev:_*) profileIn hdTransferEvents
 
            val zeroParent = if((skipFineWork && batch.hasMasks) || updateDirectToChart) null else zmk.shapedFill(devParent(0 until offset, ::), _zero, ev:_*) profileIn memFillEvents
 
+           // copy ptrs to opencl
+           val bufArray = new Array[Int](offset * 3)
+           System.arraycopy(pArray, 0, bufArray, 0, offset)
+           System.arraycopy(lArray, 0, bufArray, offset, offset)
+           System.arraycopy(rArray, 0, bufArray, offset * 2, offset)
+           val evx = offsetBuffer.writeArray(queue, bufArray, offset * 3, ev:_*)
+
+
+
+
+           // do transpose based on ptrs
+           val evTransLeft  = if(skipFineWork && batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), leftChartMatrix, offsetBuffer, offset, offset, evx) profileIn transferEvents
+           val evTransRight = if(skipFineWork && batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), rightChartMatrix, offsetBuffer, offset * 2, offset, evx) profileIn transferEvents
+
            val targetChart = if(updateDirectToChart) parentChartMatrix else devParent(0 until offset, ::)
            val kEvents = updater.update(block, binaryEvents,
-             targetChart, parentScale, offsetBuffer.buffer,
-             devLeft(0 until offset, ::), leftScale, offsetBuffer.buffer, offset,
-             devRight(0 until offset, ::), rightScale, offsetBuffer.buffer, offset * 2,
+             targetChart, parentScale, offsetBuffer,
+             devLeft(0 until offset, ::), leftScale, offsetBuffer, offset,
+             devRight(0 until offset, ::), rightScale, offsetBuffer, offset * 2,
              maskCharts, evTransLeft, evTransRight, evx, zeroParent)
 
            val sumEv: CLEvent = if((skipFineWork && batch.hasMasks) || updateDirectToChart) null else sumSplitPoints(span, Seq(evx, evWriteDevSplitPoint) ++ kEvents: _*)
@@ -910,7 +914,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
        def sumSplitPoints(span: Int, events: CLEvent*): CLEvent = {
          val sumEv = data.util.sumSplitPoints(devParent,
            parentChartMatrix,
-           offsetBuffer.buffer, splitPointOffset,
+           offsetBuffer, splitPointOffset,
            devSplitPointOffsets,
            32 / span max 1, data.numSyms, events:_*) profileIn binarySum
          sumEv

@@ -89,10 +89,14 @@ package object puck {
   implicit def bufjlDoubleToDoubleBuffer(buffer: CLBuffer[jl.Double]) = buffer.asInstanceOf[CLBuffer[Double]]
   implicit def bufjlIntToIntBuffer(buffer: CLBuffer[jl.Integer]) = buffer.asInstanceOf[CLBuffer[Int]]
 
+  val writeTimer = new puck.util.Timer
+  val allTimer = new puck.util.Timer
+
 
   implicit class RichCLIntBuffer(val buffer: CLBuffer[Integer])(implicit tag: scala.reflect.ClassTag[Integer]) {
 
     def writeArray(queue: CLQueue, arr: Array[Int], lengthOfArray: Int, events: CLEvent*):CLEvent = {
+      allTimer.tic()
       require(lengthOfArray <= arr.length)
       val ptr = if(lengthOfArray == arr.length) {
         Pointer.pointerToArray[Integer](arr)
@@ -100,7 +104,9 @@ package object puck {
         Pointer.allocateInts(lengthOfArray).setIntsAtOffset(0, arr, 0, lengthOfArray)
       }
 //      val in = System.currentTimeMillis()
+      writeTimer.tic()
       val ev = buffer.write(queue, ptr, false, events:_*)
+      writeTimer.toc()
 //      val out = System.currentTimeMillis()
 //      val trace = new Exception
 //      val t = trace.getStackTrace.apply(1)
@@ -108,6 +114,32 @@ package object puck {
 
 
       PointerFreer.enqueue({ptr.release()}, ev)
+      allTimer.toc()
+
+      ev
+    }
+
+
+    def writeArrayAtOffset(queue: CLQueue, offset: Int, arr: Array[Int], lengthOfArray: Int, events: CLEvent*):CLEvent = {
+      allTimer.tic()
+      require(lengthOfArray <= arr.length)
+      val ptr = if(lengthOfArray == arr.length) {
+        Pointer.pointerToArray[Integer](arr)
+      } else {
+        Pointer.allocateInts(lengthOfArray).setIntsAtOffset(0, arr, 0, lengthOfArray)
+      }
+//      val in = System.currentTimeMillis()
+      writeTimer.tic()
+      val ev = buffer.write(queue, offset, lengthOfArray, ptr, false, events:_*)
+      writeTimer.toc()
+//      val out = System.currentTimeMillis()
+//      val trace = new Exception
+//      val t = trace.getStackTrace.apply(1)
+      //println(s"Write took ${(out -in)/1000.0}s from $t. ${lengthOfArray} elements.")
+
+
+      PointerFreer.enqueue({ptr.release()}, ev)
+      allTimer.toc()
 
       ev
     }
