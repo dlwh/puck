@@ -51,7 +51,7 @@ case class CLMBRKernels(maskSize: Int, getMasksKernel: CLKernel) {
       Integer.valueOf(root))
     //, LocalSize.ofIntArray(fieldSize * groupSize * 5))
 
-    val ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices.length-1, 1), Array(1, 1), evCI, evL)
+    var ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices.length-1, 1), Array(1, 1), evCI, evL)
 //    queue.finish()
     PointerFreer.enqueue(ptrCI.release(), ev)
     PointerFreer.enqueue(intBufferCI.release(), ev)

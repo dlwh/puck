@@ -66,8 +66,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
 
   private def computeMasks(sentences: IndexedSeq[IndexedSeq[W]]): PruningMask = {
-    val ev = maskCharts.assignAsync(-1)
-    ev.waitFor()
     parsers.dropRight(1).foldLeft(NoPruningMask:PruningMask)( (a,b) => b.updateMasks(sentences, a))
   }
 
@@ -92,8 +90,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   def release() {
     queue.release()
 
-    maskParent.release()
-    maskCharts.release()
   }
 
   // size in floats, just the number of symbols
@@ -136,22 +132,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   def maxNumWorkCells = parsers.map(_.numWorkCells).max
   def maxNumChartCells = parsers.map(_.numChartCells).max
 
-  // On the Device side we have 4 Matrices:
-  // One is where we calculate P = L * R * rules, for fixed spans and split points (the "bot")
-  // One is the L part of the above
-  // Another is the R part.
-  // finally, we have the array of parse charts
-  private lazy val maskParent = new CLMatrix[Int](maskSize, maxNumWorkCells)
-  private lazy val offsetBuffer = context.createIntBuffer(CLMem.Usage.Input, maxNumWorkCells * 3)
-  private lazy val devSplitPointOffsets = context.createIntBuffer(CLMem.Usage.Input, maxNumWorkCells + 1)
-  // transposed
-  private lazy val devInsideScale, devOutsideScale = context.createFloatBuffer(CLMem.Usage.InputOutput, maxNumChartCells)
-  private lazy val ptrScale = Pointer.allocateFloats(devInsideScale.getElementCount)
-  //  private val maskCharts = new CLMatrix[Int](maskSize, numDefaultChartCells)
-  private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
-  lazy val defaultInsideScales = DenseVector.zeros[Float](maxNumChartCells)
-  lazy val defaultOutsideScales = defaultInsideScales
-
   // other stuff
   private val zmk = ZeroMemoryKernel()
   private val transposeCopy = CLMatrixTransposeCopy()
@@ -166,11 +146,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private class ActualParser(val data: CLParserData[C, L, W], nextParserNeedsScales: Boolean) {
     import data._
 
-
-
     def parse(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("parse", sentences.length) {
-        resource.managed(new WorkSpace(numWorkCells, numChartCells, myCellSize)).acquireAndGet { workspace =>
+        resource.managed(new WorkSpace(numWorkCells, numChartCells, myCellSize, data.maskSize)).acquireAndGet { workspace =>
           getBatches(workspace, sentences, mask).iterator.flatMap { batch =>
             var ev = inside(workspace, batch)
 
@@ -179,7 +157,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
               Option(ev3).foreach(_.waitFor())
               val parseMask: DenseMatrixMask = extractMasks(workspace, batch, false)
               val parses = extractParses(batch, parseMask.matrix, ev3)
-              maskCharts.data.waitUnmap()
               parses
             } else {
               ev = outside(workspace, batch, ev)
@@ -187,7 +164,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
               Option(ev3).foreach(_.waitFor())
               val parseMask = extractMasks(workspace, batch, false)
               val parses = extractMBRParses(workspace, batch, parseMask, ev3)
-              maskCharts.data.waitUnmap()
               parses
             }
           }.toIndexedSeq
@@ -198,7 +174,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def insideOutside(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("parse", sentences.length) {
-        resource.managed(new WorkSpace(numWorkCells, numChartCells, myCellSize)).acquireAndGet { workspace =>
+        resource.managed(new WorkSpace(numWorkCells, numChartCells, myCellSize, data.maskSize)).acquireAndGet { workspace =>
           getBatches(workspace, sentences, mask).iterator.foreach { batch =>
             var ev = inside(workspace, batch)
             ev = outside(workspace, batch, ev)
@@ -211,13 +187,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def partitions(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("partitions", sentences.length) {
-        resource.managed(new WorkSpace(numWorkCells, numChartCells, myCellSize)).acquireAndGet { workspace =>
+        resource.managed(new WorkSpace(numWorkCells, numChartCells, myCellSize, data.maskSize)).acquireAndGet { workspace =>
           getBatches(workspace, sentences, mask).iterator.flatMap { batch =>
             import workspace._
             var ev = inside(workspace, batch)
             val dest = context.createFloatBuffer(CLMem.Usage.Output, sentences.length)
-            ev = devParentPtrs.writeArray(queue, batch.rootIndices.toArray, batch.numSentences, ev) profileIn hdTransferEvents
-            ev = data.util.getRootScores(dest, workspace.devInside, devParentPtrs, batch.numSentences, structure.root, ev)
+            ev = workspace.devParentPtrs.writeArray(queue, batch.rootIndices.toArray, batch.numSentences, ev) profileIn hdTransferEvents
+            ev = data.util.getRootScores(dest, workspace.devInside, workspace.devParentPtrs, batch.numSentences, structure.root, ev)
             if(semiring.needsScaling) {
               val scaledScores = dest.read(queue, ev).getFloats(batch.numSentences)
               for(i <- 0 until batch.numSentences) yield semiring.toLogSpace(scaledScores(i), batch.masks.insideTopScaleFor(i, 0, batch.lengths(i))) + batch.partitionScales(i).toFloat
@@ -231,8 +207,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def updateMasks(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask): PruningMask = synchronized {
       logTime("masks", sentences.length) {
-        resource.managed(new WorkSpace(numWorkCells, numChartCells, myCellSize)).acquireAndGet { workspace =>
+        resource.managed(new WorkSpace(numWorkCells, numChartCells, myCellSize, data.maskSize)).acquireAndGet { workspace =>
           val masks = getBatches(workspace, sentences, mask).iterator.map {  batch =>
+            workspace.maskCharts.assignAsync(-1).waitFor()
             val mask = computePruningMasks(workspace, batch):PruningMask
             mask
           }.toIndexedSeq
@@ -257,15 +234,17 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val denseMasks = maskCharts(::, 0 until batch.numCellsUsed).toDense
       maskCharts.data.waitUnmap()
       if(nextParserNeedsScales) {
+        val ptrScale = Pointer.allocateFloats(devInsideScale.getElementCount)
         val insideEv = if(updateScales) data.scaling.getScaling(devInsideScale, devInside(::, 0 until batch.numCellsUsed)) else null
         devInsideScale.read(queue, 0, batch.numCellsUsed, ptrScale, true, insideEv)
         val inside = new DenseVector(ptrScale.getFloats(batch.numCellsUsed))
         val outsideEv = if(updateScales) data.scaling.getScaling(devOutsideScale, devOutside(::, 0 until batch.numCellsUsed)) else null
         devOutsideScale.read(queue, 0, batch.numCellsUsed, ptrScale, true, outsideEv)
         val outside = new DenseVector(ptrScale.getFloats(batch.numCellsUsed))
+        ptrScale.release()
         new DenseMatrixMask(denseMasks, inside, outside, batch.lengths, batch.cellOffsets)
       } else {
-        new DenseMatrixMask(denseMasks, defaultInsideScales(0 until batch.numCellsUsed), defaultOutsideScales(0 until batch.numCellsUsed), batch.lengths, batch.cellOffsets)
+        new DenseMatrixMask(denseMasks, DenseVector.zeros[Float](batch.numCellsUsed), DenseVector.zeros[Float](batch.numCellsUsed), batch.lengths, batch.cellOffsets)
 
       }
     }
@@ -303,6 +282,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       ev = initializeTagScores(workspace, batch, ev, evZeroOutside)
 
+      val insideTU = new UnaryUpdateManager(data.inside.insideTUKernels, insideChart, devInsideScale, devInsideScale, insideTop, insideBot)
 
       ev = insideTU.doUpdates(workspace, batch, 1, ev)
 
@@ -310,6 +290,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         print(s"$span ")
         ev = insideBinaryPass(workspace, batch, span, ev)
 
+        val insideNU = new UnaryUpdateManager(data.inside.insideNUKernels, insideChart, devInsideScale, devInsideScale, insideTop, insideBot)
         ev = insideNU.doUpdates(workspace, batch, span, ev)
 
       }
@@ -355,18 +336,29 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev = data.util.setRootScores(devOutside, offsetBuffer, batch.numSentences, structure.root, data.semiring.one, ev) profileIn memFillEvents
 //      ev = data.util.setRootScores(devOutside, devParentPtrs, batch.numSentences, structure.root, data.semiring.one, ev) profileIn memFillEvents
 
+      val outsideNU = new UnaryUpdateManager(data.outside.outsideNUKernels, outsideChart, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
       ev = outsideNU.doUpdates(workspace: WorkSpace, batch, batch.maxLength, ev)
 
       for (span <- (batch.maxLength - 1) to 1 by -1) {
         print(s"$span ")
         ev = outsideBinaryPass(workspace, batch, span, ev)
         if (span == 1) {
+          val outsideTU = new UnaryUpdateManager(data.outside.outsideTUKernels, outsideChart, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
           ev = outsideTU.doUpdates(workspace, batch, span, ev)
         } else {
+          val outsideNU = new UnaryUpdateManager(data.outside.outsideNUKernels, outsideChart, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
           ev = outsideNU.doUpdates(workspace, batch, span, ev)
         }
 
       }
+
+      // here, "parentChart" is actually the left child, left is the parent, right is the right completion
+      val outsideTT_L = new BinaryUpdateManager(data.outside.outside_L_TTKernels, true, outsideChart, devOutsideScale, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideBot, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
+      val outsideTN_L = new BinaryUpdateManager(data.outside.outside_L_TNKernels, true, outsideChart, devOutsideScale, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideBot, outsideBot, insideTop, (b, e, l) => (e+1 to l))
+
+      // here, "parentChart" is actually the right child, right is the parent, left is the left completion
+      val outsideTT_R = new BinaryUpdateManager(data.outside.outside_R_TTKernels, true, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideChart, devOutsideScale, outsideBot, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
+      val outsideNT_R = new BinaryUpdateManager(data.outside.outside_R_NTKernels, true, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideChart, devOutsideScale, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
 
       ev = outsideTT_L.doUpdates(workspace, batch, 1, ev)
       ev = outsideNT_R.doUpdates(workspace, batch, 1, ev)
@@ -503,7 +495,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     private def insideBinaryPass(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent*) = {
       var ev = events
+      import workspace._
+      val insideNT = new BinaryUpdateManager(data.inside.insideNTKernels, true, insideChart, devInsideScale, insideChart, devInsideScale, insideChart, devInsideScale, insideBot, insideTop, insideBot, (b, e, l) => (e-1 to e-1))
+      val insideTN = new BinaryUpdateManager(data.inside.insideTNKernels, true, insideChart, devInsideScale, insideChart, devInsideScale, insideChart, devInsideScale, insideBot, insideBot, insideTop, (b, e, l) => (b+1 to b+1))
+      val insideNN = new BinaryUpdateManager(data.inside.insideNNKernels, true, insideChart, devInsideScale, insideChart, devInsideScale, insideChart, devInsideScale, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1), trackRules)
       if (span == 2) {
+        val insideTT = new BinaryUpdateManager(data.inside.insideTTKernels, true, insideChart, devInsideScale, insideChart, devInsideScale, insideChart, devInsideScale, insideBot, insideBot, insideBot, (b, e, l) => (b+1 to b+1))
         ev = Seq(insideTT.doUpdates(workspace, batch, span, ev :_*))
       }
 
@@ -516,9 +513,16 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def outsideBinaryPass(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent) = {
       var ev = events
 
+      import workspace._
+
+      val outsideTN_R = new BinaryUpdateManager(data.outside.outside_R_TNKernels, false, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideChart, devOutsideScale, outsideTop, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
+
       ev = outsideTN_R.doUpdates(workspace, batch, span, ev)
+      val outsideNT_L = new BinaryUpdateManager(data.outside.outside_L_NTKernels, false, outsideChart, devOutsideScale, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideTop, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
       ev = outsideNT_L.doUpdates(workspace, batch, span, ev)
+      val outsideNN_L = new BinaryUpdateManager(data.outside.outside_L_NNKernels, false, outsideChart, devOutsideScale, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideTop, outsideBot, insideTop, (b, e, l) => (e+1 to l))
       ev = outsideNN_L.doUpdates(workspace, batch, span, ev)
+      val outsideNN_R = new BinaryUpdateManager(data.outside.outside_R_NNKernels, false, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideChart, devOutsideScale, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1), trackRules)
       ev = outsideNN_R.doUpdates(workspace, batch, span, ev)
 
       ev
@@ -532,28 +536,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def insideChart = {(w: WorkSpace) => w.devInside}
     private def outsideChart = {(w: WorkSpace) => w.devOutside}
 
-    private def insideTU = new UnaryUpdateManager(data.inside.insideTUKernels, insideChart, devInsideScale, devInsideScale, insideTop, insideBot)
-    private def insideNU = new UnaryUpdateManager(data.inside.insideNUKernels, insideChart, devInsideScale, devInsideScale, insideTop, insideBot)
 
-    private def insideTT = new BinaryUpdateManager(data.inside.insideTTKernels, true, insideChart, devInsideScale, insideChart, devInsideScale, insideChart, devInsideScale, insideBot, insideBot, insideBot, (b, e, l) => (b+1 to b+1))
-    private def insideNT = new BinaryUpdateManager(data.inside.insideNTKernels, true, insideChart, devInsideScale, insideChart, devInsideScale, insideChart, devInsideScale, insideBot, insideTop, insideBot, (b, e, l) => (e-1 to e-1))
-    private def insideTN = new BinaryUpdateManager(data.inside.insideTNKernels, true, insideChart, devInsideScale, insideChart, devInsideScale, insideChart, devInsideScale, insideBot, insideBot, insideTop, (b, e, l) => (b+1 to b+1))
-    private def insideNN = new BinaryUpdateManager(data.inside.insideNNKernels, true, insideChart, devInsideScale, insideChart, devInsideScale, insideChart, devInsideScale, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1), trackRules)
 
-    // here, "parentChart" is actually the left child, left is the parent, right is the right completion
-    private def outsideTT_L = new BinaryUpdateManager(data.outside.outside_L_TTKernels, true, outsideChart, devOutsideScale, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideBot, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
-    private def outsideNT_L = new BinaryUpdateManager(data.outside.outside_L_NTKernels, false, outsideChart, devOutsideScale, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideTop, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
-    private def outsideTN_L = new BinaryUpdateManager(data.outside.outside_L_TNKernels, true, outsideChart, devOutsideScale, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideBot, outsideBot, insideTop, (b, e, l) => (e+1 to l))
-    private def outsideNN_L = new BinaryUpdateManager(data.outside.outside_L_NNKernels, false, outsideChart, devOutsideScale, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideTop, outsideBot, insideTop, (b, e, l) => (e+1 to l))
 
-    // here, "parentChart" is actually the right child, right is the parent, left is the left completion
-    private def outsideTT_R = new BinaryUpdateManager(data.outside.outside_R_TTKernels, true, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideChart, devOutsideScale, outsideBot, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
-    private def outsideNT_R = new BinaryUpdateManager(data.outside.outside_R_NTKernels, true, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideChart, devOutsideScale, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
-    private def outsideTN_R = new BinaryUpdateManager(data.outside.outside_R_TNKernels, false, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideChart, devOutsideScale, outsideTop, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
-    private def outsideNN_R = new BinaryUpdateManager(data.outside.outside_R_NNKernels, false, outsideChart, devOutsideScale, insideChart, devInsideScale, outsideChart, devOutsideScale, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1), trackRules)
 
-    private def outsideTU = new UnaryUpdateManager(data.outside.outsideTUKernels, outsideChart, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
-    private def outsideNU = new UnaryUpdateManager(data.outside.outsideNUKernels, outsideChart, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
 
     def extractParses(batch: Batch[W], mask: DenseMatrix[Int], events: CLEvent*): ParSeq[BinarizedTree[C]] = {
       CLEvent.waitFor(events:_*)
@@ -772,7 +758,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         lArray(offset) = left
         pArray(offset) = parent
         offset += 1
-        if (offset >= numWorkCells)  {
+        if (offset >= workspace.numWorkCells)  {
           logger.debug(s"flush unaries!")
           flushQueue(workspace, batch, span, events)
         } else {
@@ -868,7 +854,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
          }
 
          offset += 1
-         if (offset >= numWorkCells)  {
+         if (offset >= workspace.numWorkCells)  {
            println("flush?")
            flushQueue(workspace, block, batch, span, events)
          } else {
