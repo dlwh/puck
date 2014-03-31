@@ -16,6 +16,8 @@ libraryDependencies ++= Seq(
   "com.nativelibs4java" % "javacl" % "1.0-SNAPSHOT"
 )
 
+libraryDependencies += "com.jsuereth" %% "scala-arm" % "1.3"
+
 fork := true
 
 javaOptions ++= Seq("-Xmx12g")//, "-Xrunhprof:cpu=samples,depth=12")
