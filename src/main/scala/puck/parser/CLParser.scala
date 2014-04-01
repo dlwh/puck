@@ -109,7 +109,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def parse(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("parse", sentences.length) {
-        resource.managed(WorkSpace.allocate(myCellSize, data.maskSize, maxAllocSize)).acquireAndGet { workspace =>
+        withWorkSpace { workspace =>
           getBatches(workspace, sentences, mask).iterator.flatMap { batch =>
             var ev = inside(workspace, batch)
 
@@ -135,7 +135,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def insideOutside(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("parse", sentences.length) {
-        resource.managed(WorkSpace.allocate(myCellSize, data.maskSize, maxAllocSize)).acquireAndGet { workspace =>
+        withWorkSpace { workspace =>
           getBatches(workspace, sentences, mask).iterator.foreach { batch =>
             var ev = inside(workspace, batch)
             ev = outside(workspace, batch, ev)
@@ -146,9 +146,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
     }
 
+    private def withWorkSpace[B](w: WorkSpace=>B) = {
+      val myCellSize:Int = roundUpToMultipleOf(data.numSyms, 32)
+      resource.managed(WorkSpace.allocate(myCellSize, data.maskSize)).acquireAndGet(w)
+    }
+
     def partitions(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("partitions", sentences.length) {
-        resource.managed(WorkSpace.allocate(myCellSize, data.maskSize)).acquireAndGet { workspace =>
+         withWorkSpace { workspace =>
           getBatches(workspace, sentences, mask).iterator.flatMap { batch =>
             import workspace._
             var ev = inside(workspace, batch)
@@ -168,7 +173,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def updateMasks(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask): PruningMask = synchronized {
       logTime("masks", sentences.length) {
-        resource.managed(WorkSpace.allocate(myCellSize, data.maskSize)).acquireAndGet { workspace =>
+        withWorkSpace { workspace =>
           val masks = getBatches(workspace, sentences, mask).iterator.map {  batch =>
             workspace.maskCharts.assignAsync(-1).waitFor()
             val mask = computePruningMasks(workspace, batch):PruningMask
@@ -210,7 +215,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
     }
 
-    val myCellSize:Int = roundUpToMultipleOf(data.numSyms, 32)
 
 
     private def zero: Float = data.semiring.zero
@@ -382,7 +386,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def initializeTagScores(workspace: WorkSpace, batch: Batch[W], events: CLEvent*) = {
       import workspace._
       val totalLength = batch.totalLength
-      val tagScores = DenseMatrix.zeros[Float](totalLength, myCellSize)
+      val tagScores = DenseMatrix.zeros[Float](totalLength, cellSize)
       tagScores := zero
       for (i <- (0 until batch.numSentences).par) {
         val sent = batch.sentences(i)
@@ -687,7 +691,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private[CLParser] def createBatch(workspace: WorkSpace, sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask): Batch[W] = {
       import workspace._
       val batch = Batch[W](sentences, devInside, devOutside, masks)
-      println(f"Batch size of ${sentences.length}, ${batch.numCellsUsed} cells used, total inside ${batch.numCellsUsed * myCellSize * 4.0/1024/1024}%.2fM  ")
+      println(f"Batch size of ${sentences.length}, ${batch.numCellsUsed} cells used, total inside ${batch.numCellsUsed * cellSize * 4.0/1024/1024}%.2fM  ")
       batch
     }
 
