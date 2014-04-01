@@ -220,8 +220,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       var ev = evZeroCharts
 
       if(batch.hasMasks && semiring.needsScaling) {
-        ev = devInsideScale.write(queue, batch.masks.getIScales, false, ev).profileIn(hdTransferEvents)
-        ev = devOutsideScale.write(queue, batch.masks.getOScales, false, ev).profileIn(hdTransferEvents)
+        ev = devInsideScale.write(queue, batch.masks.getIScales, false, ev) profileIn hdTransferEvents
+        ev = devOutsideScale.write(queue, batch.masks.getOScales, false, ev) profileIn hdTransferEvents
         queue.finish()
       }
 
