@@ -92,9 +92,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   var pruned = 0
   var total = 0
-  var rulesEvaled = 0L
-  var theoreticalRules = 0L
-  var rulesTotal = 0L
 
   private class ActualParser(val data: CLParserData[C, L, W], nextParserNeedsScales: Boolean) {
     import data._
@@ -216,9 +213,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       allProfilers.foreach(_.tick())
       pruned = 0
       total = 0
-      rulesEvaled = 0
-      theoreticalRules = 0
-      rulesTotal = 0
 
       val evZeroCharts = zmk.fillMemory(devInside.data, zero, events:_*) profileIn initMemFillEvents
       val evZeroOutside = zmk.fillMemory(devOutside.data, zero, events:_*) profileIn initMemFillEvents
@@ -263,9 +257,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         println(s"Enqueuing writes took ${writeTimer.clear()}s")
         println(s"Spin up for writes took ${allTimer.clear()}s")
         println(s"Pruned $pruned/$total")
-        println(s"Rules evaled: $rulesEvaled/$rulesTotal ${(rulesEvaled.toDouble/rulesTotal)}")
-        println(s"Rules Theoretical (by rulesTotal): $theoreticalRules/$rulesTotal ${(theoreticalRules.toDouble/rulesTotal)}")
-        println(s"Rules Theoretical (by rulesEvaled): $theoreticalRules/$rulesEvaled ${(theoreticalRules.toDouble/rulesEvaled)}")
       }
 
       ev
@@ -276,9 +267,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       var ev = event
       allProfilers.foreach(_.clear())
       allProfilers.foreach(_.tick())
-      rulesEvaled = 0
-      rulesTotal = 0
-      theoreticalRules = 0
       pruned  = 0
       total = 0
 
@@ -324,7 +312,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         println(s"Enqueuing writes took ${writeTimer.clear()}s")
         println(s"Spin up for writes took ${allTimer.clear()}s")
         println(s"Pruned $pruned/$total")
-        println(s"Rules evaled: $rulesEvaled/$rulesTotal ${(rulesEvaled.toDouble/rulesTotal)}")
       }
 
       ev
