@@ -1,13 +1,12 @@
 package puck
 package parser
 
-import epic.AwesomeBitSet
 import gen._
 import com.nativelibs4java.opencl._
 import com.typesafe.scalalogging.slf4j.Logging
 import puck.util._
 import puck.linalg.CLMatrix
-import puck.linalg.kernels.{CLMatrixSliceCopy, CLMatrixTransposeCopy}
+import puck.linalg.kernels.CLMatrixTransposeCopy
 import breeze.collection.mutable.TriangularArray
 import breeze.linalg.{DenseVector, DenseMatrix}
 import epic.trees.annotations.TreeAnnotator
@@ -17,7 +16,6 @@ import epic.trees._
 import java.io._
 import java.util.zip.{ZipFile, ZipOutputStream}
 import scala.collection.mutable.ArrayBuffer
-import BitHacks._
 import epic.parser.SimpleRefinedGrammar.CloseUnaries
 import epic.parser.projections.{ProjectionIndexer, GrammarRefinements, ParserChartConstraintsFactory, ConstraintCoreGrammarAdaptor}
 import scala.collection.parallel.immutable.ParSeq
@@ -42,10 +40,7 @@ import org.bridj.Pointer
  **/
 class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         maxAllocSize: Long = 1<<30,
-                        doEmptySpans: Boolean = false,
-                        profile: Boolean = true,
-                        var oldPruning: Boolean = false,
-                        trackRules: Boolean = false)(implicit val context: CLContext) extends Logging {
+                        profile: Boolean = true)(implicit val context: CLContext) extends Logging {
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
     val mask = computeMasks(sentences)
@@ -152,7 +147,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       logTime("partitions", sentences.length) {
          withWorkSpace { workspace =>
           getBatches(workspace, sentences, mask).iterator.flatMap { batch =>
-            import workspace._
             var ev = inside(workspace, batch)
             val dest = context.createFloatBuffer(CLMem.Usage.Output, sentences.length)
             ev = workspace.devParentPtrs.writeArray(queue, batch.rootIndices.toArray, batch.numSentences, ev) profileIn hdTransferEvents
@@ -447,7 +441,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       import workspace._
       val insideNT = new BinaryUpdateManager(data.inside.insideNTKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideTop, insideBot, (b, e, l) => (e-1 to e-1))
       val insideTN = new BinaryUpdateManager(data.inside.insideTNKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideBot, insideTop, (b, e, l) => (b+1 to b+1))
-      val insideNN = new BinaryUpdateManager(data.inside.insideNNKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1), trackRules)
+      val insideNN = new BinaryUpdateManager(data.inside.insideNNKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1))
       if (span == 2) {
         val insideTT = new BinaryUpdateManager(data.inside.insideTTKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideBot, insideBot, (b, e, l) => (b+1 to b+1))
         ev = Seq(insideTT.doUpdates(workspace, batch, span, ev :_*))
@@ -471,7 +465,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev = outsideNT_L.doUpdates(workspace, batch, span, ev)
       val outsideNN_L = new BinaryUpdateManager(data.outside.outside_L_NNKernels, false, devOutside, devOutsideScale, devOutside, devOutsideScale, devInside, devInsideScale, outsideTop, outsideBot, insideTop, (b, e, l) => (e+1 to l))
       ev = outsideNN_L.doUpdates(workspace, batch, span, ev)
-      val outsideNN_R = new BinaryUpdateManager(data.outside.outside_R_NNKernels, false, devOutside, devOutsideScale, devInside, devInsideScale, devOutside, devOutsideScale, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1), trackRules)
+      val outsideNN_R = new BinaryUpdateManager(data.outside.outside_R_NNKernels, false, devOutside, devOutsideScale, devInside, devInsideScale, devOutside, devOutsideScale, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1))
       ev = outsideNN_R.doUpdates(workspace, batch, span, ev)
 
       ev
@@ -543,7 +537,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private val unaryThreshold = 0.4
 
     def extractMBRParses(workspace: WorkSpace, batch: Batch[W], mask: PruningMask, events: CLEvent*): ParSeq[BinarizedTree[C]] = {
-      import workspace._
       require(mask.hasMasks, "Can't use null pruning mask for parse extraction!")
       events.foreach(_.waitFor())
       val in = if (profile) System.currentTimeMillis() else 0L
@@ -767,8 +760,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                                       parentChart: (Batch[W], Int)=>Int,
                                       leftChart: (Batch[W], Int)=>Int,
                                       rightChart: (Batch[W], Int)=>Int,
-                                      ranger: (Int, Int, Int)=>Range,
-                                      trackRulesForThisSetOfRules: Boolean = false) {
+                                      ranger: (Int, Int, Int)=>Range) {
        var splitPointOffset = 0 // number of unique parent spans used so far
        var offset = 0 // number of work cells used so far.
 
@@ -781,14 +773,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
            splitPointOffsets(splitPointOffset) = offset
            splitPointOffset += 1
          }
+
          lastParent = parent
          pArray(offset) = parent
          lArray(offset) = left
          rArray(offset) = right
-
-         if(profile && trackRulesForThisSetOfRules) {
-           rulesEvaled += block.map(updater.kernels(_).rules.length).sum.toLong
-         }
 
          offset += 1
          if (offset >= workspace.numWorkCells)  {
@@ -859,7 +848,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
          lastParent = -1
 
 
-         val merge = !batch.hasMasks || oldPruning
+         val merge = !batch.hasMasks
 
          val allSpans = if (batch.hasMasks) {
            for {
@@ -867,7 +856,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
              start <- 0 to batch.sentences(sent).length - span
              _ = total += 1
              mask <- if(parentIsBot) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
-             if {val x = batch.isAllowedSpan(sent, start, start + span); if(!x) pruned += 1; x || doEmptySpans || trackRulesForThisSetOfRules }
+             if {val x = batch.isAllowedSpan(sent, start, start + span); if(!x) pruned += 1; x }
            } yield (sent, start, start+span, mask)
          } else {
            for {
@@ -888,13 +877,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
            //        if(allSpans.head._4 != null)
            //          println(BitHacks.asBitSet(blockParents).cardinality)
            for ( (sent, start, end, mask) <- allSpans ) {
-             if(profile && trackRulesForThisSetOfRules) {
-               val numRules = block.map(updater.kernels(_).rules.length).sum
-               val numSplits = ranger(start, start + span, batch.sentences(sent).length).filter(split => split >= 0 && split <= batch.sentences(sent).length).length
-               rulesTotal += numSplits.toLong * numRules
 
-             }
-             if(mask == null || oldPruning || intersects(blockParents, mask)) {
+             if(mask == null || intersects(blockParents, mask)) {
 
                val len = batch.lengths(sent)
 
@@ -913,7 +897,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                    val leftChildAllowed = if (split < start) batch.isAllowedSpan(sent,split, start) else batch.isAllowedSpan(sent, start, split)
                    val rightChildAllowed = if (split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
 
-                   if (doEmptySpans || (leftChildAllowed && rightChildAllowed)) {
+                   if (leftChildAllowed && rightChildAllowed) {
                      val leftChild = leftChartOffset + {
                        if (split < start) ChartHalf.chartIndex(split, start, len) else ChartHalf.chartIndex(start, split, len)
                      }
@@ -922,12 +906,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                      }
 
                      ev = enqueue(workspace, block, batch, span, parentCell, leftChild, rightChild, ev)
-                     if(profile && trackRules && mask != null) {
-                       val mask2 = BitHacks.asBitSet(mask)
-                       for(m <- mask2.iterator) {
-                        parentCounts(m) += 1
-                       }
-                     }
                    }
                  }
                  split += step
@@ -936,9 +914,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
              }
 
            }
-
-           if(trackRulesForThisSetOfRules && profile)
-            theoreticalRules += block.flatMap(updater.kernels(_).rules).groupBy(_.parent.coarse).map { case (k,v) => parentCounts(k) * v.length}.sum
 
            if (offset > 0) {
              ev = flushQueue(workspace, block, batch, span, ev)
