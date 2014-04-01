@@ -238,8 +238,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         ev = devInsideScale.write(queue, batch.masks.getIScales, false, ev).profileIn(hdTransferEvents)
         ev = devOutsideScale.write(queue, batch.masks.getOScales, false, ev).profileIn(hdTransferEvents)
         queue.finish()
-//        println(devInsideScale.read(queue).getFloats(batch.numCellsUsed).toIndexedSeq)
-//        println(devOutsideScale.read(queue).getFloats(batch.numCellsUsed).toIndexedSeq)
       }
 
       ev = initializeTagScores(workspace, batch, ev, evZeroOutside)
@@ -325,8 +323,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev = outsideNT_R.doUpdates(workspace, batch, 1, ev)
       ev = outsideTN_L.doUpdates(workspace, batch, 1, ev)
       ev = outsideTT_R.doUpdates(workspace, batch, 1, ev)
-//      queue.finish()
-//      println(batch.outsideCharts(2).bot.cellString(4, 5, structure, data.semiring, batch.masks.outsideScaleFor(2, _, _)))
 
       if (profile) {
         queue.finish()
@@ -429,8 +425,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, totalLength, devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn posEvents
     }
 
-
-
     private def computeMasks(workspace: WorkSpace, batch: Batch[W], threshold: Float, events: CLEvent*):CLEvent = synchronized {
       import workspace._
       if(profile) {
@@ -450,8 +444,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       evr
     }
-
-
 
     private def insideBinaryPass(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent*) = {
       var ev = events
