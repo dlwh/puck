@@ -2,13 +2,14 @@ package puck.parser
 
 import com.nativelibs4java.opencl._
 import puck.linalg.CLMatrix
+import java.io.Closeable
 
 /**
  *
  *
  * @author dlwh
  */
-class WorkSpace(val numWorkCells: Int, val numChartCells: Int, val cellSize: Int, val maskSize: Int)(implicit context: CLContext, queue: CLQueue) extends AutoCloseable {
+class WorkSpace(val numWorkCells: Int, val numChartCells: Int, val cellSize: Int, val maskSize: Int)(implicit context: CLContext, queue: CLQueue) extends Closeable {
 
   // On the Device side we have 5 data matrices:
   // One is where we calculate P = L * R * rules, for fixed spans and split points (the "bot")
