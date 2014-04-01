@@ -53,7 +53,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     parsers.last.parse(sentences, mask)
   }
 
-
   def partitions(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[Float] = synchronized {
     val mask = computeMasks(sentences)
     parsers.last.partitions(sentences, mask)
@@ -63,7 +62,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     val mask = computeMasks(sentences)
     parsers.last.insideOutside(sentences, mask)
   }
-
 
   private def computeMasks(sentences: IndexedSeq[IndexedSeq[W]]): PruningMask = {
     parsers.dropRight(1).foldLeft(NoPruningMask:PruningMask)( (a,b) => b.updateMasks(sentences, a))
@@ -696,7 +694,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       var offset = 0 // number of cells used so far.
 
-
       private def enqueue(workspace: WorkSpace, batch: Batch[W], span: Int, parent: Int, left: Int, events: Seq[CLEvent]) = {
         import workspace._
         lArray(offset) = left
@@ -1029,7 +1026,6 @@ object CLParser extends Logging {
       val (newc, newr) = reprojectGrammar(grammars.head, textGrammarPrefix.split(":").head, grammars.last, textGrammarPrefix.split(":").last)
       grammars = IndexedSeq(newc, newr)
     }
-
 
     val grammar = grammars.last
 
