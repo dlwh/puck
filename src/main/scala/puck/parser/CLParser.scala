@@ -99,7 +99,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def parse(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("parse", sentences.length) {
         withWorkSpace { workspace =>
-          getBatches(workspace, sentences, mask).iterator.flatMap { batch =>
+          workspace.getBatches(sentences, mask).iterator.flatMap { batch =>
             var ev = inside(workspace, batch)
 
             if(data.isViterbi) {
@@ -125,7 +125,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def insideOutside(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("parse", sentences.length) {
         withWorkSpace { workspace =>
-          getBatches(workspace, sentences, mask).iterator.foreach { batch =>
+          workspace.getBatches(sentences, mask).iterator.foreach { batch =>
             var ev = inside(workspace, batch)
             ev = outside(workspace, batch, ev)
             val ev3 = if(data.isViterbi) computeViterbiParts(workspace, batch, ev) else computeMBRParts(workspace, batch, ev)
@@ -143,7 +143,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def partitions(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("partitions", sentences.length) {
          withWorkSpace { workspace =>
-          getBatches(workspace, sentences, mask).iterator.flatMap { batch =>
+          workspace.getBatches(sentences, mask).iterator.flatMap { batch =>
             var ev = inside(workspace, batch)
             val dest = context.createFloatBuffer(CLMem.Usage.Output, sentences.length)
             ev = workspace.devParentPtrs.writeArray(queue, batch.rootIndices.toArray, batch.numSentences, ev) profileIn hdTransferEvents
@@ -162,7 +162,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def updateMasks(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask): PruningMask = synchronized {
       logTime("masks", sentences.length) {
         withWorkSpace { workspace =>
-          val masks = getBatches(workspace, sentences, mask).iterator.map {  batch =>
+          val masks = workspace.getBatches(sentences, mask).iterator.map {  batch =>
             workspace.maskCharts.assignAsync(-1).waitFor()
             val mask = computePruningMasks(workspace, batch):PruningMask
             mask
@@ -630,38 +630,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
       trees
 
-    }
-
-
-
-      private[CLParser] def getBatches(workspace: WorkSpace, sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask): IndexedSeq[Batch[W]] = {
-      val result = ArrayBuffer[Batch[W]]()
-      var current = ArrayBuffer[IndexedSeq[W]]()
-      var currentCellTotal = 0
-      for ( (s, i) <- sentences.zipWithIndex) {
-        currentCellTotal += TriangularArray.arraySize(s.length) * 2
-        if (currentCellTotal > workspace.devInside.cols) {
-          currentCellTotal -= TriangularArray.arraySize(s.length) * 2
-          assert(current.nonEmpty)
-          result += createBatch(workspace, current, masks.slice(i - current.length, i))
-          currentCellTotal = TriangularArray.arraySize(s.length) * 2
-          current = ArrayBuffer()
-        }
-        current += s
-      }
-
-
-      if (current.nonEmpty) {
-        result += createBatch(workspace, current, masks.slice(sentences.length - current.length, sentences.length))
-      }
-      result
-    }
-
-    private[CLParser] def createBatch(workspace: WorkSpace, sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask): Batch[W] = {
-      import workspace._
-      val batch = Batch[W](sentences, devInside, devOutside, masks)
-      println(f"Batch size of ${sentences.length}, ${batch.numCellsUsed} cells used, total inside ${batch.numCellsUsed * cellSize * 4.0/1024/1024}%.2fM  ")
-      batch
     }
 
     private class UnaryUpdateManager(kernels: CLUnaryRuleUpdater,
