@@ -46,7 +46,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         profile: Boolean = true,
                         var oldPruning: Boolean = false,
                         trackRules: Boolean = false)(implicit val context: CLContext) extends Logging {
-  val skipFineWork = false
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
     val mask = computeMasks(sentences)
