@@ -65,17 +65,18 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   def isViterbi = data.last.isViterbi
 
-  private val initMemFillEvents  = new CLProfiler("initMemfill")
-  private val memFillEvents  = new CLProfiler("memfill")
-  private val hdTransferEvents  = new CLProfiler("Host2Dev Transfer")
-  private val transferEvents  = new CLProfiler("Transfer")
-  private val binaryEvents  = new CLProfiler("Binary")
-  private val unaryEvents  = new CLProfiler("Unary")
-  private val unarySumEvents  = new CLProfiler("Unary Sum")
-  private val posEvents  = new CLProfiler("POS")
-  private val binarySum  = new CLProfiler("Binary Sum")
-  private val masksEvents  = new CLProfiler("Masks")
-  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, unarySumEvents, binarySum, initMemFillEvents, memFillEvents, hdTransferEvents, masksEvents, posEvents)
+  private val profiler = new CLProfiler()
+
+  private val initMemFillEvents  = profiler.eventTimer("initMemfill")
+  private val memFillEvents  = profiler.eventTimer("memfill")
+  private val hdTransferEvents  = profiler.eventTimer("Host2Dev Transfer")
+  private val transferEvents  = profiler.eventTimer("Transfer")
+  private val binaryEvents  = profiler.eventTimer("Binary")
+  private val unaryEvents  = profiler.eventTimer("Unary")
+  private val unarySumEvents  = profiler.eventTimer("Unary Sum")
+  private val posEvents  = profiler.eventTimer("POS")
+  private val binarySum  = profiler.eventTimer("Binary Sum")
+  private val masksEvents  = profiler.eventTimer("Masks")
 
   // TODO:
 
@@ -209,8 +210,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def inside(workspace: WorkSpace, batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
       import workspace._
-      allProfilers.foreach(_.clear())
-      allProfilers.foreach(_.tick())
+      profiler.clear()
+      profiler.tick()
       pruned = 0
       total = 0
 
@@ -251,9 +252,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       if (profile) {
         queue.finish()
-        allProfilers.foreach(_.tock())
-        allProfilers.foreach(p => println(s"Inside $p"))
-        println(f"Time accounted for in processing: ${allProfilers.map(_.processingTime).sum}%.3f")
+        profiler.tock()
+        println(profiler.report("inside"))
         println(s"Enqueuing writes took ${writeTimer.clear()}s")
         println(s"Spin up for writes took ${allTimer.clear()}s")
         println(s"Pruned $pruned/$total")
@@ -265,8 +265,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def outside(workspace: WorkSpace, batch: Batch[W], event: CLEvent):CLEvent = synchronized {
       import workspace._
       var ev = event
-      allProfilers.foreach(_.clear())
-      allProfilers.foreach(_.tick())
+      profiler.clear()
+      profiler.tick()
       pruned  = 0
       total = 0
 
@@ -305,10 +305,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       if (profile) {
         queue.finish()
-        allProfilers.foreach(_.tock())
         Thread.sleep(15)
-        allProfilers.foreach(p => println(s"Outside $p"))
-        println(f"Time accounted for: ${allProfilers.map(_.processingTime).sum}%.3f")
+        println(profiler.report("outside"))
         println(s"Enqueuing writes took ${writeTimer.clear()}s")
         println(s"Spin up for writes took ${allTimer.clear()}s")
         println(s"Pruned $pruned/$total")
@@ -321,8 +319,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def computeMBRParts(workspace: WorkSpace, batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
       import workspace._
       if(profile) {
-        allProfilers.foreach(_.clear())
-        allProfilers.foreach(_.tick())
+        profiler.clear()
+        profiler.tick()
       }
 
       val evr = data.mbr.getMasks(maskCharts(::, 0 until batch.numCellsUsed),
@@ -331,8 +329,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         batch.cellOffsets, batch.lengths, structure.root, events:_*) profileIn masksEvents
       if (profile) {
         queue.finish()
-        allProfilers.foreach(_.tock())
-        allProfilers.foreach(p => println(s"Masks $p"))
+        println(profiler.report("mbr"))
       }
 
       evr
@@ -341,8 +338,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def computeViterbiParts(workspace: WorkSpace, batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
       import workspace._
       if(profile) {
-        allProfilers.foreach(_.clear())
-        allProfilers.foreach(_.tick())
+        profiler.clear()
+        profiler.tick()
       }
 
       val evr = data.viterbi.viterbi(structure, maskCharts(::, 0 until batch.numCellsUsed),
@@ -350,8 +347,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         batch.cellOffsets, batch.lengths, structure.root, events:_*) profileIn masksEvents
       if (profile) {
         queue.finish()
-        allProfilers.foreach(_.tock())
-        allProfilers.foreach(p => println(s"Masks $p"))
+        println(profiler.report("viterbi"))
       }
 
       evr
@@ -406,8 +402,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private def computeMasks(workspace: WorkSpace, batch: Batch[W], threshold: Float, events: CLEvent*):CLEvent = synchronized {
       import workspace._
       if(profile) {
-        allProfilers.foreach(_.clear())
-        allProfilers.foreach(_.tick())
+        profiler.clear()
+        profiler.tick()
       }
 
       val evr = data.masks.getMasks(maskCharts(::, 0 until batch.numCellsUsed),
@@ -416,8 +412,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         batch.cellOffsets, batch.lengths, structure.root, threshold, events:_*) profileIn masksEvents
       if (profile) {
         queue.finish()
-        allProfilers.foreach(_.tock())
-        allProfilers.foreach(p => println(s"Masks $p"))
+        println(profiler.report("masks"))
       }
 
       evr

@@ -27,7 +27,7 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
 
   def numKernelBlocks = kernels.length
 
-  def update(block: IndexedSeq[Int], profiler: CLProfiler,
+  def update(block: IndexedSeq[Int], profiler: CLProfiler#EventTimer,
              parent: CLMatrix[Float], parentScale: CLBuffer[Float], parentPointers: CLBuffer[Int],
              left: CLMatrix[Float], leftScale: CLBuffer[Float], leftPointers: CLBuffer[Int], leftOff: Integer,
              right: CLMatrix[Float], rightScale: CLBuffer[Float], rightPointers: CLBuffer[Int], rightOff: Integer,
