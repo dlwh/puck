@@ -71,7 +71,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 
         appendAddition(sb);
         sb.append(WRITE_PARENT_ATOMIC);
-        sb.append(CLMaskKernels.maskHeader(structure));
+        sb.append(CLMaskKernels.maskHeader(structure.numCoarseSyms()));
 
         sb.append("\n\n");
 
