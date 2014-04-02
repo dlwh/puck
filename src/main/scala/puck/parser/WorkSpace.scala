@@ -3,13 +3,49 @@ package puck.parser
 import com.nativelibs4java.opencl._
 import puck.linalg.CLMatrix
 import java.io.Closeable
+import breeze.collection.mutable.TriangularArray
+import scala.collection.mutable.ArrayBuffer
 
 /**
  *
  *
  * @author dlwh
  */
-class WorkSpace(val numWorkCells: Int, val numChartCells: Int, val cellSize: Int, val maskSize: Int)(implicit context: CLContext, queue: CLQueue) extends Closeable {
+class WorkSpace(val numWorkCells: Int,
+                val numChartCells: Int,
+                val cellSize: Int,
+                val maskSize: Int)(implicit context: CLContext, queue: CLQueue) extends Closeable {
+
+  def getBatches[W](sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask = NoPruningMask): IndexedSeq[Batch[W]] = {
+    val result = ArrayBuffer[Batch[W]]()
+    var current = ArrayBuffer[IndexedSeq[W]]()
+    var currentCellTotal = 0
+    for ( (s, i) <- sentences.zipWithIndex) {
+      currentCellTotal += TriangularArray.arraySize(s.length) * 2
+      if (currentCellTotal > devInside.cols) {
+        currentCellTotal -= TriangularArray.arraySize(s.length) * 2
+        assert(current.nonEmpty)
+        result += createBatch(current, masks.slice(i - current.length, i))
+        currentCellTotal = TriangularArray.arraySize(s.length) * 2
+        current = ArrayBuffer()
+      }
+      current += s
+    }
+
+
+    if (current.nonEmpty) {
+      result += createBatch(current, masks.slice(sentences.length - current.length, sentences.length))
+    }
+    result
+  }
+
+
+  private def createBatch[W](sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask): Batch[W] = {
+    val batch = Batch[W](sentences, devInside, devOutside, masks)
+    println(f"Batch size of ${sentences.length}, ${batch.numCellsUsed} cells used, total inside ${batch.numCellsUsed * cellSize * 4.0/1024/1024}%.2fM  ")
+    batch
+  }
+
 
   // On the Device side we have 5 data matrices:
   // One is where we calculate P = L * R * rules, for fixed spans and split points (the "bot")

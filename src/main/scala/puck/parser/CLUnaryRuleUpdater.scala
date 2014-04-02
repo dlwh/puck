@@ -16,7 +16,7 @@ import puck.util._
 case class CLUnaryRuleUpdater(kernels: IndexedSeq[RuleKernel]) {
   def this(kernels: java.util.List[RuleKernel]) = this(kernels.asScala.toIndexedSeq)
 
-  def update(profiler: CLProfiler,
+  def update(profiler: CLProfiler#EventTimer,
              parent: CLMatrix[Float], parentScale: CLBuffer[Float], parentPointers: CLBuffer[Int],
              child: CLMatrix[Float], childScale: CLBuffer[Float], childPointers: CLBuffer[Int], childOff: Int,
              events: CLEvent*)(implicit queue: CLQueue) = synchronized {

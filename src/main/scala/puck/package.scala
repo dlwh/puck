@@ -146,7 +146,7 @@ package object puck {
   }
 
   implicit class RichCLEvent(val event: CLEvent) extends AnyVal {
-    def profileIn(group: puck.util.CLProfiler) = group.prof(event)
+    def profileIn(group: puck.util.CLProfiler#EventTimer) = group.prof(event)
   }
 
   def roundUpToMultipleOf(num: Int, divisor: Int) = (num + divisor - 1)/divisor * divisor
