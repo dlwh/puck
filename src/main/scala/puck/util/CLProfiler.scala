@@ -4,7 +4,7 @@ import com.nativelibs4java.opencl.CLEvent.CommandExecutionStatus
 import scala.collection.mutable.ArrayBuffer
 import breeze.numerics.sqrt
 
-class CLProfiler {
+class CLProfiler(actuallyProfile: Boolean) {
   private var startingWallTime: Long = -1L
   private var totalWallTime: Long = 0
 
@@ -39,22 +39,22 @@ class CLProfiler {
     private val events = collection.mutable.ArrayBuffer[CLEvent]()
 
     def +=(event: CLEvent): this.type = {
-      if (event ne null) events += event
+      if (actuallyProfile && event != null) events += event
       this
     }
 
     def ++=(event: Traversable[CLEvent]): this.type = {
-      if (event ne null) events ++= event
+      events foreach +=
       this
     }
 
     def prof(events: Seq[CLEvent]): events.type = {
-      this.events ++= events
+      this ++= events
       events
     }
 
     def prof(event: CLEvent): event.type = {
-      this.events += event
+      this += event
       event
     }
 

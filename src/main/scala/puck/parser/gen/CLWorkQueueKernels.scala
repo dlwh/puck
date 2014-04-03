@@ -21,10 +21,10 @@ class CLWorkQueueKernels(enqueueKernel: CLKernel)(implicit ctxt: CLContext) {
                       pTop: Boolean, lTop: Boolean, rTop: Boolean,
                       events: CLEvent*)(implicit queue: CLQueue):CLEvent = synchronized {
     def I(x: Boolean) = if(x) 1 else 0
-    enqueueKernel.setArgs(ws.parentQueue, ws.leftQueue, ws.rightQueue, ws.scratch,
+    enqueueKernel.setArgs(ws.pPtrBuffer, ws.lPtrBuffer, ws.rPtrBuffer, ws.devParentPtrs,
       batch.cellOffsetsDev, batch.lengthsDev, null, null, Integer.valueOf(0), I(pTop), I(lTop), I(rTop), spanLength, Integer.valueOf(1))
     val computeNeeded = enqueueKernel.enqueueNDRange(queue, Array(batch.numSentences), Array(1), events:_*)
-    val evScan = scanKernel.scan(ws.queueOffsets, ws.scratch, batch.numSentences, computeNeeded)
+    val evScan = scanKernel.scan(ws.queueOffsets, ws.devParentPtrs, batch.numSentences, computeNeeded)
     enqueueKernel.setArg(3, ws.queueOffsets)
     enqueueKernel.setArg(13, 1)
 

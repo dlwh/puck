@@ -65,7 +65,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   def isViterbi = data.last.isViterbi
 
-  private val profiler = new CLProfiler()
+  private val profiler = new CLProfiler(profile)
 
   private val initMemFillEvents  = profiler.eventTimer("initMemfill")
   private val memFillEvents  = profiler.eventTimer("memfill")
@@ -805,7 +805,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
          val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).groupBy(updater.kernels(_).parents.data.toIndexedSeq).values.toIndexedSeq
 
          for(block <- blocks) {
-           val parentCounts = DenseVector.zeros[Int](data.maskSize * 32)
            val blockParents = updater.kernels(block.head).parents
            //        if(allSpans.head._4 != null)
            //          println(BitHacks.asBitSet(blockParents).cardinality)

@@ -64,6 +64,7 @@ class WorkSpace(val numWorkCells: Int,
 //  val parentQueue, leftQueue, rightQueue = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
   val pPtrBuffer, lPtrBuffer, rPtrBuffer = context.createIntBuffer(CLMem.Usage.Input, numChartCells/2)
   val devParentPtrs = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
+  val queueOffsets = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
 
 
   def close() = release()
