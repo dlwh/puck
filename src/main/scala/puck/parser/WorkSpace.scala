@@ -64,10 +64,8 @@ class WorkSpace(val numWorkCells: Int,
   // work queue stuff
   val pArray, lArray, rArray = new Array[Int](numWorkCells)
 //  val parentQueue, leftQueue, rightQueue = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
-  val offsetBuffer = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
-  val splitPointOffsets = new Array[Int](numWorkCells+1)
+  val offsetBuffer = context.createIntBuffer(CLMem.Usage.Input, numWorkCells * 3)
   val devParentPtrs = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
-  val devSplitPointOffsets = context.createIntBuffer(CLMem.Usage.Input, numWorkCells + 1)
 
 
   def close() = release()

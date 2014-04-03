@@ -11,7 +11,7 @@ import puck.parser.Batch
  *
  * @author dlwh
  */
-class CLEnqueueKernels(enqueueKernel: CLKernel)(implicit ctxt: CLContext) {
+class CLWorkQueueKernels(enqueueKernel: CLKernel)(implicit ctxt: CLContext) {
   private val scanKernel = CLScan.make
 
   /*
@@ -37,7 +37,7 @@ class CLEnqueueKernels(enqueueKernel: CLKernel)(implicit ctxt: CLContext) {
 
 }
 
-object CLEnqueueKernels {
+object CLWorkQueueKernels {
   def text(numCoarseSyms: Int) = CLMaskKernels.maskHeader(numCoarseSyms) +
     """
       | typedef struct { int low, high;} range_t;

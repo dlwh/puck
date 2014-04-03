@@ -15,7 +15,7 @@ class CLParserTest extends FunSuite {
   test("simple test") {
     implicit val clcontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.MaxComputeUnits)
     val grammar = ParserTestHarness.grammar
-    val data = CLParserData.make(grammar, GenType.CoarseParent, false, ViterbiRuleSemiring)
+    val data = CLParserData.make(grammar, GenType.CoarseParent, true, ViterbiRuleSemiring)
     val parser = new CLParser(IndexedSeq(data), maxAllocSize = 40 * 1024 * 1024, profile = false)
     val parts = parser.partitions(ParserTestHarness.getTrainTrees().map(_.words))
     assert(!parts.exists(_.isInfinite) && !parts.exists(_.isNaN), parts)

@@ -26,14 +26,13 @@ class CLProfiler {
   def report(name: String) = {
     val header = s"Profile for phase $name {"
     val accounted = allTimers.map(_.processingTime).sum
-    val time = f"Wall Clock Time: ${totalWallTime/1E3}%.3fs" +"\n" +
-      f"  of which ${accounted}%.6fs is accounted for in processing. (${accounted * totalWallTime/10}%.3f%%)"
-    allTimers.mkString(s"$header\n  $time", "\n  ","}")
+    val time = f"Wall Clock Time: ${totalWallTime/1E3}%.3fs of which ${accounted}%.6fs is accounted for in processing. (${accounted / totalWallTime * 1E5}%.3f%%)"
+    allTimers.mkString(s"$header\n  $time\n  ", "\n  ","}")
   }
 
   private val allTimers = new ArrayBuffer[EventTimer]()
 
-  def clear() { allTimers foreach (_.clear())}
+  def clear() { allTimers foreach (_.clear()); totalWallTime = 0}
 
   class EventTimer(portion: String) {
     allTimers += this
