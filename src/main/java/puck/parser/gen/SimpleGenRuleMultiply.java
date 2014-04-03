@@ -182,7 +182,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         sb.append(String.format(
                 " __kernel void %s(__global volatile float* parents," +
                                 "__global const float* parentScale," +
-                "                  __global int* parentIndex, " + // cell offset into parents column if writeDirect, and always parentScale
+                "                  __global int* _parentIndex, int parentOff," + // cell offset into parents column if writeDirect, and always parentScale
                 "                  __global float* left," +
                 "                  __global const float* leftScale," +
                         "                  __global int* _leftIndex, int leftOff, " +
@@ -192,6 +192,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
                 "                  __global const mask_t* masks, int numRows, int cellsToDo) {\n" +
                 "    int numWorkers = get_global_size(0);\n" +
                 "    int grammarSubPartition = get_group_id(1);\n" +
+                "    __global int* parentIndex = _parentIndex + parentOff;\n" +
                 "    __global int* leftIndex = _leftIndex + leftOff;\n" +
                 "    __global int* rightIndex = _rightIndex + rightOff;\n" +
                 "    for (int row = get_global_id(0); row < cellsToDo; row += numWorkers) {\n" +

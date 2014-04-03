@@ -97,6 +97,7 @@ package object puck {
 
     def writeArray(queue: CLQueue, arr: Array[Int], lengthOfArray: Int, events: CLEvent*):CLEvent = {
       allTimer.tic()
+      require(buffer.getElementCount >= lengthOfArray)
       require(lengthOfArray <= arr.length)
       val ptr = if(lengthOfArray == arr.length) {
         Pointer.pointerToArray[Integer](arr)

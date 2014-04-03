@@ -47,9 +47,7 @@ class WorkSpace(val numWorkCells: Int,
   }
 
 
-  // On the Device side we have 5 data matrices:
-  // One is where we calculate P = L * R * rules, for fixed spans and split points (the "bot")
-  val devParent = new CLMatrix[Float]( numWorkCells, cellSize)
+  // Two work arrays for computing: L * R * rules, for fixed spans and split points (the "bot")
   // One is the L part of the above
   val devLeft = new CLMatrix[Float]( numWorkCells, cellSize)
   // Another is the R part.
@@ -62,9 +60,9 @@ class WorkSpace(val numWorkCells: Int,
   val devInsideScale, devOutsideScale = context.createFloatBuffer(CLMem.Usage.InputOutput, numChartCells / 2)
 
   // work queue stuff
-  val pArray, lArray, rArray = new Array[Int](numWorkCells)
+  val pArray, lArray, rArray = new Array[Int](numChartCells/2)
 //  val parentQueue, leftQueue, rightQueue = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
-  val offsetBuffer = context.createIntBuffer(CLMem.Usage.Input, numWorkCells * 3)
+  val pPtrBuffer, lPtrBuffer, rPtrBuffer = context.createIntBuffer(CLMem.Usage.Input, numChartCells/2)
   val devParentPtrs = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
 
 
@@ -72,7 +70,6 @@ class WorkSpace(val numWorkCells: Int,
 
 
   def release() {
-    devParent.release()
     devLeft.release()
     devRight.release()
     devInside.release()
@@ -85,7 +82,7 @@ class WorkSpace(val numWorkCells: Int,
 }
 
 object WorkSpace {
-  def allocate( cellSize: Int, maskSize: Int, maxAllocSize: Long = -1, ratioOfChartsToP: Int = 7)(implicit context: CLContext, queue: CLQueue): WorkSpace = {
+  def allocate( cellSize: Int, maskSize: Int, maxAllocSize: Long = -1, ratioOfChartsToWorkSpace: Int = 7)(implicit context: CLContext, queue: CLQueue): WorkSpace = {
     var maxMemToUse =  context.getDevices.head.getGlobalMemSize
     if(maxAllocSize >= 0) maxMemToUse = math.min(maxAllocSize, maxMemToUse)
 
@@ -107,11 +104,11 @@ object WorkSpace {
     // in a fixed sentence is (n/2)^2= n^2/4.
     // Take n = 32, then we want our P/L/R arrays to be of the ratio (3 * 256):992 \approx 3/4 (3/4 exaclty if we exclude the - n term)
     // doesn't quite work the way we want (outside), so we'll bump the number to 4/5
-    val baseSize = numberOfUnitsOf32 / (3 + ratioOfChartsToP)
-    val extra = numberOfUnitsOf32 % (3 + ratioOfChartsToP)
+    val baseSize = numberOfUnitsOf32 / (2 + ratioOfChartsToWorkSpace)
+    val extra = numberOfUnitsOf32 % (2 + ratioOfChartsToWorkSpace)
     val plrSize = baseSize
     // TODO, can probably do a better job of these calculations?
-    val (workCells, chartCells) = (plrSize * 32, (baseSize * ratioOfChartsToP + extra) * 32)
+    val (workCells, chartCells) = (plrSize * 32, (baseSize * ratioOfChartsToWorkSpace + extra) * 32)
 
     new WorkSpace(workCells, chartCells, cellSize, maskSize)
 

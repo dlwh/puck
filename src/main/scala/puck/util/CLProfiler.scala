@@ -27,7 +27,7 @@ class CLProfiler {
     val header = s"Profile for phase $name {"
     val accounted = allTimers.map(_.processingTime).sum
     val time = f"Wall Clock Time: ${totalWallTime/1E3}%.3fs of which ${accounted}%.6fs is accounted for in processing. (${accounted / totalWallTime * 1E5}%.3f%%)"
-    allTimers.mkString(s"$header\n  $time\n  ", "\n  ","}")
+    allTimers.filter(_.processingTime != 0.0).mkString(s"$header\n  $time\n  ", "\n  ","\n}")
   }
 
   private val allTimers = new ArrayBuffer[EventTimer]()
