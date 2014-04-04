@@ -303,7 +303,6 @@ object CLViterbi {
     assert(offsets.length == g.nontermIndex.size * 6 + 1)
 
     val groupOffsets = Array.tabulate(6)(g.nontermIndex.size * _)
-    println(groupOffsets.toIndexedSeq)
     val scores = epic.util.Arrays.concatenate(binaryScoresNN, binaryScoresNT, binaryScoresTN, binaryScoresTT, unaryScores, unaryScoresT)
     val left =   epic.util.Arrays.concatenate(binaryLeftNN,   binaryLeftNT,   binaryLeftTN,   binaryLeftTT,  unaryChildren, unaryChildrenT)
     val right =  epic.util.Arrays.concatenate(binaryRightNN,  binaryRightNT,  binaryRightTN,  binaryRightTT)
@@ -324,10 +323,6 @@ object CLViterbi {
     verify(g.nontermIndex.size, parents, groupOffsets(2), offsets, binaryParentsNN.length + binaryParentsNT.length)
     verify(g.nontermIndex.size, parents, groupOffsets(3), offsets, binaryParentsNN.length + binaryParentsNT.length + binaryParentsTN.length)
     val ssym = structure.nontermIndex.toIndexedSeq.indexWhere(_.toString == "S_0")
-    println(ssym)
-    println(structure.bothTermRules.filter(_._1.parent.gpu == ssym))
-    println(binaryParentsTT.count(_ == ssym))
-    println(parents.slice(offsets(groupOffsets(3) + ssym), offsets(groupOffsets(3) + ssym + 1)).toIndexedSeq)
 
 
     val fullSource = (

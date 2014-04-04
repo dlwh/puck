@@ -157,7 +157,7 @@ package object puck {
     val x = f
     val out = System.currentTimeMillis()
     val duration = (out-in)/1000.0
-    println(f"$name took ${duration}s seconds. (${numItems/duration} per second)")
+    println(f"$name took ${duration}s seconds. (${numItems/duration}%.3f per second)")
     x
   }
 
