@@ -12,7 +12,9 @@ import breeze.optimize.BatchDiffFunction
 import puck.{BatchFunctionAnnotatorService, AnnotatorService}
 import scala.io.{Source, Codec}
 import java.util.concurrent.atomic.{AtomicLong, AtomicInteger}
-import scala.concurrent.ExecutionContext
+import scala.concurrent.{Future, ExecutionContext}
+import java.util.concurrent.TimeUnit
+import scala.concurrent.duration.Duration
 
 /**
  * TODO
@@ -27,7 +29,8 @@ object RunParser extends Logging {
                     numToParse: Int = 1000,
                     grammar: File = new File("grammar.grz"),
                     maxParseLength: Int = 10000,
-                    mem: String = "3g")
+                    mem: String = "3g",
+                    maxLength: Int = 50)
 
   def main(args: Array[String]) {
     val (config, files) = CommandLineParser.parseArguments(args)
@@ -49,7 +52,7 @@ object RunParser extends Logging {
 
     val parser = new CLParser(parserData, CLParser.parseMemString(mem), profile = profile)
 
-    val service: BatchFunctionAnnotatorService[IndexedSeq[String], BinarizedTree[AnnotatedLabel]] = AnnotatorService.fromBatchFunction(parser.parse(_))
+    val service = AnnotatorService.fromBatchFunction(parser.parse(_:IndexedSeq[IndexedSeq[String]]), flushInterval = Duration(100, TimeUnit.MILLISECONDS))
 
     logger.info("Up and running")
 
@@ -63,17 +66,31 @@ object RunParser extends Logging {
       val words = line.trim.split(" ")
       val i = producedIndex
       producedIndex += 1
-      service(words).foreach { guess =>
-        val tree: Tree[String] = AnnotatedLabelChainReplacer.replaceUnaries(guess).map(_.label)
-        val guessTree = Trees.debinarize(Trees.deannotate(tree))
-        val rendered = guessTree.render(words, newline = false)
-        consumedIndex.synchronized {
-          while (consumedIndex.get() != i) {
-            consumedIndex.wait()
+      if(words.length < maxLength) {
+        service(words).foreach { guess =>
+          val tree: Tree[String] = AnnotatedLabelChainReplacer.replaceUnaries(guess).map(_.label)
+          val guessTree = Trees.debinarize(Trees.deannotate(tree))
+          val rendered = guessTree.render(words, newline = false)
+          consumedIndex.synchronized {
+            while (consumedIndex.get() != i) {
+              consumedIndex.wait()
+            }
+            println(rendered)
+            consumedIndex.incrementAndGet()
+            consumedIndex.notifyAll()
           }
-          println(rendered)
-          consumedIndex.incrementAndGet()
-          consumedIndex.notifyAll()
+        }
+      } else {
+        Future {
+          consumedIndex.synchronized {
+            while (consumedIndex.get() != i) {
+              consumedIndex.wait()
+            }
+            println("(())")
+            consumedIndex.incrementAndGet()
+            consumedIndex.notifyAll()
+          }
+
         }
       }
     }
