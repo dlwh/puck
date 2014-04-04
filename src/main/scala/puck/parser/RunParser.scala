@@ -6,14 +6,14 @@ import java.io.File
 import breeze.config.CommandLineParser
 import java.util.zip.ZipFile
 import com.nativelibs4java.opencl.{JavaCL, CLContext}
-import java.util.Collections
+import java.util.{Comparator, Collections}
 import com.typesafe.scalalogging.slf4j.Logging
 import breeze.optimize.BatchDiffFunction
 import puck.{BatchFunctionAnnotatorService, AnnotatorService}
 import scala.io.{Source, Codec}
-import java.util.concurrent.atomic.{AtomicLong, AtomicInteger}
+import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicInteger}
 import scala.concurrent.{Future, ExecutionContext}
-import java.util.concurrent.TimeUnit
+import java.util.concurrent.{PriorityBlockingQueue, ConcurrentLinkedQueue, TimeUnit}
 import scala.concurrent.duration.Duration
 
 /**
@@ -58,9 +58,45 @@ object RunParser extends Logging {
 
     val fileIter = if(files.nonEmpty) files.iterator.map(Source.fromFile(_)(Codec.UTF8)) else Iterator(Source.fromInputStream(System.in))
 
-    val consumedIndex = new AtomicLong()
     var producedIndex = 0L
     val timeIn = System.currentTimeMillis()
+
+    val output = new PriorityBlockingQueue[(String, Long)](100, new Comparator[(String, Long)] {
+      override def compare(o1: (String, Long), o2: (String, Long)): Int = math.signum(o1._2 - o2._2).toInt
+    })
+
+    val stop = new AtomicBoolean(false)
+    val consumedIndex = new AtomicLong()
+
+    val consumer = new Thread(new Runnable {
+      override def run(): Unit = {
+        output.synchronized {
+          while(!stop.get()) {
+            output.wait()
+            var drain = true
+            while(drain) {
+              output.peek() match {
+                case null =>
+                  drain = false
+                case (str, prio) =>
+                  if(prio == consumedIndex.get) {
+                    drain = true
+                    val x = output.poll
+                    assert(x._2 == prio)
+                    println(str)
+                    val res = consumedIndex.incrementAndGet()
+                    if(res == producedIndex) consumedIndex.synchronized { consumedIndex.notifyAll() }
+                  } else {
+                    drain = false
+                  }
+              }
+            }
+
+          }
+        }
+      }
+    })
+    consumer.start()
 
     for(f <- fileIter; line <- f.getLines()) {
       val words = line.trim.split(" ")
@@ -71,26 +107,15 @@ object RunParser extends Logging {
           val tree: Tree[String] = AnnotatedLabelChainReplacer.replaceUnaries(guess).map(_.label)
           val guessTree = Trees.debinarize(Trees.deannotate(tree))
           val rendered = guessTree.render(words, newline = false)
-          consumedIndex.synchronized {
-            while (consumedIndex.get() != i) {
-              consumedIndex.wait()
-            }
-            println(rendered)
-            consumedIndex.incrementAndGet()
-            consumedIndex.notifyAll()
+          output.add(rendered -> i)
+          output.synchronized {
+            output.notifyAll()
           }
         }
       } else {
-        Future {
-          consumedIndex.synchronized {
-            while (consumedIndex.get() != i) {
-              consumedIndex.wait()
-            }
-            println("(())")
-            consumedIndex.incrementAndGet()
-            consumedIndex.notifyAll()
-          }
-
+        output.add("(())" -> i)
+        output.synchronized {
+          output.notifyAll()
         }
       }
     }
@@ -100,6 +125,11 @@ object RunParser extends Logging {
       while (consumedIndex.get() != producedIndex) {
         consumedIndex.wait()
       }
+    }
+
+    stop.set(true)
+    output.synchronized {
+      output.notifyAll()
     }
 
     val timeOut = System.currentTimeMillis()
