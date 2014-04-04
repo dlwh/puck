@@ -17,8 +17,8 @@ import puck.parser.{SymId, RuleSemiring, RuleStructure}
 case class CLScalingKernels(getScalingKernel: CLKernel) {
 
 
-  def write(out: ZipOutputStream) {
-    ZipUtil.addKernel(out, "getScalingConstantsKernel", getScalingKernel)
+  def write(prefix: String, out: ZipOutputStream) {
+    ZipUtil.addKernel(out, s"$prefix/getScalingConstantsKernel", getScalingKernel)
   }
 
   def getScaling(scaleConstants: CLBuffer[Float],
@@ -35,8 +35,8 @@ case class CLScalingKernels(getScalingKernel: CLKernel) {
 
 
 object CLScalingKernels {
-  def read(zf: ZipFile)(implicit ctxt: CLContext) = {
-    CLScalingKernels(ZipUtil.readKernel(zf, "getScalingConstantsKernel"))
+  def read(prefix: String, zf: ZipFile)(implicit ctxt: CLContext) = {
+    CLScalingKernels(ZipUtil.readKernel(zf, s"$prefix/getScalingConstantsKernel"))
   }
 
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {

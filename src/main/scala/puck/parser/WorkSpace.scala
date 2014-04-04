@@ -54,15 +54,15 @@ class WorkSpace(val numWorkCells: Int,
   val devRight = new CLMatrix[Float]( numWorkCells, cellSize)
 
   // finally, we have the array of parse charts
-  val devInside = new CLMatrix[Float](cellSize, numChartCells/2)
-  val devOutside = new CLMatrix[Float](cellSize, numChartCells/2)
-  val maskCharts = new CLMatrix[Int](maskSize, numChartCells/2)
-  val devInsideScale, devOutsideScale = context.createFloatBuffer(CLMem.Usage.InputOutput, numChartCells / 2)
+  val devInside = new CLMatrix[Float](cellSize, numChartCells)
+  val devOutside = new CLMatrix[Float](cellSize, numChartCells)
+  val maskCharts = new CLMatrix[Int](maskSize, numChartCells)
+  val devInsideScale, devOutsideScale = context.createFloatBuffer(CLMem.Usage.InputOutput, numChartCells)
 
   // work queue stuff
-  val pArray, lArray, rArray = new Array[Int](numChartCells/2)
+  val pArray, lArray, rArray = new Array[Int](numChartCells)
 //  val parentQueue, leftQueue, rightQueue = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
-  val pPtrBuffer, lPtrBuffer, rPtrBuffer = context.createIntBuffer(CLMem.Usage.Input, numChartCells/2)
+  val pPtrBuffer, lPtrBuffer, rPtrBuffer = context.createIntBuffer(CLMem.Usage.Input, numChartCells)
   val devParentPtrs = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
   val queueOffsets = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
 
@@ -105,13 +105,15 @@ object WorkSpace {
     // in a fixed sentence is (n/2)^2= n^2/4.
     // Take n = 32, then we want our P/L/R arrays to be of the ratio (3 * 256):992 \approx 3/4 (3/4 exaclty if we exclude the - n term)
     // doesn't quite work the way we want (outside), so we'll bump the number to 4/5
-    val baseSize = numberOfUnitsOf32 / (2 + ratioOfChartsToWorkSpace)
-    val extra = numberOfUnitsOf32 % (2 + ratioOfChartsToWorkSpace)
+    val baseSize = numberOfUnitsOf32 / (2 + 2 * ratioOfChartsToWorkSpace)
+    val extra = numberOfUnitsOf32 % (2 + 2 * ratioOfChartsToWorkSpace)
     val plrSize = baseSize
     // TODO, can probably do a better job of these calculations?
     val (workCells, chartCells) = (plrSize * 32, (baseSize * ratioOfChartsToWorkSpace + extra) * 32)
 
-    new WorkSpace(workCells, chartCells, cellSize, maskSize)
+    val maxFloatsPerBuffer = (context.getDevices.head.getMaxMemAllocSize / sizeOfFloat / cellSize).toInt
+
+    new WorkSpace(workCells min maxFloatsPerBuffer, chartCells min maxFloatsPerBuffer, cellSize, maskSize)
 
   }
 }

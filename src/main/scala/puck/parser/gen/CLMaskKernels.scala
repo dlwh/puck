@@ -18,9 +18,9 @@ import puck.PointerFreer
 case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
 
 
-  def write(out: ZipOutputStream) {
-    ZipUtil.addKernel(out, "computeMasksKernel", getMasksKernel)
-    ZipUtil.serializedEntry(out, "MasksInts", Array(maskSize))
+  def write(prefix: String, out: ZipOutputStream) {
+    ZipUtil.addKernel(out, s"$prefix/computeMasksKernel", getMasksKernel)
+    ZipUtil.serializedEntry(out, s"$prefix/MasksInts", Array(maskSize))
   }
 
   def getMasks(masks: CLMatrix[Int],
@@ -64,9 +64,9 @@ case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
 }
 
 object CLMaskKernels {
-  def read(zf: ZipFile)(implicit ctxt: CLContext) = {
-    val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("MasksInts")))
-    CLMaskKernels(ints(0), ZipUtil.readKernel(zf, "computeMasksKernel"))
+  def read(prefix: String, zf: ZipFile)(implicit ctxt: CLContext) = {
+    val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry(s"$prefix/MasksInts")))
+    CLMaskKernels(ints(0), ZipUtil.readKernel(zf, s"$prefix/computeMasksKernel"))
   }
 
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {

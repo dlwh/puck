@@ -24,33 +24,33 @@ case class CLOutsideKernels(outside_L_NNKernels: CLBinaryRuleUpdater,
                             outsideNUKernels: CLUnaryRuleUpdater,
                             outsideTUKernels: CLUnaryRuleUpdater) {
 
-  def write(out: ZipOutputStream) {
-     outside_L_NNKernels.write("outside_L_NN", out)
-     outside_R_NNKernels.write("outside_R_NN", out)
-     outside_L_NTKernels.write("outside_L_NT", out)
-     outside_R_NTKernels.write("outside_R_NT", out)
-     outside_L_TNKernels.write("outside_L_TN", out)
-     outside_R_TNKernels.write("outside_R_TN", out)
-     outside_L_TTKernels.write("outside_L_TT", out)
-     outside_R_TTKernels.write("outside_R_TT", out)
-    outsideNUKernels.write("outsideNU", out)
-    outsideTUKernels.write("outsideTU", out)
+  def write(prefix: String, out: ZipOutputStream) {
+    outside_L_NNKernels.write(s"$prefix/outside_L_NN", out)
+    outside_R_NNKernels.write(s"$prefix/outside_R_NN", out)
+    outside_L_NTKernels.write(s"$prefix/outside_L_NT", out)
+    outside_R_NTKernels.write(s"$prefix/outside_R_NT", out)
+    outside_L_TNKernels.write(s"$prefix/outside_L_TN", out)
+    outside_R_TNKernels.write(s"$prefix/outside_R_TN", out)
+    outside_L_TTKernels.write(s"$prefix/outside_L_TT", out)
+    outside_R_TTKernels.write(s"$prefix/outside_R_TT", out)
+    outsideNUKernels.write(s"$prefix/outsideNU", out)
+    outsideTUKernels.write(s"$prefix/outsideTU", out)
   }
 }
 
 object CLOutsideKernels {
 
-  def read(in: ZipFile)(implicit context: CLContext) = {
-    val outside_L_NN = CLBinaryRuleUpdater.read(in, "outside_L_NN")
-    val outside_R_NN = CLBinaryRuleUpdater.read(in, "outside_R_NN")
-    val outside_L_NT = CLBinaryRuleUpdater.read(in, "outside_L_NT")
-    val outside_R_NT = CLBinaryRuleUpdater.read(in, "outside_R_NT")
-    val outside_L_TN = CLBinaryRuleUpdater.read(in, "outside_L_TN")
-    val outside_R_TN = CLBinaryRuleUpdater.read(in, "outside_R_TN")
-    val outside_L_TT = CLBinaryRuleUpdater.read(in, "outside_L_TT")
-    val outside_R_TT = CLBinaryRuleUpdater.read(in, "outside_R_TT")
-    val outsideNU = CLUnaryRuleUpdater.read(in, "outsideNU")
-    val outsideTU = CLUnaryRuleUpdater.read(in, "outsideTU")
+  def read(prefix: String, in: ZipFile)(implicit context: CLContext) = {
+    val outside_L_NN = CLBinaryRuleUpdater.read(in, s"$prefix/outside_L_NN")
+    val outside_R_NN = CLBinaryRuleUpdater.read(in, s"$prefix/outside_R_NN")
+    val outside_L_NT = CLBinaryRuleUpdater.read(in, s"$prefix/outside_L_NT")
+    val outside_R_NT = CLBinaryRuleUpdater.read(in, s"$prefix/outside_R_NT")
+    val outside_L_TN = CLBinaryRuleUpdater.read(in, s"$prefix/outside_L_TN")
+    val outside_R_TN = CLBinaryRuleUpdater.read(in, s"$prefix/outside_R_TN")
+    val outside_L_TT = CLBinaryRuleUpdater.read(in, s"$prefix/outside_L_TT")
+    val outside_R_TT = CLBinaryRuleUpdater.read(in, s"$prefix/outside_R_TT")
+    val outsideNU = CLUnaryRuleUpdater.read(in, s"$prefix/outsideNU")
+    val outsideTU = CLUnaryRuleUpdater.read(in, s"$prefix/outsideTU")
     CLOutsideKernels(outside_L_NN, outside_R_NN,
       outside_L_NT, outside_R_NT,
       outside_L_TN, outside_R_TN,

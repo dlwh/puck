@@ -14,7 +14,7 @@ import epic.parser._
 import breeze.config.CommandLineParser
 import epic.trees._
 import java.io._
-import java.util.zip.{ZipFile, ZipOutputStream}
+import java.util.zip.{ZipEntry, ZipFile, ZipOutputStream}
 import scala.collection.mutable.ArrayBuffer
 import epic.parser.SimpleRefinedGrammar.CloseUnaries
 import epic.parser.projections.{ProjectionIndexer, GrammarRefinements, ParserChartConstraintsFactory, ConstraintCoreGrammarAdaptor}
@@ -26,7 +26,7 @@ import epic.trees.NullaryTree
 import epic.trees.BinaryTree
 import epic.trees.annotations.Xbarize
 import epic.trees.Span
-import scala.io.Source
+import scala.io.{Codec, Source}
 import epic.lexicon.Lexicon
 import breeze.util.Index
 import org.bridj.Pointer
@@ -889,7 +889,7 @@ object CLParser extends Logging {
                     justInsides: Boolean = false,
                     noExtraction: Boolean = false,
                     mem: String = "1g",
-                    reproject: Boolean = true,
+                    reproject: Boolean = false,
                     viterbi: Boolean = true,
                     logsum: Boolean = false,
                     numToDrop: Int = 0,
@@ -921,74 +921,62 @@ object CLParser extends Logging {
     val gold = params.treebank.trainTrees.filter(_.words.length <= maxParseLength).drop(numToDrop).take(numToParse)
     val toParse =  gold.map(_.words)
 
-    var grammars: IndexedSeq[SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String]] = if (textGrammarPrefix == null) {
-      IndexedSeq(GenerativeParser.annotated(annotator, transformed))
-    } else {
-      val paths = textGrammarPrefix.split(":")
-      paths.zipWithIndex.map{ case (f,i) => SimpleRefinedGrammar.parseBerkeleyText(f,  -12, CloseUnaries.None)}
-    }
-
-    if(reproject && grammars.length > 1) {
-      val (newc, newr) = reprojectGrammar(grammars.head, textGrammarPrefix.split(":").head, grammars.last, textGrammarPrefix.split(":").last)
-      grammars = IndexedSeq(newc, newr)
-    }
-
-    val grammar = grammars.last
-
-    var parserData:CLParserData[AnnotatedLabel, AnnotatedLabel, String] = if (cache && codeCache != null && codeCache.exists()) {
-      CLParserData.read(new ZipFile(codeCache))
-    } else {
-      null
-    }
 
     val defaultGenerator = GenType.CoarseParent
     val prunedGenerator = GenType.CoarseParent
 
     val finePassSemiring = if(viterbi) {
       ViterbiRuleSemiring
+    } else if (logsum) {
+      LogSumRuleSemiring
     } else {
-      if (logsum) {
-    	  LogSumRuleSemiring
-      } else {
-    	  RealSemiring
-      }
+      RealSemiring
     }
 
-    if (parserData == null || parserData.grammar.signature != grammar.signature) {
-      println("Regenerating parser data")
-      val gen = if(grammars.length > 1) prunedGenerator else defaultGenerator
-      parserData =  CLParserData.make(grammar, gen, directWrite = true, finePassSemiring)
-      if (cache && codeCache != null) {
-        parserData.write(new BufferedOutputStream(new FileOutputStream(codeCache)))
+    val parserDatas: IndexedSeq[CLParserData[AnnotatedLabel, AnnotatedLabel, String]] = if (cache && codeCache != null && codeCache.exists()) {
+      CLParserData.readSequence[AnnotatedLabel, AnnotatedLabel, String](new ZipFile(codeCache))
+    } else if (textGrammarPrefix == null) {
+      IndexedSeq(CLParserData.make(GenerativeParser.annotated(annotator, transformed), defaultGenerator, true, finePassSemiring))
+    } else {
+      val paths = textGrammarPrefix.split(":")
+      var grammars = paths.zipWithIndex.map{ case (f,i) => SimpleRefinedGrammar.parseBerkeleyText(f,  -12, CloseUnaries.None)}
+      if(reproject && grammars.length > 1) {
+        val (newc, newr) = reprojectGrammar(grammars.head, textGrammarPrefix.split(":").head, grammars.last, textGrammarPrefix.split(":").last)
+        grammars = Array(newc, newr)
       }
+
+      val fineLayer =  CLParserData.make(grammars.last, if(grammars.length > 1) prunedGenerator else defaultGenerator, true, finePassSemiring)
+      val coarseGrammars = grammars.dropRight(1)
+      val coarseData = coarseGrammars.map(CLParserData.make(_,  defaultGenerator, directWrite = true, ViterbiRuleSemiring))
+
+      coarseData :+ fineLayer
     }
 
-    val allData = grammars.dropRight(1).map(CLParserData.make(_,  defaultGenerator, directWrite = true, ViterbiRuleSemiring)) :+ parserData
-
+    if (cache && !codeCache.exists() && codeCache != null) {
+      CLParserData.writeSequence(codeCache, parserDatas)
+    }
 
     val kern = {
-      fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](allData, profile, parseMemString(mem))
+      fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](parserDatas, profile, parseMemString(mem))
     }
+
+    val grammars = parserDatas.map(_.grammar)
 
 
     val parser = if(grammars.length > 1) {
-      Parser(new ConstraintCoreGrammarAdaptor(grammar.grammar, grammar.lexicon, new ParserChartConstraintsFactory(Parser(grammars.head, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate)),
-        grammar,
+      val gr = grammars.last
+      Parser(new ConstraintCoreGrammarAdaptor(gr.grammar, gr.lexicon, new ParserChartConstraintsFactory(Parser(grammars.head, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate)),
+        gr,
         if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
     } else {
+      val grammar = grammars.last
       Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
     }
 
     if(evalReference) {
       val res = ParserTester.evalParser(gold, parser, "cpu-reference", 4)
       println(res)
-//      val parses = toParse.par.map(parser.bestParse).toIndexedSeq
-//      println(eval(parses zip gold.map(_.tree) zip toParse, printTrees))
-//      System.exit(0)
     }
-
-
-
 
     if (justInsides || checkPartitions) {
       val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
@@ -1175,19 +1163,17 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
   def numSyms = structure.nontermIndex.size max structure.termIndex.size
   def maskSize = masks.maskSize
 
-  def write(out: OutputStream) {
-    val zout = new ZipOutputStream(out)
-    ZipUtil.serializedEntry(zout, "grammar", grammar)
-    ZipUtil.serializedEntry(zout, "structure", structure)
-    ZipUtil.serializedEntry(zout, "semiring", semiring)
-    inside.write(zout)
-    outside.write(zout)
-    util.write(zout)
-    masks.write(zout)
-    mbr.write(zout)
-    viterbi.write(zout)
-    scaling.write(zout)
-    zout.close()
+  def write(prefix:String, zout: ZipOutputStream) {
+    ZipUtil.serializedEntry(zout, s"$prefix/grammar", grammar)
+    ZipUtil.serializedEntry(zout, s"$prefix/structure", structure)
+    ZipUtil.serializedEntry(zout, s"$prefix/semiring", semiring)
+    inside.write(prefix, zout)
+    outside.write(prefix, zout)
+    util.write(prefix, zout)
+    masks.write(prefix, zout)
+    mbr.write(prefix, zout)
+    viterbi.write(prefix, zout)
+    scaling.write(prefix, zout)
   }
 }
 
@@ -1215,18 +1201,35 @@ object CLParserData {
     new CLParserData(grammar, structure, semi, inside, outside, masks, viterbi, mbr, scaling, util)
   }
 
-  def read[C, L, W](file: ZipFile)(implicit context: CLContext) = {
-    val gr = ZipUtil.deserializeEntry[SimpleRefinedGrammar[C, L, W]](file.getInputStream(file.getEntry("grammar")))
-    val structure = ZipUtil.deserializeEntry[RuleStructure[C, L]](file.getInputStream(file.getEntry("structure")))
-    val semiring = ZipUtil.deserializeEntry[RuleSemiring](file.getInputStream(file.getEntry("semiring")))
-    val inside = CLInsideKernels.read(file)
-    val outside = CLOutsideKernels.read(file)
-    val util = CLParserUtils.read(file)
-    val masks = CLMaskKernels.read(file)
-    val mbr = CLMBRKernels.read(file)
-    val viterbi = CLViterbi.read(file)
-    val scaling = CLScalingKernels.read(file)
+  def read[C, L, W](prefix: String, file: ZipFile)(implicit context: CLContext): CLParserData[C, L, W] = {
+    val gr = ZipUtil.deserializeEntry[SimpleRefinedGrammar[C, L, W]](file.getInputStream(file.getEntry(s"$prefix/grammar")))
+    val structure = ZipUtil.deserializeEntry[RuleStructure[C, L]](file.getInputStream(file.getEntry(s"$prefix/structure")))
+    val semiring = ZipUtil.deserializeEntry[RuleSemiring](file.getInputStream(file.getEntry(s"$prefix/semiring")))
+    val inside = CLInsideKernels.read(prefix, file)
+    val outside = CLOutsideKernels.read(prefix, file)
+    val util = CLParserUtils.read(prefix, file)
+    val masks = CLMaskKernels.read(prefix, file)
+    val mbr = CLMBRKernels.read(prefix, file)
+    val viterbi = CLViterbi.read(prefix, file)
+    val scaling = CLScalingKernels.read(prefix, file)
 
     CLParserData(gr, structure, semiring, inside, outside, masks, viterbi, mbr, scaling, util)
+  }
+
+  def readSequence[C, L, W](file: ZipFile)(implicit context: CLContext):IndexedSeq[CLParserData[C, L, W]] = {
+    val parsers = Source.fromInputStream(file.getInputStream(file.getEntry("parserNames")))(Codec.UTF8).getLines().map(_.trim).toArray
+    for(p <- parsers) yield read[C, L, W](p, file)
+  }
+
+  def writeSequence[C, L, W](file: File, parsers: Seq[CLParserData[C, L, W]])(implicit context: CLContext) = {
+    val out = new ZipOutputStream(new FileOutputStream(file))
+    val names = Array.tabulate(parsers.length)(x => s"parser-$x")
+    ZipUtil.addEntry(out, "parserNames", names.mkString("\n").getBytes("UTF-8"))
+
+    for( (d, n) <- parsers zip names) {
+      d.write(n, out)
+    }
+
+    out.close()
   }
 }

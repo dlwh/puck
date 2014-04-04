@@ -23,6 +23,7 @@ class CLParserTest extends FunSuite {
 
   test("pruning test") {
     implicit val clcontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.MaxComputeUnits)
+    println("pruning " + clcontext)
     val grammar = ParserTestHarness.grammar
     val data = CLParserData.make(grammar, GenType.CoarseParent, true, ViterbiRuleSemiring)
     val parser = new CLParser(IndexedSeq(data, data), maxAllocSize = 40 * 1024 * 1024, profile = false)

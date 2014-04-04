@@ -71,14 +71,14 @@ case class CLViterbi(wgSize: Array[Int], kernel: CLKernel,
   }
 
 
-  def write(out: ZipOutputStream) {
-    ZipUtil.addKernel(out, "computeViterbiKernel", kernel)
-    ZipUtil.serializedEntry(out, "ViterbiWGSize", wgSize)
-    ZipUtil.serializedEntry(out, "ViterbiParents", parentOffsets)
-    ZipUtil.serializedEntry(out, "ViterbiLeft", ruleLefts)
-    ZipUtil.serializedEntry(out, "ViterbiRight", ruleRights)
-    ZipUtil.serializedEntry(out, "ViterbiScores", ruleScores)
-    ZipUtil.serializedEntry(out, "ViterbiOffsets", Array(BinaryOffsetsNN, BinaryOffsetsNT, BinaryOffsetsTN, BinaryOffsetsTT, UnaryOffsets, UnaryOffsetsT))
+  def write(prefix: String, out: ZipOutputStream) {
+    ZipUtil.addKernel(out, s"$prefix/computeViterbiKernel", kernel)
+    ZipUtil.serializedEntry(out, s"$prefix/ViterbiWGSize", wgSize)
+    ZipUtil.serializedEntry(out, s"$prefix/ViterbiParents", parentOffsets)
+    ZipUtil.serializedEntry(out, s"$prefix/ViterbiLeft", ruleLefts)
+    ZipUtil.serializedEntry(out, s"$prefix/ViterbiRight", ruleRights)
+    ZipUtil.serializedEntry(out, s"$prefix/ViterbiScores", ruleScores)
+    ZipUtil.serializedEntry(out, s"$prefix/ViterbiOffsets", Array(BinaryOffsetsNN, BinaryOffsetsNT, BinaryOffsetsTN, BinaryOffsetsTT, UnaryOffsets, UnaryOffsetsT))
   }
 
 
@@ -259,15 +259,15 @@ case class CLViterbi(wgSize: Array[Int], kernel: CLKernel,
 }
 
 object CLViterbi {
-  def read(zf: ZipFile)(implicit ctxt: CLContext) = {
-    val wgSize = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("ViterbiWGSize")))
-    val offsets@Array(binaryOffsetsNN, binaryOffsetsNT, binaryOffsetsTN, binaryOffsetsTT, unaryOffsets, unaryOffsetsT) = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("ViterbiOffsets")))
-    val parentOffsets = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("ViterbiParents")))
-    val ruleLefts = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("ViterbiLeft")))
-    val ruleRights = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("ViterbiRight")))
-    val ruleScores = ZipUtil.deserializeEntry[Array[Float]](zf.getInputStream(zf.getEntry("ViterbiScores")))
+  def read(prefix: String, zf: ZipFile)(implicit ctxt: CLContext) = {
+    val wgSize = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry(s"$prefix/ViterbiWGSize")))
+    val offsets@Array(binaryOffsetsNN, binaryOffsetsNT, binaryOffsetsTN, binaryOffsetsTT, unaryOffsets, unaryOffsetsT) = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry(s"$prefix/ViterbiOffsets")))
+    val parentOffsets = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry(s"$prefix/ViterbiParents")))
+    val ruleLefts = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry(s"$prefix/ViterbiLeft")))
+    val ruleRights = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry(s"$prefix/ViterbiRight")))
+    val ruleScores = ZipUtil.deserializeEntry[Array[Float]](zf.getInputStream(zf.getEntry(s"$prefix/ViterbiScores")))
     CLViterbi(wgSize,
-      ZipUtil.readKernel(zf, "computeViterbiKernel"), parentOffsets, ruleScores, ruleLefts, ruleRights,
+      ZipUtil.readKernel(zf, s"$prefix/computeViterbiKernel"), parentOffsets, ruleScores, ruleLefts, ruleRights,
     binaryOffsetsNN, binaryOffsetsNT, binaryOffsetsTN, binaryOffsetsTT, unaryOffsets, unaryOffsetsT)
   }
 

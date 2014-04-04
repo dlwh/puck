@@ -12,12 +12,12 @@ import puck.parser.{LogSumRuleSemiring, ViterbiRuleSemiring, RuleSemiring, RuleS
 case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKernel, setRootScoresKernel: CLKernel,
                          getRootScoresKernel: CLKernel,
                          splitPointsBlockSize: Int, groupSize: Int) {
-  def write(out: ZipOutputStream) {
-    ZipUtil.addKernel(out, "sumGrammarKernel", sumGrammarKernel)
-    ZipUtil.addKernel(out, "sumSplitPointsKernel", sumSplitPointsKernel)
-    ZipUtil.addKernel(out, "setRootScoresKernel", setRootScoresKernel)
-    ZipUtil.addKernel(out, "getRootScoresKernel", getRootScoresKernel)
-    ZipUtil.serializedEntry(out, "ints", Array(splitPointsBlockSize, groupSize))
+  def write(prefix: String, out: ZipOutputStream) {
+    ZipUtil.addKernel(out, s"$prefix/sumGrammarKernel", sumGrammarKernel)
+    ZipUtil.addKernel(out, s"$prefix/sumSplitPointsKernel", sumSplitPointsKernel)
+    ZipUtil.addKernel(out, s"$prefix/setRootScoresKernel", setRootScoresKernel)
+    ZipUtil.addKernel(out, s"$prefix/getRootScoresKernel", getRootScoresKernel)
+    ZipUtil.serializedEntry(out, s"$prefix/ints", Array(splitPointsBlockSize, groupSize))
   }
 
   def sumSplitPoints(parent: CLMatrix[Float], chart: CLMatrix[Float], chartIndices: CLBuffer[Integer], numUniqueParents: Int, splitPointIndicesIntoWorkArray: CLBuffer[Integer], uniqueIndicesPerGroup: Int, numSymsToDo: Int, events: CLEvent*)(implicit queue: CLQueue) = {
@@ -66,8 +66,8 @@ case class CLParserUtils(sumGrammarKernel: CLKernel, sumSplitPointsKernel: CLKer
 }
 
 object CLParserUtils {
-  def read(zf: ZipFile)(implicit ctxt: CLContext) = {
-    val structure = ZipUtil.deserializeEntry[RuleStructure[_, _]](zf.getInputStream(zf.getEntry("structure")))
+  def read(prefix: String, zf: ZipFile)(implicit ctxt: CLContext) = {
+    val structure = ZipUtil.deserializeEntry[RuleStructure[_, _]](zf.getInputStream(zf.getEntry(s"$prefix/structure")))
     implicit val semi = ViterbiRuleSemiring
     make(structure)
 //    val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("ints")))

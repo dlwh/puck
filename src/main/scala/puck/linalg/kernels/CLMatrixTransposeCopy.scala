@@ -204,6 +204,7 @@ __kernel void transpose_copy_out(
 
 
   wait_group_events(1, &copyFirstPtr);
+  barrier(CLK_LOCAL_MEM_FENCE);
 
   // each block[i] now contains the slice src(firstSrcRow --> nRowsToDo, firstSrcCol + i)
   // we want to move src(firstSrcRow, ::) to dst(::, dstPtrs(firstSrcRow))

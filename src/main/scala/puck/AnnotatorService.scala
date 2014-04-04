@@ -69,7 +69,7 @@ object AnnotatorService {
   def fromFunction[In, Out](f: In=>Out)(implicit context: ExecutionContext) = new FunctionAnnotatorService(f)
 
   def fromBatchFunction[In, Out](f: IndexedSeq[In]=>IndexedSeq[Out],
-                                 flushInterval: Duration = Duration(1, TimeUnit.SECONDS))(implicit context: ExecutionContext) = {
+                                 flushInterval: Duration = Duration(1, TimeUnit.SECONDS))(implicit context: ExecutionContext): BatchFunctionAnnotatorService[In, Out] = {
     new BatchFunctionAnnotatorService(f, flushInterval)
   }
 
