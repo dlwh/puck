@@ -57,7 +57,7 @@ class CLMatrixTransposeCopy private(wgSize: Array[Int], kernel: CLKernel, kernel
     val ptr = Pointer.pointerToArray[java.lang.Integer](dstColPointers)
     val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, numCols)
     val ev = intBuffer.write(queue, 0, numCols, ptr, false, events:_*)
-    val res = permuteTransposeCopyOut(dst, intBuffer.asInstanceOf[CLBuffer[Int]], numCols, src, ev)
+    val res = permuteTransposeCopyOut(dst, intBuffer.asInstanceOf[CLBuffer[Int]], 0, numCols, src, ev)
     res.invokeUponCompletion(new Runnable() {
       def run() = { ptr.release(); intBuffer.release() }
     })
@@ -65,16 +65,16 @@ class CLMatrixTransposeCopy private(wgSize: Array[Int], kernel: CLKernel, kernel
   }
 
   def permuteTransposeCopyOut(dst: CLMatrix[Float],
-                              dstColPointers: CLBuffer[Int], numCols: Int,
+                              dstColPointers: CLBuffer[Int], dstColOffset: Int, numCols: Int,
                               src: CLMatrix[Float],
                               events: CLEvent*)(implicit queue: CLQueue):CLEvent = synchronized {
     require(dst.rows == src.cols)
     require(dst.isTranspose == src.isTranspose)
-    assert(numCols == src.rows)
+    assert(numCols == src.rows, s"numCols $numCols does not match src rows ${src.rows}")
 
     kernelOut.setArgs(
       dst.data.safeBuffer, Integer.valueOf(dst.offset), Integer.valueOf(dst.majorStride), 
-      dstColPointers,
+      dstColPointers, Integer.valueOf(dstColOffset),
       src.data.safeBuffer, Integer.valueOf(src.offset), Integer.valueOf(src.majorStride), 
       Integer.valueOf(numCols),
       Integer.valueOf(src.cols))
@@ -168,11 +168,13 @@ __kernel void transpose_copy(__global T* _dst, int dstOff, int dstMajorStride,
 }
 
 __kernel void transpose_copy_out(
-      __global T* _dst, int dstOff, int dstMajorStride, __global int* dstPtrs,
+      __global T* _dst, int dstOff, int dstMajorStride,
+       __global int* _dstPtrs, int dstColOffset,
       __global T* _src, int srcOff, int srcMajorStride, 
       int srcRows, int srcCols) {
   // copy each col into block[i]
   __local T block[BLOCK_SIZE][BLOCK_SIZE+1]; // + 1 to avoid bank conflicts
+  __global int* dstPtrs = _dstPtrs + dstColOffset;
 
   __global T* dst = _dst + dstOff;
   __global T* src = _src + srcOff;

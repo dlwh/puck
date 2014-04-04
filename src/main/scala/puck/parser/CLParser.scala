@@ -98,7 +98,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def parse(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("parse", sentences.length) {
-        withWorkSpace { workspace =>
+        withWorkSpace(mask.hasMasks) {workspace =>
           workspace.getBatches(sentences, mask).iterator.flatMap { batch =>
             var ev = inside(workspace, batch)
 
@@ -124,7 +124,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def insideOutside(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("parse", sentences.length) {
-        withWorkSpace { workspace =>
+        withWorkSpace(mask.hasMasks) { workspace =>
           workspace.getBatches(sentences, mask).iterator.foreach { batch =>
             var ev = inside(workspace, batch)
             ev = outside(workspace, batch, ev)
@@ -135,14 +135,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
     }
 
-    private def withWorkSpace[B](w: WorkSpace=>B) = {
+    private def withWorkSpace[B](hasMasks: Boolean)(w: WorkSpace=>B) = {
       val myCellSize:Int = roundUpToMultipleOf(data.numSyms, 32)
-      resource.managed(WorkSpace.allocate(myCellSize, data.maskSize)).acquireAndGet(w)
+      resource.managed(WorkSpace.allocate(myCellSize, data.maskSize, maxAllocSize, if(hasMasks) 8 else 7)).acquireAndGet(w)
     }
 
     def partitions(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("partitions", sentences.length) {
-         withWorkSpace { workspace =>
+         withWorkSpace(mask.hasMasks) {workspace =>
           workspace.getBatches(sentences, mask).iterator.flatMap { batch =>
             var ev = inside(workspace, batch)
             val dest = context.createFloatBuffer(CLMem.Usage.Output, sentences.length)
@@ -161,7 +161,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def updateMasks(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask): PruningMask = synchronized {
       logTime("masks", sentences.length) {
-        withWorkSpace { workspace =>
+        withWorkSpace(mask.hasMasks) {workspace =>
           val masks = workspace.getBatches(sentences, mask).iterator.map {  batch =>
             workspace.maskCharts.assignAsync(-1).waitFor()
             val mask = computePruningMasks(workspace, batch):PruningMask
@@ -396,8 +396,17 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
 
       val ev2 = pPtrBuffer.writeArray(queue, pArray, totalLength, events:_*) profileIn hdTransferEvents
-      val ev = devLeft(0 until totalLength, ::).writeFrom(tagScores, false, ev2) map (_ profileIn  hdTransferEvents)
-      transposeCopy.permuteTransposeCopyOut(devInside,  pPtrBuffer, totalLength, devLeft(0 until totalLength, ::), (ev2 +: ev):_*) profileIn posEvents
+      var offset = 0
+      var ev = ev2
+      while(offset < totalLength) {
+        val toDoThisTime = math.min(devLeft.rows, totalLength - offset)
+        val evW = devLeft(0 until toDoThisTime, ::).writeFrom(tagScores(offset until offset + toDoThisTime, ::), false, ev) map (_ profileIn  hdTransferEvents)
+        ev = transposeCopy.permuteTransposeCopyOut(devInside,  pPtrBuffer, offset, toDoThisTime, devLeft(0 until toDoThisTime, ::), evW:_*) profileIn posEvents
+        val wl = transposeCopy.permuteTransposeCopy(devRight(0 until toDoThisTime, ::), devInside, pPtrBuffer, offset, toDoThisTime, ev) profileIn transferEvents
+        ev = wl
+        offset += toDoThisTime
+      }
+      ev
     }
 
     private def computeMasks(workspace: WorkSpace, batch: Batch[W], threshold: Float, events: CLEvent*):CLEvent = synchronized {
@@ -644,7 +653,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         pArray(queueSize) = parent
         queueSize += 1
         if (queueSize >= workspace.lArray.length)  {
-          logger.debug(s"flush unaries!")
           flushQueue(workspace, batch, span, events)
         } else {
           events
@@ -657,19 +665,19 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         var ev = _ev
         var offset = 0
 
+        val evp = pPtrBuffer.writeArray(queue, pArray, queueSize, ev:_*) profileIn hdTransferEvents
+        val evl = lPtrBuffer.writeArray(queue, lArray, queueSize, ev:_*) profileIn hdTransferEvents
+
         while (offset < queueSize) {
+          if(offset != 0) println("uflush!")
           val toDoThisTime = math.min(numWorkCells, queueSize - offset)
           val zz = zmk.shapedFill(devRight(0 until toDoThisTime, ::), zero, ev:_*) profileIn memFillEvents
 
+          val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until toDoThisTime, ::), scoreMatrix, lPtrBuffer, offset, toDoThisTime, evl) profileIn transferEvents
 
-          val evp = pPtrBuffer.writeArray(queue, pArray, toDoThisTime, ev:_*) profileIn hdTransferEvents
-          val evl = lPtrBuffer.writeArray(queue, lArray, toDoThisTime, ev:_*) profileIn hdTransferEvents
+          val endEvents = kernels.update(unaryEvents, devRight(0 until toDoThisTime, ::), parentScale, pPtrBuffer, offset, devLeft(0 until toDoThisTime, ::), childScale, lPtrBuffer, offset, wl, zz, evp)
 
-          val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until toDoThisTime, ::), scoreMatrix, lPtrBuffer, 0, toDoThisTime, evl) profileIn transferEvents
-
-          val endEvents = kernels.update(unaryEvents, devRight(0 until toDoThisTime, ::), parentScale, pPtrBuffer, devLeft(0 until toDoThisTime, ::), childScale, lPtrBuffer, 0, wl, zz, evp)
-
-          val evu = transposeCopy.permuteTransposeCopyOut(scoreMatrix, pPtrBuffer, toDoThisTime, devRight(0 until toDoThisTime, ::), (evp +: endEvents):_*) profileIn unarySumEvents
+          val evu = transposeCopy.permuteTransposeCopyOut(scoreMatrix, pPtrBuffer, offset, toDoThisTime, devRight(0 until toDoThisTime, ::), (evp +: endEvents):_*) profileIn unarySumEvents
           ev = Seq(evu)
 
           offset += toDoThisTime

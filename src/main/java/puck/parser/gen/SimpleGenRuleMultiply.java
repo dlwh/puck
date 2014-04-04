@@ -247,7 +247,8 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         sb.append(String.format(
                 " __kernel void %s(__global volatile float* parents," +
                         "__global const float* parentScale," +
-                        "                  __global int* parentIndex, " + // cell offset into parents column if writeDirect, and always parentScale
+                        "                  __global int* _parentIndex, " + // cell offset into parents column if writeDirect, and always parentScale
+                        "                 int parentOff, " +
                         " __global float* child, " +
                         "__global const float* childScale," +
                         "                  __global int* _childIndex, " + // cell offset into childs column if writeDirect, and always childScale
@@ -263,6 +264,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 
         if(semiring.needsScaling()) {
             sb.append("__global int* childIndex = _childIndex + childOff;");
+            sb.append("__global int* parentIndex = _parentIndex + parentOff;");
             sb.append("float scale = native_exp(-parentScale[parentIndex[row]] + childScale[childIndex[row]]);");
         } else {
             sb.append("float scale = 1.0f;");

@@ -5,6 +5,7 @@ import puck.linalg.CLMatrix
 import java.io.Closeable
 import breeze.collection.mutable.TriangularArray
 import scala.collection.mutable.ArrayBuffer
+import com.typesafe.scalalogging.slf4j.Logging
 
 /**
  *
@@ -14,7 +15,7 @@ import scala.collection.mutable.ArrayBuffer
 class WorkSpace(val numWorkCells: Int,
                 val numChartCells: Int,
                 val cellSize: Int,
-                val maskSize: Int)(implicit context: CLContext, queue: CLQueue) extends Closeable {
+                val maskSize: Int)(implicit context: CLContext, queue: CLQueue) extends Logging with Closeable {
 
   def getBatches[W](sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask = NoPruningMask): IndexedSeq[Batch[W]] = {
     val result = ArrayBuffer[Batch[W]]()
@@ -22,7 +23,7 @@ class WorkSpace(val numWorkCells: Int,
     var currentCellTotal = 0
     for ( (s, i) <- sentences.zipWithIndex) {
       currentCellTotal += TriangularArray.arraySize(s.length) * 2
-      if (currentCellTotal > devInside.cols) {
+      if (currentCellTotal > devInside.cols || current.length >= numWorkCells) {
         currentCellTotal -= TriangularArray.arraySize(s.length) * 2
         assert(current.nonEmpty)
         result += createBatch(current, masks.slice(i - current.length, i))
@@ -42,7 +43,7 @@ class WorkSpace(val numWorkCells: Int,
 
   private def createBatch[W](sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask): Batch[W] = {
     val batch = Batch[W](sentences, devInside, devOutside, masks)
-    println(f"Batch size of ${sentences.length}, ${batch.numCellsUsed} cells used, total inside ${batch.numCellsUsed * cellSize * 4.0/1024/1024}%.2fM  ")
+    logger.info(f"Batch size of ${sentences.length}, ${batch.numCellsUsed} cells used, total inside ${batch.numCellsUsed * cellSize * 4.0/1024/1024}%.2fM  ")
     batch
   }
 
@@ -63,7 +64,6 @@ class WorkSpace(val numWorkCells: Int,
   val pArray, lArray, rArray = new Array[Int](numChartCells)
 //  val parentQueue, leftQueue, rightQueue = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
   val pPtrBuffer, lPtrBuffer, rPtrBuffer = context.createIntBuffer(CLMem.Usage.Input, numChartCells)
-  val devParentPtrs = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
   val queueOffsets = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
 
 
@@ -76,7 +76,6 @@ class WorkSpace(val numWorkCells: Int,
     devInside.release()
     devOutside.release()
 
-    devParentPtrs.release()
   }
 
 
