@@ -1,7 +1,7 @@
 package puck.parser
 
 import epic.trees.annotations.{Xbarize, TreeAnnotator}
-import epic.trees.{BinarizedTree, AnnotatedLabel}
+import epic.trees._
 import java.io.File
 import breeze.config.CommandLineParser
 import java.util.zip.ZipFile
@@ -47,7 +47,7 @@ object RunParser extends Logging {
 
     val parserData = CLParserData.readSequence[AnnotatedLabel, AnnotatedLabel, String](new ZipFile(params.grammar))
 
-    val parser = new CLParser(parserData, CLParser.parseMemString(mem))
+    val parser = new CLParser(parserData, CLParser.parseMemString(mem), profile = profile)
 
     val service: BatchFunctionAnnotatorService[IndexedSeq[String], BinarizedTree[AnnotatedLabel]] = AnnotatorService.fromBatchFunction(parser.parse(_))
 
@@ -57,13 +57,16 @@ object RunParser extends Logging {
 
     val consumedIndex = new AtomicLong()
     var producedIndex = 0L
+    val timeIn = System.currentTimeMillis()
 
     for(f <- fileIter; line <- f.getLines()) {
       val words = line.trim.split(" ")
       val i = producedIndex
       producedIndex += 1
-      service(words).foreach { tree =>
-        val rendered = tree.render(words)
+      service(words).foreach { guess =>
+        val tree: Tree[String] = AnnotatedLabelChainReplacer.replaceUnaries(guess).map(_.label)
+        val guessTree = Trees.debinarize(Trees.deannotate(tree))
+        val rendered = guessTree.render(words, newline = false)
         consumedIndex.synchronized {
           while (consumedIndex.get() != i) {
             consumedIndex.wait()
@@ -74,12 +77,17 @@ object RunParser extends Logging {
         }
       }
     }
+    service.flush()
 
     consumedIndex.synchronized {
       while (consumedIndex.get() != producedIndex) {
         consumedIndex.wait()
       }
     }
+
+    val timeOut = System.currentTimeMillis()
+    val wallTime = (timeOut - timeIn) / 1E3
+    logger.info(f"Parsing took ${wallTime}s seconds. ${producedIndex/wallTime}%.3f sentences per second.")
 
 
 
