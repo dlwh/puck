@@ -1,10 +1,12 @@
 package puck.parser.gen
 
 import com.nativelibs4java.opencl._
-import puck.util.CLScan
+import puck.util.{ZipUtil, CLScan}
 import puck.parser.{PruningMask, Batch, WorkSpace}
 import org.bridj.Pointer
 import puck.parser.Batch
+import puck.PointerFreer
+import java.util.zip.{ZipFile, ZipOutputStream}
 
 /**
  *
@@ -14,30 +16,121 @@ import puck.parser.Batch
 class CLWorkQueueKernels(enqueueKernel: CLKernel)(implicit ctxt: CLContext) {
   private val scanKernel = CLScan.make
 
-  /*
   def enqueueDense[W](ws: WorkSpace,
-                      batch: Batch,
+                      batch: Batch[W],
                       spanLength: Int,
                       pTop: Boolean, lTop: Boolean, rTop: Boolean,
-                      events: CLEvent*)(implicit queue: CLQueue):CLEvent = synchronized {
-    def I(x: Boolean) = if(x) 1 else 0
-    enqueueKernel.setArgs(ws.pPtrBuffer, ws.lPtrBuffer, ws.rPtrBuffer, ws.devParentPtrs,
-      batch.cellOffsetsDev, batch.lengthsDev, null, null, Integer.valueOf(0), I(pTop), I(lTop), I(rTop), spanLength, Integer.valueOf(1))
-    val computeNeeded = enqueueKernel.enqueueNDRange(queue, Array(batch.numSentences), Array(1), events:_*)
-    val evScan = scanKernel.scan(ws.queueOffsets, ws.devParentPtrs, batch.numSentences, computeNeeded)
+                      events: CLEvent*)(implicit queue: CLQueue):(CLEvent, Int) = synchronized {
+    val scratch = ctxt.createIntBuffer(CLMem.Usage.InputOutput, batch.numSentences + 1)
+    def I(x: Boolean) = if(x) Integer.valueOf(1) else Integer.valueOf(0)
+    enqueueKernel.setArgs(ws.pPtrBuffer, ws.lPtrBuffer, ws.rPtrBuffer, scratch,
+      batch.cellOffsetsDev, batch.lengthsDev, null, null, Integer.valueOf(0), I(pTop), I(lTop), I(rTop), Integer.valueOf(spanLength), I(true))
+
+    val computeNeededEv = enqueueKernel.enqueueNDRange(queue, Array(batch.numSentences), Array(1), events:_*)
+
+    val evScan = scanKernel.scan(ws.queueOffsets, scratch, batch.numSentences, computeNeededEv)
+    PointerFreer.enqueue({scratch.release()}, evScan)
+
     enqueueKernel.setArg(3, ws.queueOffsets)
-    enqueueKernel.setArg(13, 1)
+    enqueueKernel.setArg(13, I(false))
 
-    enqueueKernel.enqueueNDRange(queue, Array(batch.numSentences), Array(1), evScan)
+    val res = enqueueKernel.enqueueNDRange(queue, Array(batch.numSentences), Array(1), evScan)
+    val numNeeded = scratch.read(queue, batch.numSentences, 1, evScan).get()
 
+    (res, numNeeded.intValue())
   }
-  */
 
-
-
+  def write(prefix: String, out: ZipOutputStream) {
+    ZipUtil.addKernel(out, s"$prefix/enqueue", enqueueKernel)
+  }
 }
 
 object CLWorkQueueKernels {
+  def forLoopType(numCoarseSyms: Int, loopType: LoopType)(implicit ctxt: CLContext):CLWorkQueueKernels = {
+    loopType match {
+      case LoopType.Inside => forInside(numCoarseSyms)
+      case LoopType.OutsideL => forOutsideL(numCoarseSyms)
+      case LoopType.OutsideR => forOutsideR(numCoarseSyms)
+      case LoopType.OutsideRTerm => forOutsideRTerm(numCoarseSyms)
+      case LoopType.OutsideLTerm => forOutsideLTerm(numCoarseSyms)
+    }
+  }
+
+  def forSplitRange(numCoarseSyms: Int, splitRangeFunc: String)(implicit ctxt: CLContext):CLWorkQueueKernels = {
+    val text = this.text(numCoarseSyms) + "\n\n\n" + splitRangeFunc
+
+    val prg = ctxt.createProgram(text).build()
+    val k = prg.createKernel("enqueue")
+    new CLWorkQueueKernels(k)
+  }
+
+  def read(prefix: String, in: ZipFile)(implicit context: CLContext) = {
+    val k = ZipUtil.readKernel(in, s"$prefix/enqueue")
+    new CLWorkQueueKernels(k)
+  }
+
+  def forInside(numCoarseSyms: Int)(implicit ctxt: CLContext) = {
+    forSplitRange(numCoarseSyms, insideSplitRange)
+  }
+
+  def forOutsideL(numCoarseSyms: Int)(implicit ctxt: CLContext) = {
+    forSplitRange(numCoarseSyms, outsideLSplitRange)
+  }
+
+  def forOutsideLTerm(numCoarseSyms: Int)(implicit ctxt: CLContext) = {
+    forSplitRange(numCoarseSyms, outsideLTermSplitRange)
+  }
+
+
+  def forOutsideR(numCoarseSyms: Int)(implicit ctxt: CLContext) = {
+    forSplitRange(numCoarseSyms, outsideRSplitRange)
+  }
+
+  def forOutsideRTerm(numCoarseSyms: Int)(implicit ctxt: CLContext) = {
+    forSplitRange(numCoarseSyms, outsideRTermSplitRange)
+  }
+
+
+  def insideSplitRange =
+    """
+      | range_t computeSplitRange(int begin, int end, int length) {
+      |   range_t r= {begin + 1, end - 1};
+      |   return r;
+      | }
+    """.stripMargin
+
+  def outsideRSplitRange =
+    """
+      | range_t computeSplitRange(int begin, int end, int length) {
+      |   range_t r = {0, begin};
+      |   return r;
+      | }
+    """.stripMargin
+
+  def outsideLSplitRange =
+    """
+      | range_t computeSplitRange(int begin, int end, int length) {
+      |   range_t r =  {end + 1, length};
+      |   return r;
+      | }
+    """.stripMargin
+
+  def outsideLTermSplitRange =
+    """
+      | range_t computeSplitRange(int begin, int end, int length) {
+      |   range_t r = {end + 1, end + 1};
+      |   return r;
+      | }
+    """.stripMargin
+
+  def outsideRTermSplitRange =
+    """
+      | range_t computeSplitRange(int begin, int end, int length) {
+      |   range_t r = {begin - 1, begin - 1};
+      |   return r;
+      | }
+    """.stripMargin
+
   def text(numCoarseSyms: Int) = CLMaskKernels.maskHeader(numCoarseSyms) +
     """
       | typedef struct { int low, high;} range_t;
@@ -48,8 +141,6 @@ object CLWorkQueueKernels {
       |    int span = end - begin - 1;
       |    return begin + span * length - span * (span - 1) / 2;
       | }
-      |
-      | __kernel void computeQueueOffsets(__global const int*
       |
       | __kernel void enqueue(__global int* parentQueue,
       |                       __global int* leftQueue,
@@ -67,12 +158,11 @@ object CLWorkQueueKernels {
       |                       int justComputeNumNeeded) {
       |   int sent = get_group_id(0);
       |   const int firstQueueOffset = (sent == 0) ? 0 : queueOffsets[sent - 1];
-      |   const int nextQueueOffset = queueOffsets[sent];
+      |   //const int nextQueueOffset = queueOffsets[sent];
       |   const int length = lengths[sent];
       |   const int cellOffset = cellOffsets[sent];
       |   const int lastCell = cellOffsets[sent + 1];
       |
-      |   int topChart = (lastCell - cellOffset)/2 + cellOffset;
       |   int topChart = (lastCell - cellOffset)/2 + cellOffset;
       |
       |   int parentOffset = (parentTop) ? topChart : cellOffset;
@@ -94,12 +184,12 @@ object CLWorkQueueKernels {
       |     int parentCell = parentOffset + computeCell(begin, end, length);
       |
       |     if(useMasks)
-      |       pMask = *masks[parentCell];
+      |       pMask = masks[parentCell];
       |
-      |     if(!useMasks || maskIntersects(&pMask, &tmask)) {
+      |     if(!useMasks || maskIntersects(&pMask, &tMask)) {
       |       range_t splitRange = computeSplitRange(begin, end, length);
       |
-      |       for(int split = splitRange.low; split < splitRange.high; ++split) {
+      |       for(int split = splitRange.low; split <= splitRange.high; ++split) {
       |          int leftCell = leftOffset + (
       |                             (split < begin) ? computeCell(split, begin, length)
       |                                             : computeCell(begin, split, length)
@@ -109,8 +199,18 @@ object CLWorkQueueKernels {
       |                                             : computeCell(end, split, length)
       |                           );
       |
+      |         int includeThisOne = useMasks;
+      |         if(!includeThisOne) {
+      |           lMask = masks[leftCell];
+      |           int doLeft = maskAny(&lMask);
+      |           if (doLeft) {
+      |             rMask = masks[rightCell];
+      |             int doRight = maskAny(&rMask);
+      |             if(doRight) includeThisOne = true;
+      |           }
+      |         }
       |
-      |         if(!useMasks || (maskAny(&(lMask = masks[leftCell])) && maskAny(&(rMask = masks[rightCell]))) {
+      |         if(includeThisOne) {
       |            if(justComputeNumNeeded) {
       |              numNeeded++;
       |            } else {

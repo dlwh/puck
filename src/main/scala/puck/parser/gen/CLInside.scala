@@ -75,13 +75,13 @@ object CLInsideKernels {
 //    val parserGen = new CoarseParentSymbolSegmentationGenRuleMultiply[C, L](structure)
 //	  val parserGen = new GreedySegmentationGenRuleMultiply[C, L](structure)
 //    val parserGen = new NoninlinedRuleMultiply(structure)
-    val insideNNKernels =  parserGen.binaryRuleApplication(structure.nontermRules, "inside_nn_binaries")
+    val insideNNKernels =  parserGen.binaryRuleApplication(structure.nontermRules, "inside_nn_binaries", LoopType.Inside)
 
-    val insideNTKernels =  parserGen.binaryRuleApplication(structure.rightTermRules, "inside_nt_binaries")
+    val insideNTKernels =  parserGen.binaryRuleApplication(structure.rightTermRules, "inside_nt_binaries", LoopType.Inside)
 
-    val insideTNKernels =  parserGen.binaryRuleApplication(structure.leftTermRules, "inside_tn_binaries")
+    val insideTNKernels =  parserGen.binaryRuleApplication(structure.leftTermRules, "inside_tn_binaries", LoopType.Inside)
 
-    val insideTTKernels =  parserGen.binaryRuleApplication(structure.bothTermRules, "inside_tt_binaries")
+    val insideTTKernels =  parserGen.binaryRuleApplication(structure.bothTermRules, "inside_tt_binaries", LoopType.Inside)
 
     val insideNUKernels =  parserGen.unaryRuleApplication(structure.unaryRules, "inside_n_unaries")
 

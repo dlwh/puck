@@ -4,6 +4,8 @@ import breeze.linalg.{DenseVector, DenseMatrix}
 import breeze.collection.mutable.TriangularArray
 import puck.linalg.CLMatrix
 import puck.util.BitHacks
+import com.nativelibs4java.opencl.{CLMem, CLContext}
+import org.bridj.Pointer
 
 /**
  * TODO
@@ -13,13 +15,16 @@ import puck.util.BitHacks
 private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
                                     devInside: CLMatrix[Float],
                                     devOutside: CLMatrix[Float],
-                                    masks: PruningMask) {
+                                    masks: PruningMask)(implicit ctxt: CLContext) {
   var partitionScales = DenseVector.zeros[Double](sentences.length)
 
   val cellOffsets = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2).toArray
 
   val lengths = sentences.map(_.length).toArray
   val lengthOffsets = lengths.scan(0)(_ + _)
+
+  lazy val cellOffsetsDev = ctxt.createIntBuffer(CLMem.Usage.Input, Pointer.pointerToInts(cellOffsets:_*))
+  lazy val lengthsDev = ctxt.createIntBuffer(CLMem.Usage.Input, Pointer.pointerToInts(lengths:_*))
 
   def numCellsUsed: Int = cellOffsets.last
 

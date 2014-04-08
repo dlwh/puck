@@ -19,11 +19,11 @@ import java.io.{FileOutputStream, File}
  * @author dlwh
  **/
 abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L], writeDirectToChart: Boolean) extends GenRuleMultiply[C, L] {
-  def javaBinaryRuleApplication(rules: util.List[IndexedBinaryRule[C, L]], name: String, context: CLContext):CLBinaryRuleUpdater
+  def javaBinaryRuleApplication(rules: util.List[IndexedBinaryRule[C, L]], name: String, context: CLContext, lt: LoopType):CLBinaryRuleUpdater
   def javaUnaryRuleApplication(rules: util.List[IndexedUnaryRule[C, L]], name: String, context: CLContext):CLUnaryRuleUpdater
 
-  def binaryRuleApplication(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLBinaryRuleUpdater = {
-    javaBinaryRuleApplication(rules.map((IndexedBinaryRule[C, L] _).tupled).asJava, name, cl)
+  def binaryRuleApplication(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String, loopType: LoopType)(implicit cl: CLContext): CLBinaryRuleUpdater = {
+    javaBinaryRuleApplication(rules.map((IndexedBinaryRule[C, L] _).tupled).asJava, name, cl, loopType)
   }
 
 

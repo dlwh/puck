@@ -10,6 +10,9 @@ import puck.parser.{CLUnaryRuleUpdater, CLBinaryRuleUpdater, SymId}
  * @author dlwh
  **/
 trait GenRuleMultiply[C, L] {
-  def binaryRuleApplication(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLBinaryRuleUpdater
-  def unaryRuleApplication(rules: IndexedSeq[(UnaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLUnaryRuleUpdater
+  def binaryRuleApplication(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)],
+                            name: String,
+                            loopType: LoopType)(implicit cl: CLContext): CLBinaryRuleUpdater
+  def unaryRuleApplication(rules: IndexedSeq[(UnaryRule[SymId[C, L]], Int)],
+                           name: String)(implicit cl: CLContext): CLUnaryRuleUpdater
 }

@@ -33,7 +33,9 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 
     public abstract List<IndexedBinaryRule<C, L>>[][] segmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules);
 
-    public CLBinaryRuleUpdater javaBinaryRuleApplication(List<IndexedBinaryRule<C, L>> indexedBinaryRules, String name, CLContext context) {
+    @Override
+    public CLBinaryRuleUpdater javaBinaryRuleApplication(List<IndexedBinaryRule<C, L>> indexedBinaryRules,
+                                                         String name, CLContext context, LoopType loop) {
         ArrayList<String> kernelTexts = new ArrayList<String>();
         List<IndexedBinaryRule<C, L>>[][] segments = segmentBinaries(indexedBinaryRules);
         boolean supportsExtendedAtomics =  supportsExtendedAtomics(context);
@@ -44,7 +46,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         List<RuleKernel> kernels = compileKernels(context, this.<IndexedBinaryRule<C, L>>flatten(segments), kernelTexts);
         int[] globalSize = {WARP_SIZE * NUM_WARPS, NUM_SM, 1};
         int[] wgSize = {WARP_SIZE, 1, 1};
-        return new CLBinaryRuleUpdater(kernels, globalSize, wgSize, writeDirectToChart);
+        return new CLBinaryRuleUpdater(kernels, loop.queue(structure.numCoarseSyms(), context), globalSize, wgSize, writeDirectToChart);
     }
 
 

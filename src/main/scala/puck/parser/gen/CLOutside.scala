@@ -72,28 +72,28 @@ object CLOutsideKernels {
 
   def make[C, L](structure: RuleStructure[C, L], directWrite: Boolean, semiring: RuleSemiring, genType: GenType = GenType.VariableLength)(implicit context: CLContext) = {
     val parserGen = genType.generator(structure, directWrite, semiring)
-    val outside_L_NNKernels = parserGen.binaryRuleApplication(structure.nontermRules.map(rotateLeftToParent), "outside_L_nn_binaries")
+    val outside_L_NNKernels = parserGen.binaryRuleApplication(structure.nontermRules.map(rotateLeftToParent), "outside_L_nn_binaries", LoopType.OutsideL)
 
     val outside_R_NNKernels =
-      parserGen.binaryRuleApplication(structure.nontermRules.map(rotateRightToParent), "outside_R_nn_binaries")
+      parserGen.binaryRuleApplication(structure.nontermRules.map(rotateRightToParent), "outside_R_nn_binaries", LoopType.OutsideR)
 
     val outside_L_NTKernels =
-      parserGen.binaryRuleApplication(structure.rightTermRules.map(rotateLeftToParent), "outside_L_nt_binaries")
+      parserGen.binaryRuleApplication(structure.rightTermRules.map(rotateLeftToParent), "outside_L_nt_binaries", LoopType.OutsideLTerm)
 
     val outside_R_NTKernels =
-      parserGen.binaryRuleApplication(structure.rightTermRules.map(rotateRightToParent), "outside_R_nt_binaries")
+      parserGen.binaryRuleApplication(structure.rightTermRules.map(rotateRightToParent), "outside_R_nt_binaries", LoopType.OutsideR)
 
     val outside_L_TNKernels =
-      parserGen.binaryRuleApplication(structure.leftTermRules.map(rotateLeftToParent), "outside_L_tn_binaries")
+      parserGen.binaryRuleApplication(structure.leftTermRules.map(rotateLeftToParent), "outside_L_tn_binaries", LoopType.OutsideL)
 
     val outside_R_TNKernels =
-      parserGen.binaryRuleApplication(structure.leftTermRules.map(rotateRightToParent), "outside_R_tn_binaries")
+      parserGen.binaryRuleApplication(structure.leftTermRules.map(rotateRightToParent), "outside_R_tn_binaries", LoopType.OutsideRTerm)
 
     val outside_L_TTKernels =
-       parserGen.binaryRuleApplication(structure.bothTermRules.map(rotateLeftToParent), "outside_L_tt_binaries")
+       parserGen.binaryRuleApplication(structure.bothTermRules.map(rotateLeftToParent), "outside_L_tt_binaries", LoopType.OutsideLTerm)
 
     val outside_R_TTKernels =
-      parserGen.binaryRuleApplication(structure.bothTermRules.map(rotateRightToParent), "outside_R_tt_binaries")
+      parserGen.binaryRuleApplication(structure.bothTermRules.map(rotateRightToParent), "outside_R_tt_binaries", LoopType.OutsideRTerm)
 
     val outsideNUKernels =  parserGen.unaryRuleApplication(structure.unaryRules.map(rotateChildToParent), "outside_nn_unaries")
 

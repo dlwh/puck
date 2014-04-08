@@ -9,7 +9,7 @@ import scala.collection.JavaConverters._
 import org.bridj.Pointer
 import java.util
 import breeze.linalg.DenseVector
-import puck.parser.gen.{HasParent, IndexedBinaryRule}
+import puck.parser.gen.{CLWorkQueueKernels, HasParent, IndexedBinaryRule}
 
 /**
  *
@@ -17,11 +17,12 @@ import puck.parser.gen.{HasParent, IndexedBinaryRule}
  * @author dlwh
  */
 case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
+                               enqueuer: CLWorkQueueKernels,
                                globalSize: Array[Int],
                                wgSize: Array[Int],
                                directWriteToChart: Boolean,
                                extra: Option[Array[Int]] = None) {
-  def this(kernels: java.util.List[RuleKernel], globalSize: Array[Int], wgSize: Array[Int], directWrite: Boolean) = this(kernels.asScala.toIndexedSeq, globalSize, wgSize, directWrite)
+  def this(kernels: java.util.List[RuleKernel], enqueuer: CLWorkQueueKernels, globalSize: Array[Int], wgSize: Array[Int], directWrite: Boolean) = this(kernels.asScala.toIndexedSeq, enqueuer, globalSize, wgSize, directWrite)
 
   private val buffer = extra.map(arr => kernels.head.kernels.head.getProgram.getContext.createIntBuffer(CLMem.Usage.Input, Pointer.pointerToInts(arr:_*), true))
 
@@ -62,6 +63,7 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
     for(i <- 0 until kernels.length) {
       kernels(i).write(s"$name/$i", out)
     }
+    enqueuer.write(s"$name/enqueuer", out)
     ZipUtil.serializedEntry(out, s"$name/globalSize", globalSize)
     ZipUtil.serializedEntry(out, s"$name/wgSize", wgSize)
     ZipUtil.serializedEntry(out, s"$name/extra", extra)
@@ -74,12 +76,13 @@ object CLBinaryRuleUpdater {
   def read(in: ZipFile, name: String)(implicit ctxt: CLContext) = {
     val x = ZipUtil.deserializeEntry[Integer](in.getInputStream(in.getEntry(s"$name/numKernels")))
     val kernels = for(i <- 0 until x.intValue()) yield RuleKernel.read(in, s"$name/$i")
+    val queue = CLWorkQueueKernels.read(s"$name/enqueuer", in)
 
     val globalSize = ZipUtil.deserializeEntry[Array[Int]](in.getInputStream(in.getEntry(s"$name/globalSize")))
     val wgSize = ZipUtil.deserializeEntry[Array[Int]](in.getInputStream(in.getEntry(s"$name/wgSize")))
     val extra = ZipUtil.deserializeEntry[Option[Array[Int]]](in.getInputStream(in.getEntry(s"$name/extra")))
     val directWrite = ZipUtil.deserializeEntry[java.lang.Boolean](in.getInputStream(in.getEntry(s"$name/directWrite")))
-    CLBinaryRuleUpdater(kernels, globalSize, wgSize, directWrite.booleanValue(), extra)
+    CLBinaryRuleUpdater(kernels, queue, globalSize, wgSize, directWrite.booleanValue(), extra)
   }
 }
 
