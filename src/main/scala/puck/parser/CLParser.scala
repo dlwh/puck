@@ -746,7 +746,16 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
        private def flushQueue(workspace: WorkSpace, block: IndexedSeq[Int], batch: Batch[W], span: Int, _ev: Seq[CLEvent]): Seq[CLEvent] = {
          import workspace._
-         
+
+         assert(batch.hasMasks || queueSize == _todo, queueSize + " " +  _todo)
+         CLEvent.waitFor(_ev:_*)
+         val oldLeftPtr = lPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
+         assert(oldLeftPtr.take(queueSize).toIndexedSeq == lArray.take(queueSize).toIndexedSeq, s"${oldLeftPtr.take(queueSize).toIndexedSeq} ${lArray.take(queueSize).toIndexedSeq}")
+         val oldRightPtr = rPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
+         assert(oldRightPtr.take(queueSize).toIndexedSeq == rArray.take(queueSize).toIndexedSeq, s"${oldRightPtr.take(queueSize).toIndexedSeq} ${rArray.take(queueSize).toIndexedSeq}")
+         val oldParentPtr = pPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
+         assert(oldParentPtr.take(queueSize).toIndexedSeq == pArray.take(queueSize).toIndexedSeq, s"${oldParentPtr.take(queueSize).toIndexedSeq} ${pArray.take(queueSize).toIndexedSeq}")
+
          var ev = _ev
          var offset = 0
          // copy ptrs to opencl
@@ -784,6 +793,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
          ev
        }
 
+      var _todo = 0
+
        def doUpdates(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent*) = {
 
          var ev = events
@@ -813,7 +824,18 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
          val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).groupBy(updater.kernels(_).parents.data.toIndexedSeq).values.toIndexedSeq
 
          for(block <- blocks) {
-           val blockParents = updater.kernels(block.head).parents
+
+           val blockParents: DenseVector[Int] = updater.kernels(block.head).parents
+
+           val (evq, numToDo) = {
+             updater.enqueuer.enqueue(workspace, batch, span, !parentIsBot, leftChart eq ActualParser.this.insideTop, rightChart eq ActualParser.this.insideTop, if(batch.hasMasks) Some(blockParents.toArray) else None, ev:_*)
+           }
+
+           _todo = numToDo
+
+           ev = Seq(evq)
+
+
            //        if(allSpans.head._4 != null)
            //          println(BitHacks.asBitSet(blockParents).cardinality)
            for ( (sent, start, end, mask) <- allSpans ) {

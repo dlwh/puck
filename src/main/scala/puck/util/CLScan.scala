@@ -40,11 +40,22 @@ object CLScan {
       |#define WORKGROUP_SIZE 32
       |inline int warpScanInclusive(int idata, volatile __local int *l_Data, int size){
       |  int pos = 2 * get_local_id(0) - (get_local_id(0) & (size - 1));
+      |  barrier(CLK_LOCAL_MEM_FENCE);
       |  l_Data[pos] = 0;
+      |  barrier(CLK_LOCAL_MEM_FENCE);
       |  pos += size;
       |  l_Data[pos] = idata;
       |  barrier(CLK_LOCAL_MEM_FENCE);
       |
+      |   for(uint offset = 1; offset < size; offset <<= 1){
+      |        barrier(CLK_LOCAL_MEM_FENCE); //Fails with Intel openCL
+      |        uint t = l_Data[pos] + l_Data[pos - offset];
+      |        barrier(CLK_LOCAL_MEM_FENCE); //Fails with Intel openCL
+      |        l_Data[pos] = t;
+      |    }
+      |
+      |
+      |/*
       |  if(size >=  2) l_Data[pos] += l_Data[pos -  1];
       |  barrier(CLK_LOCAL_MEM_FENCE);
       |  if(size >=  4) l_Data[pos] += l_Data[pos -  2];
@@ -55,6 +66,7 @@ object CLScan {
       |  barrier(CLK_LOCAL_MEM_FENCE);
       |  if(size >= 32) l_Data[pos] += l_Data[pos - 16];
       |  barrier(CLK_LOCAL_MEM_FENCE);
+      |  */
       |
       |  return l_Data[pos];
       | }

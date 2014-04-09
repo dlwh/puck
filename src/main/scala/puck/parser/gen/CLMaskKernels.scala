@@ -64,6 +64,7 @@ case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
 }
 
 object CLMaskKernels {
+
   def read(prefix: String, zf: ZipFile)(implicit ctxt: CLContext) = {
     val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry(s"$prefix/MasksInts")))
     CLMaskKernels(ints(0), ZipUtil.readKernel(zf, s"$prefix/computeMasksKernel"))
@@ -80,7 +81,7 @@ object CLMaskKernels {
 
 
   def maskHeader[C, L](numCoarseSyms: Int) = {
-    val maskSize = puck.roundUpToMultipleOf(numCoarseSyms, 32) / 32
+    val maskSize = maskSizeFor(numCoarseSyms)
     """#define NUM_FIELDS """ + maskSize + """
 
   typedef struct { int fields[NUM_FIELDS]; } mask_t;
@@ -114,6 +115,10 @@ object CLMaskKernels {
                                            """
   }
 
+
+  def maskSizeFor[L, C](numCoarseSyms: Int): Int = {
+    puck.roundUpToMultipleOf(numCoarseSyms, 32) / 32
+  }
 
   def genCheckIfMaskIsEmpty[C, L](structure: RuleStructure[C, L],
                                     nameOfMaskVariable: String,

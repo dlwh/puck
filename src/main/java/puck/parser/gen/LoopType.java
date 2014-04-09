@@ -9,6 +9,8 @@ import com.nativelibs4java.opencl.CLContext;
  */
 public enum LoopType {
     Inside,
+    InsideNT,
+    InsideTN,
     OutsideL,
     OutsideR,
     OutsideLTerm,

@@ -13,20 +13,26 @@ import java.util.zip.{ZipFile, ZipOutputStream}
  *
  * @author dlwh
  */
-class CLWorkQueueKernels(enqueueKernel: CLKernel)(implicit ctxt: CLContext) {
+class CLWorkQueueKernels(enqueueKernel: CLKernel, maskSize: Int)(implicit ctxt: CLContext) {
   private val scanKernel = CLScan.make
 
-  def enqueueDense[W](ws: WorkSpace,
-                      batch: Batch[W],
-                      spanLength: Int,
-                      pTop: Boolean, lTop: Boolean, rTop: Boolean,
-                      events: CLEvent*)(implicit queue: CLQueue):(CLEvent, Int) = synchronized {
+  def enqueue[W](ws: WorkSpace,
+                 batch: Batch[W],
+                 spanLength: Int,
+                 pTop: Boolean,
+                 lTop: Boolean,
+                 rTop: Boolean,
+                 mask: Option[Array[Int]],
+                 events: CLEvent*)(implicit queue: CLQueue):(CLEvent, Int) = synchronized {
+//    queue.finish()
     val scratch = ctxt.createIntBuffer(CLMem.Usage.InputOutput, batch.numSentences + 1)
     def I(x: Boolean) = if(x) Integer.valueOf(1) else Integer.valueOf(0)
     enqueueKernel.setArgs(ws.pPtrBuffer, ws.lPtrBuffer, ws.rPtrBuffer, scratch,
-      batch.cellOffsetsDev, batch.lengthsDev, null, null, Integer.valueOf(0), I(pTop), I(lTop), I(rTop), Integer.valueOf(spanLength), I(true))
+      batch.cellOffsetsDev, batch.lengthsDev, ws.lPtrBuffer, mask.getOrElse(Array.fill(maskSize)(-1)), I(mask.nonEmpty), I(pTop), I(lTop), I(rTop), Integer.valueOf(spanLength), I(true))
 
+//    queue.finish()
     val computeNeededEv = enqueueKernel.enqueueNDRange(queue, Array(batch.numSentences), Array(1), events:_*)
+
 
     val evScan = scanKernel.scan(ws.queueOffsets, scratch, batch.numSentences, computeNeededEv)
     PointerFreer.enqueue({scratch.release()}, evScan)
@@ -35,13 +41,14 @@ class CLWorkQueueKernels(enqueueKernel: CLKernel)(implicit ctxt: CLContext) {
     enqueueKernel.setArg(13, I(false))
 
     val res = enqueueKernel.enqueueNDRange(queue, Array(batch.numSentences), Array(1), evScan)
-    val numNeeded = scratch.read(queue, batch.numSentences, 1, evScan).get()
+    val numNeeded = ws.queueOffsets.read(queue, batch.numSentences - 1, 1, evScan).get()
 
     (res, numNeeded.intValue())
   }
 
   def write(prefix: String, out: ZipOutputStream) {
     ZipUtil.addKernel(out, s"$prefix/enqueue", enqueueKernel)
+    ZipUtil.serializedEntry(out, s"$prefix/ints", Array(maskSize))
   }
 }
 
@@ -49,6 +56,8 @@ object CLWorkQueueKernels {
   def forLoopType(numCoarseSyms: Int, loopType: LoopType)(implicit ctxt: CLContext):CLWorkQueueKernels = {
     loopType match {
       case LoopType.Inside => forInside(numCoarseSyms)
+      case LoopType.InsideNT => forInsideNT(numCoarseSyms)
+      case LoopType.InsideTN => forInsideTN(numCoarseSyms)
       case LoopType.OutsideL => forOutsideL(numCoarseSyms)
       case LoopType.OutsideR => forOutsideR(numCoarseSyms)
       case LoopType.OutsideRTerm => forOutsideRTerm(numCoarseSyms)
@@ -61,16 +70,26 @@ object CLWorkQueueKernels {
 
     val prg = ctxt.createProgram(text).build()
     val k = prg.createKernel("enqueue")
-    new CLWorkQueueKernels(k)
+    new CLWorkQueueKernels(k, CLMaskKernels.maskSizeFor(numCoarseSyms))
   }
 
   def read(prefix: String, in: ZipFile)(implicit context: CLContext) = {
     val k = ZipUtil.readKernel(in, s"$prefix/enqueue")
-    new CLWorkQueueKernels(k)
+    val ints = ZipUtil.deserializeEntry[Array[Int]](in.getInputStream(in.getEntry(s"$prefix/ints")))
+    new CLWorkQueueKernels(k, ints(0))
   }
 
   def forInside(numCoarseSyms: Int)(implicit ctxt: CLContext) = {
     forSplitRange(numCoarseSyms, insideSplitRange)
+  }
+
+  def forInsideNT(numCoarseSyms: Int)(implicit ctxt: CLContext) = {
+    forSplitRange(numCoarseSyms, insideNTSplitRange)
+  }
+
+
+  def forInsideTN(numCoarseSyms: Int)(implicit ctxt: CLContext) = {
+    forSplitRange(numCoarseSyms, insideTNSplitRange)
   }
 
   def forOutsideL(numCoarseSyms: Int)(implicit ctxt: CLContext) = {
@@ -95,6 +114,23 @@ object CLWorkQueueKernels {
     """
       | range_t computeSplitRange(int begin, int end, int length) {
       |   range_t r= {begin + 1, end - 1};
+      |   return r;
+      | }
+    """.stripMargin
+
+    def insideNTSplitRange =
+    """
+      | range_t computeSplitRange(int begin, int end, int length) {
+      |   range_t r= {end - 1, end - 1};
+      |   return r;
+      | }
+    """.stripMargin
+
+
+    def insideTNSplitRange =
+    """
+      | range_t computeSplitRange(int begin, int end, int length) {
+      |   range_t r= {begin + 1, begin + 1};
       |   return r;
       | }
     """.stripMargin
@@ -149,7 +185,7 @@ object CLWorkQueueKernels {
       |                       __global const int* cellOffsets,
       |                       __global const int* lengths,
       |                       __global const mask_t* masks,
-      |                       __global const mask_t* targetMask,
+      |                       mask_t tMask,
       |                       int useMasks,
       |                       int parentTop,
       |                       int leftTop,
@@ -158,7 +194,7 @@ object CLWorkQueueKernels {
       |                       int justComputeNumNeeded) {
       |   int sent = get_group_id(0);
       |   const int firstQueueOffset = (sent == 0) ? 0 : queueOffsets[sent - 1];
-      |   //const int nextQueueOffset = queueOffsets[sent];
+      |   const int nextQueueOffset = queueOffsets[sent];
       |   const int length = lengths[sent];
       |   const int cellOffset = cellOffsets[sent];
       |   const int lastCell = cellOffsets[sent + 1];
@@ -172,13 +208,15 @@ object CLWorkQueueKernels {
       |   int queueOffset = firstQueueOffset;
       |
       |   mask_t pMask;
-      |   mask_t tMask;
-      |   if(useMasks) tMask = *targetMask;
+      //|   mask_t tMask;
+      //|   if(useMasks) tMask = *targetMask;
       |
       |   mask_t lMask;
       |   mask_t rMask;
       |
       |   int numNeeded = 0;
+      |
+      |   if(!justComputeNumNeeded && (nextQueueOffset - firstQueueOffset) == 0) return;
       |
       |   for(int begin = 0, end = spanLength; end <= length; begin++, end++) {
       |     int parentCell = parentOffset + computeCell(begin, end, length);
@@ -199,7 +237,7 @@ object CLWorkQueueKernels {
       |                                             : computeCell(end, split, length)
       |                           );
       |
-      |         int includeThisOne = useMasks;
+      |         int includeThisOne = !useMasks;
       |         if(!includeThisOne) {
       |           lMask = masks[leftCell];
       |           int doLeft = maskAny(&lMask);
@@ -212,6 +250,7 @@ object CLWorkQueueKernels {
       |
       |         if(includeThisOne) {
       |            if(justComputeNumNeeded) {
+      //|               printf("<%d %d %d %d>\n",numNeeded,begin,split,end);
       |              numNeeded++;
       |            } else {
       |              parentQueue[queueOffset] = parentCell;

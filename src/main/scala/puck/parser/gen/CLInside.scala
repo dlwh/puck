@@ -77,9 +77,9 @@ object CLInsideKernels {
 //    val parserGen = new NoninlinedRuleMultiply(structure)
     val insideNNKernels =  parserGen.binaryRuleApplication(structure.nontermRules, "inside_nn_binaries", LoopType.Inside)
 
-    val insideNTKernels =  parserGen.binaryRuleApplication(structure.rightTermRules, "inside_nt_binaries", LoopType.Inside)
+    val insideNTKernels =  parserGen.binaryRuleApplication(structure.rightTermRules, "inside_nt_binaries", LoopType.InsideNT)
 
-    val insideTNKernels =  parserGen.binaryRuleApplication(structure.leftTermRules, "inside_tn_binaries", LoopType.Inside)
+    val insideTNKernels =  parserGen.binaryRuleApplication(structure.leftTermRules, "inside_tn_binaries", LoopType.InsideTN)
 
     val insideTTKernels =  parserGen.binaryRuleApplication(structure.bothTermRules, "inside_tt_binaries", LoopType.Inside)
 
