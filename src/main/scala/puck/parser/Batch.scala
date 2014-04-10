@@ -4,7 +4,7 @@ import breeze.linalg.{DenseVector, DenseMatrix}
 import breeze.collection.mutable.TriangularArray
 import puck.linalg.CLMatrix
 import puck.util.BitHacks
-import com.nativelibs4java.opencl.{CLMem, CLContext}
+import com.nativelibs4java.opencl.{CLQueue, CLMem, CLContext}
 import org.bridj.Pointer
 
 /**
@@ -15,7 +15,7 @@ import org.bridj.Pointer
 private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
                                     devInside: CLMatrix[Float],
                                     devOutside: CLMatrix[Float],
-                                    masks: PruningMask)(implicit ctxt: CLContext) {
+                                    masks: PruningMask)(implicit ctxt: CLContext, queue: CLQueue) {
   var partitionScales = DenseVector.zeros[Double](sentences.length)
 
   val cellOffsets = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2).toArray
@@ -25,10 +25,16 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
 
   lazy val cellOffsetsDev = ctxt.createIntBuffer(CLMem.Usage.Input, Pointer.pointerToInts(cellOffsets:_*))
   lazy val lengthsDev = ctxt.createIntBuffer(CLMem.Usage.Input, Pointer.pointerToInts(lengths:_*))
+  lazy val masksDev = masks match {
+    case m:DenseMatrixMask =>
+      val mat = CLMatrix.zeros[Int](m.matrix.rows, m.matrix.cols)
+      mat := m.matrix
+      Some(mat)
+    case _ =>
+      None
+  }
 
   def numCellsUsed: Int = cellOffsets.last
-
-
 
   assert(numCellsUsed <= devInside.cols, numCellsUsed + " " +  devInside.cols)
 
@@ -38,6 +44,7 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
   assert(numCellsUsed <= devInside.cols)
 
   def isAllowedSpan(sent: Int, begin: Int, end: Int) = masks.isAllowedSpan(sent, begin, end)
+  def isAllowedTopSpan(sent: Int, begin: Int, end: Int) = masks.isAllowedTopSpan(sent, begin, end)
 
   def rootIndex(sent: Int) = insideCharts(sent).top.rootIndex
   def rootIndices = Array.tabulate(sentences.length)(rootIndex)

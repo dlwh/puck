@@ -736,7 +736,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
          queueSize += 1
          if (queueSize >= workspace.lArray.size)  {
-           println("flush?")
            flushQueue(workspace, block, batch, span, events)
          } else {
            events
@@ -747,7 +746,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
        private def flushQueue(workspace: WorkSpace, block: IndexedSeq[Int], batch: Batch[W], span: Int, _ev: Seq[CLEvent]): Seq[CLEvent] = {
          import workspace._
 
-         assert(batch.hasMasks || queueSize == _todo, queueSize + " " +  _todo)
+         assert(queueSize == _todo, s"$queueSize ${_todo} $span")
          CLEvent.waitFor(_ev:_*)
          val oldLeftPtr = lPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
          assert(oldLeftPtr.take(queueSize).toIndexedSeq == lArray.take(queueSize).toIndexedSeq, s"${oldLeftPtr.take(queueSize).toIndexedSeq} ${lArray.take(queueSize).toIndexedSeq}")
@@ -848,6 +847,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                val leftChartOffset = leftChart(batch, sent)
                val rightChartOffset = rightChart(batch, sent)
 
+               val leftIsTop = leftChart eq ActualParser.this.insideTop
+               val rightIsTop = rightChart eq ActualParser.this.insideTop
 
                val splitRange = ranger(start, start + span, batch.sentences(sent).length)
                var split =  splitRange.start
@@ -856,8 +857,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                while (split != splitEnd) {
                  if (split >= 0 && split <= batch.sentences(sent).length) {
                    val end = start + span
-                   val leftChildAllowed = if (split < start) batch.isAllowedSpan(sent,split, start) else batch.isAllowedSpan(sent, start, split)
-                   val rightChildAllowed = if (split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
+                   val leftChildAllowed = if (split < start) if(leftIsTop) batch.isAllowedTopSpan(sent, split, start) else batch.isAllowedSpan(sent,split, start) else if(leftIsTop) batch.isAllowedTopSpan(sent, start, split) else batch.isAllowedSpan(sent, start, split)
+                   val rightChildAllowed = if (split < end) if(rightIsTop) batch.isAllowedTopSpan(sent, split, end) else batch.isAllowedSpan(sent,split,end) else if (rightIsTop) batch.isAllowedTopSpan(sent, end, split) else batch.isAllowedSpan(sent, end, split)
 
                    if (leftChildAllowed && rightChildAllowed) {
                      val leftChild = leftChartOffset + {

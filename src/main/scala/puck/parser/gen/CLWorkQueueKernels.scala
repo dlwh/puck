@@ -24,13 +24,11 @@ class CLWorkQueueKernels(enqueueKernel: CLKernel, maskSize: Int)(implicit ctxt: 
                  rTop: Boolean,
                  mask: Option[Array[Int]],
                  events: CLEvent*)(implicit queue: CLQueue):(CLEvent, Int) = synchronized {
-//    queue.finish()
     val scratch = ctxt.createIntBuffer(CLMem.Usage.InputOutput, batch.numSentences + 1)
     def I(x: Boolean) = if(x) Integer.valueOf(1) else Integer.valueOf(0)
     enqueueKernel.setArgs(ws.pPtrBuffer, ws.lPtrBuffer, ws.rPtrBuffer, scratch,
-      batch.cellOffsetsDev, batch.lengthsDev, ws.lPtrBuffer, mask.getOrElse(Array.fill(maskSize)(-1)), I(mask.nonEmpty), I(pTop), I(lTop), I(rTop), Integer.valueOf(spanLength), I(true))
+      batch.cellOffsetsDev, batch.lengthsDev, batch.masksDev.map(_.data.safeBuffer).getOrElse(ws.lPtrBuffer), mask.getOrElse(Array.fill(maskSize)(-1)), I(mask.nonEmpty), I(pTop), I(lTop), I(rTop), Integer.valueOf(spanLength), I(true))
 
-//    queue.finish()
     val computeNeededEv = enqueueKernel.enqueueNDRange(queue, Array(batch.numSentences), Array(1), events:_*)
 
 
@@ -138,7 +136,7 @@ object CLWorkQueueKernels {
   def outsideRSplitRange =
     """
       | range_t computeSplitRange(int begin, int end, int length) {
-      |   range_t r = {0, begin};
+      |   range_t r = {0, begin - 1};
       |   return r;
       | }
     """.stripMargin
@@ -224,8 +222,14 @@ object CLWorkQueueKernels {
       |     if(useMasks)
       |       pMask = masks[parentCell];
       |
+//      |     if(useMasks) {
+//      |       printf("%d %d :: %d intersects?\n", begin, end, maskIntersects(&pMask, &tMask));
+//      |     }
+      |
       |     if(!useMasks || maskIntersects(&pMask, &tMask)) {
       |       range_t splitRange = computeSplitRange(begin, end, length);
+      |       splitRange.low = max(splitRange.low, 0);
+      |       splitRange.high = min(splitRange.high, length);
       |
       |       for(int split = splitRange.low; split <= splitRange.high; ++split) {
       |          int leftCell = leftOffset + (
@@ -241,18 +245,19 @@ object CLWorkQueueKernels {
       |         if(!includeThisOne) {
       |           lMask = masks[leftCell];
       |           int doLeft = maskAny(&lMask);
+//      |           printf("left says %d\n",doLeft);
       |           if (doLeft) {
       |             rMask = masks[rightCell];
       |             int doRight = maskAny(&rMask);
+//      |             printf("right says %d\n",doRight);
       |             if(doRight) includeThisOne = true;
       |           }
       |         }
       |
       |         if(includeThisOne) {
-      |            if(justComputeNumNeeded) {
-      //|               printf("<%d %d %d %d>\n",numNeeded,begin,split,end);
-      |              numNeeded++;
-      |            } else {
+//      |            printf("<%d %d %d %d: p%d l%d r%d>\n",numNeeded,begin,split,end, parentCell, leftCell, rightCell);
+      |            numNeeded++;
+      |            if(!justComputeNumNeeded) {
       |              parentQueue[queueOffset] = parentCell;
       |              leftQueue[queueOffset] = leftCell;
       |              rightQueue[queueOffset] = rightCell;
@@ -264,6 +269,7 @@ object CLWorkQueueKernels {
       |   }
       |
       |   if(justComputeNumNeeded) {
+//      |     printf("?? %d %d\n",sent, numNeeded);
       |     queueOffsets[sent] = numNeeded;
       |   }
       | }

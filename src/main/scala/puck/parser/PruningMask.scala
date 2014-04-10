@@ -85,7 +85,7 @@ case class DenseMatrixMask(matrix: DenseMatrix[Int],
   val allowedTopSpans = ParArray.tabulate(lengths.length)(sent => TriangularArray.tabulate(lengths(sent)+1)((beg, end) => BitHacks.any(maskForTopCell(sent, beg, end).get))).seq
 
   override def isAllowedSpan(sent: Int, begin: Int, end: Int):Boolean = allowedSpans(sent)(begin, end)
-  override def isAllowedTopSpan(sent: Int, begin: Int, end: Int):Boolean = allowedSpans(sent)(begin, end)
+  override def isAllowedTopSpan(sent: Int, begin: Int, end: Int):Boolean = allowedTopSpans(sent)(begin, end)
 
 
   def hasMasks: Boolean = true

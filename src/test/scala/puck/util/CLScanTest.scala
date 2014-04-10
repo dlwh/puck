@@ -13,7 +13,7 @@ import scala.collection.immutable.IndexedSeq
 class CLScanTest extends FunSuite {
 
   test("scan") {
-    implicit val context = JavaCL.createBestContext(CLPlatform.DeviceFeature.CPU)
+    implicit val context = JavaCL.createBestContext(CLPlatform.DeviceFeature.GPU)
     implicit val queue = context.createDefaultOutOfOrderQueueIfPossible()
     val kernel = CLScan.make(context)
 
