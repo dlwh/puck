@@ -724,45 +724,15 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                                       leftChart: (Batch[W], Int)=>Int,
                                       rightChart: (Batch[W], Int)=>Int,
                                       ranger: (Int, Int, Int)=>Range) {
-       var queueSize = 0 // number of work cells used so far.
 
 
-       private def enqueue(workspace: WorkSpace, block: IndexedSeq[Int], batch: Batch[W], span: Int, parent: Int, left: Int, right: Int, events: Seq[CLEvent]): Seq[CLEvent] = {
+       private def flushQueue(workspace: WorkSpace, block: IndexedSeq[Int], batch: Batch[W],
+                              queueSize: Int,
+                              _ev: Seq[CLEvent]): Seq[CLEvent] = {
          import workspace._
-
-         pArray(queueSize) = parent
-         lArray(queueSize) = left
-         rArray(queueSize) = right
-
-         queueSize += 1
-         if (queueSize >= workspace.lArray.size)  {
-           flushQueue(workspace, block, batch, span, events)
-         } else {
-           events
-         }
-       }
-
-
-       private def flushQueue(workspace: WorkSpace, block: IndexedSeq[Int], batch: Batch[W], span: Int, _ev: Seq[CLEvent]): Seq[CLEvent] = {
-         import workspace._
-
-         assert(queueSize == _todo, s"$queueSize ${_todo} $span")
-         CLEvent.waitFor(_ev:_*)
-         val oldLeftPtr = lPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
-         assert(oldLeftPtr.take(queueSize).toIndexedSeq == lArray.take(queueSize).toIndexedSeq, s"${oldLeftPtr.take(queueSize).toIndexedSeq} ${lArray.take(queueSize).toIndexedSeq}")
-         val oldRightPtr = rPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
-         assert(oldRightPtr.take(queueSize).toIndexedSeq == rArray.take(queueSize).toIndexedSeq, s"${oldRightPtr.take(queueSize).toIndexedSeq} ${rArray.take(queueSize).toIndexedSeq}")
-         val oldParentPtr = pPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
-         assert(oldParentPtr.take(queueSize).toIndexedSeq == pArray.take(queueSize).toIndexedSeq, s"${oldParentPtr.take(queueSize).toIndexedSeq} ${pArray.take(queueSize).toIndexedSeq}")
 
          var ev = _ev
          var offset = 0
-         // copy ptrs to opencl
-         val evP = pPtrBuffer.writeArray(queue, pArray, queueSize, ev:_*) profileIn hdTransferEvents
-         val evL = lPtrBuffer.writeArray(queue, lArray, queueSize, ev:_*) profileIn hdTransferEvents
-         val evR = rPtrBuffer.writeArray(queue, rArray, queueSize, ev:_*) profileIn hdTransferEvents
-
-         ev = Seq(evP, evL, evR)
 
          while (offset < queueSize) {
            val toDoThisTime = math.min(numWorkCells, queueSize - offset)
@@ -787,38 +757,17 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
            offset += toDoThisTime
            ev = kEvents
          }
-         queueSize = 0
 
          ev
        }
 
-      var _todo = 0
 
        def doUpdates(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent*) = {
 
          var ev = events
-
-
          val merge = !batch.hasMasks
 
-         val allSpans = if (batch.hasMasks) {
-           for {
-             sent <- 0 until batch.numSentences
-             start <- 0 to batch.sentences(sent).length - span
-             _ = total += 1
-             mask <- if(parentIsBot) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
-             if {val x = batch.isAllowedSpan(sent, start, start + span); if(!x) pruned += 1; x }
-           } yield (sent, start, start+span, mask)
-         } else {
-           for {
-             sent <- 0 until batch.numSentences
-             start <- 0 to batch.sentences(sent).length - span
-           } yield (sent, start, start+span, null)
-         }
-
-
          val numBlocks = updater.numKernelBlocks
-
 
          val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).groupBy(updater.kernels(_).parents.data.toIndexedSeq).values.toIndexedSeq
 
@@ -830,56 +779,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
              updater.enqueuer.enqueue(workspace, batch, span, !parentIsBot, leftChart eq ActualParser.this.insideTop, rightChart eq ActualParser.this.insideTop, if(batch.hasMasks) Some(blockParents.toArray) else None, ev:_*)
            }
 
-           _todo = numToDo
+           val queueSize = numToDo
 
            ev = Seq(evq)
 
-
-           //        if(allSpans.head._4 != null)
-           //          println(BitHacks.asBitSet(blockParents).cardinality)
-           for ( (sent, start, end, mask) <- allSpans ) {
-
-             if(mask == null || intersects(blockParents, mask)) {
-
-               val len = batch.lengths(sent)
-
-               val parentCell = parentChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
-               val leftChartOffset = leftChart(batch, sent)
-               val rightChartOffset = rightChart(batch, sent)
-
-               val leftIsTop = leftChart eq ActualParser.this.insideTop
-               val rightIsTop = rightChart eq ActualParser.this.insideTop
-
-               val splitRange = ranger(start, start + span, batch.sentences(sent).length)
-               var split =  splitRange.start
-               val splitEnd = splitRange.terminalElement
-               val step = splitRange.step
-               while (split != splitEnd) {
-                 if (split >= 0 && split <= batch.sentences(sent).length) {
-                   val end = start + span
-                   val leftChildAllowed = if (split < start) if(leftIsTop) batch.isAllowedTopSpan(sent, split, start) else batch.isAllowedSpan(sent,split, start) else if(leftIsTop) batch.isAllowedTopSpan(sent, start, split) else batch.isAllowedSpan(sent, start, split)
-                   val rightChildAllowed = if (split < end) if(rightIsTop) batch.isAllowedTopSpan(sent, split, end) else batch.isAllowedSpan(sent,split,end) else if (rightIsTop) batch.isAllowedTopSpan(sent, end, split) else batch.isAllowedSpan(sent, end, split)
-
-                   if (leftChildAllowed && rightChildAllowed) {
-                     val leftChild = leftChartOffset + {
-                       if (split < start) ChartHalf.chartIndex(split, start, len) else ChartHalf.chartIndex(start, split, len)
-                     }
-                     val rightChild = rightChartOffset + {
-                       if (split < end) ChartHalf.chartIndex(split, end, len) else ChartHalf.chartIndex(end, split, len)
-                     }
-
-                     ev = enqueue(workspace, block, batch, span, parentCell, leftChild, rightChild, ev)
-                   }
-                 }
-                 split += step
-               }
-
-             }
-
-           }
-
            if (queueSize > 0) {
-             ev = flushQueue(workspace, block, batch, span, ev)
+             ev = flushQueue(workspace, block, batch, queueSize, ev)
            }
          }
 
@@ -1008,6 +913,8 @@ object CLParser extends Logging {
       val res = ParserTester.evalParser(gold, parser, "cpu-reference", 4)
       println(res)
     }
+
+    println("Running...")
 
     if (justInsides || checkPartitions) {
       val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))

@@ -31,7 +31,6 @@ class CLWorkQueueKernels(enqueueKernel: CLKernel, maskSize: Int)(implicit ctxt: 
 
     val computeNeededEv = enqueueKernel.enqueueNDRange(queue, Array(batch.numSentences), Array(1), events:_*)
 
-
     val evScan = scanKernel.scan(ws.queueOffsets, scratch, batch.numSentences, computeNeededEv)
     PointerFreer.enqueue({scratch.release()}, evScan)
 
