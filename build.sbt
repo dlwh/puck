@@ -20,7 +20,7 @@ libraryDependencies += "com.jsuereth" %% "scala-arm" % "1.3"
 
 fork := true
 
-javaOptions ++= Seq("-Xmx12g", "-Xrunhprof:cpu=samples,depth=12")
+javaOptions ++= Seq("-Xmx12g")//, "-Xrunhprof:cpu=samples,depth=12")
 
 
 

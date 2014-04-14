@@ -30,7 +30,7 @@ import scala.io.{Codec, Source}
 import epic.lexicon.Lexicon
 import breeze.util.Index
 import org.bridj.Pointer
-
+import scala.reflect.ClassTag
 
 
 /**
@@ -355,58 +355,60 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     }
 
     def initializeTagScores(workspace: WorkSpace, batch: Batch[W], events: CLEvent*) = {
-      import workspace._
-      val totalLength = batch.totalLength
-      val tagScores = DenseMatrix.zeros[Float](totalLength, cellSize)
-      tagScores := zero
-      for (i <- (0 until batch.numSentences).par) {
-        val sent = batch.sentences(i)
-        val anch = data.grammar.tagScorer.anchor(sent)
-        val lexAnch = data.grammar.lexicon.anchor(sent)
-        var scoreScale = 0.0
-        var offset = batch.lengthOffsets(i)
-        for (pos <- 0 until sent.length) {
-          val myScale = if(semiring.needsScaling) math.exp(-batch.masks.insideScaleFor(i, pos, pos + 1)) else 1.0
-          var maxScore = zero
-          for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
-            val index = ref
-            val score = anch.scoreTag(pos, data.grammar.refinedGrammar.labelIndex.get(index))
-            val gpuIndex = data.structure.labelIndexToTerminal(index)
-            //        if(pos == 0) println(pos,t,ref,data.grammar.refinements.labels.fineIndex.get(ref), gpuIndex,score)
-            pArray(offset) = batch.insideBotCell(i, pos, pos + 1)
-            tagScores(offset, gpuIndex) = data.semiring.fromLogSpace(score.toFloat) * myScale.toFloat
-            maxScore = maxScore + tagScores(offset, gpuIndex)
-          }
-
-          if(semiring.needsScaling) {
-            scoreScale += math.log(maxScore/2)
-
+      logTime("pos tags", batch.numSentences) {
+        import workspace._
+        val totalLength = batch.totalLength
+        val tagScores = DenseMatrix.zeros[Float](totalLength, cellSize)
+        tagScores := zero
+        for (i <- (0 until batch.numSentences).par) {
+          val sent = batch.sentences(i)
+          val anch = data.grammar.tagScorer.anchor(sent)
+          val lexAnch = data.grammar.lexicon.anchor(sent)
+          var scoreScale = 0.0
+          var offset = batch.lengthOffsets(i)
+          for (pos <- 0 until sent.length) {
+            val myScale = if(semiring.needsScaling) math.exp(-batch.masks.insideScaleFor(i, pos, pos + 1)) else 1.0
+            var maxScore = zero
             for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
               val index = ref
+              val score = anch.scoreTag(pos, data.grammar.refinedGrammar.labelIndex.get(index))
               val gpuIndex = data.structure.labelIndexToTerminal(index)
-              tagScores(offset, gpuIndex) /= (maxScore/2)
+              //        if(pos == 0) println(pos,t,ref,data.grammar.refinements.labels.fineIndex.get(ref), gpuIndex,score)
+              pArray(offset) = batch.insideBotCell(i, pos, pos + 1)
+              tagScores(offset, gpuIndex) = data.semiring.fromLogSpace(score.toFloat) * myScale.toFloat
+              maxScore = maxScore + tagScores(offset, gpuIndex)
             }
 
+            if(semiring.needsScaling) {
+              scoreScale += math.log(maxScore/2)
+
+              for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
+                val index = ref
+                val gpuIndex = data.structure.labelIndexToTerminal(index)
+                tagScores(offset, gpuIndex) /= (maxScore/2)
+              }
+
+            }
+
+
+            offset += 1
           }
-
-
-          offset += 1
+          batch.partitionScales(i) = scoreScale
         }
-        batch.partitionScales(i) = scoreScale
-      }
 
-      val ev2 = pPtrBuffer.writeArray(queue, pArray, totalLength, events:_*) profileIn hdTransferEvents
-      var offset = 0
-      var ev = ev2
-      while(offset < totalLength) {
-        val toDoThisTime = math.min(devLeft.rows, totalLength - offset)
-        val evW = devLeft(0 until toDoThisTime, ::).writeFrom(tagScores(offset until offset + toDoThisTime, ::), false, ev) map (_ profileIn  hdTransferEvents)
-        ev = transposeCopy.permuteTransposeCopyOut(devInside,  pPtrBuffer, offset, toDoThisTime, devLeft(0 until toDoThisTime, ::), evW:_*) profileIn posEvents
-        val wl = transposeCopy.permuteTransposeCopy(devRight(0 until toDoThisTime, ::), devInside, pPtrBuffer, offset, toDoThisTime, ev) profileIn transferEvents
-        ev = wl
-        offset += toDoThisTime
+        val ev2 = pPtrBuffer.writeArray(queue, pArray, totalLength, events:_*) profileIn hdTransferEvents
+        var offset = 0
+        var ev = ev2
+        while(offset < totalLength) {
+          val toDoThisTime = math.min(devLeft.rows, totalLength - offset)
+          val evW = devLeft(0 until toDoThisTime, ::).writeFrom(tagScores(offset until offset + toDoThisTime, ::), false, ev) map (_ profileIn  hdTransferEvents)
+          ev = transposeCopy.permuteTransposeCopyOut(devInside,  pPtrBuffer, offset, toDoThisTime, devLeft(0 until toDoThisTime, ::), evW:_*) profileIn posEvents
+          val wl = transposeCopy.permuteTransposeCopy(devRight(0 until toDoThisTime, ::), devInside, pPtrBuffer, offset, toDoThisTime, ev) profileIn transferEvents
+          ev = wl
+          offset += toDoThisTime
+        }
+        ev
       }
-      ev
     }
 
     private def computeMasks(workspace: WorkSpace, batch: Batch[W], threshold: Float, events: CLEvent*):CLEvent = synchronized {
@@ -889,6 +891,7 @@ object CLParser extends Logging {
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = Xbarize(),
                     device: String = "nvidia",
                     profile: Boolean = false,
+                    parseTrain: Boolean = false,
                     numToParse: Int = 1000, codeCache: File = new File("grammar.grz"), cache: Boolean = true,
                     maxParseLength: Int = 10000,
                     jvmParse: Boolean = false, parseTwice: Boolean = false,
@@ -903,6 +906,12 @@ object CLParser extends Logging {
                     numToDrop: Int = 0,
                     evalReference: Boolean = false,
                     printTrees: Boolean = false)
+
+  def repeatToSize[T:ClassTag](arr: IndexedSeq[T], size: Int) = {
+    val len = arr.length
+    val mult = roundUpToMultipleOf(size,len)/len
+    IndexedSeq.fill(mult)(arr).flatten
+  }
 
   def main(args: Array[String]) = {
     import ParserParams.JointParams
@@ -926,7 +935,8 @@ object CLParser extends Logging {
     println("Training Parser...")
     println(params)
     val transformed = params.treebank.copy(binarization="left", keepUnaryChainsFromTrain = false).trainTrees
-    val gold = params.treebank.trainTrees.filter(_.words.length <= maxParseLength).drop(numToDrop).take(numToParse)
+    val whatToParse = if(parseTrain) params.treebank.trainTrees else params.treebank.trainTrees
+    val gold = repeatToSize(whatToParse.filter(_.words.length <= maxParseLength).drop(numToDrop), numToParse)
     val toParse =  gold.map(_.words)
 
 
@@ -980,6 +990,8 @@ object CLParser extends Logging {
       val grammar = grammars.last
       Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
     }
+
+    println("Up and running...")
 
     if(evalReference) {
       val res = ParserTester.evalParser(gold, parser, "cpu-reference", 4)
