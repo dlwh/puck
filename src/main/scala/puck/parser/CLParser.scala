@@ -423,8 +423,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         devOutside(::, 0 until batch.numCellsUsed),
         batch.cellOffsets, batch.lengths, structure.root, threshold, events:_*) profileIn masksEvents
       if (profile) {
-        profiler.tock()
         queue.finish()
+        profiler.tock()
         println(profiler.report("masks"))
       }
 
@@ -1000,10 +1000,10 @@ object CLParser extends Logging {
 
     if (justInsides || checkPartitions) {
       val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
-      println(partsX)
+      println(partsX.last)
       if (checkPartitions) {
         val parts2 = toParse.par.map(parser.marginal(_).logPartition)
-        println(parts2)
+        println(parts2.last)
         println("max difference: " + (DenseVector(partsX.map(_.toDouble):_*) - DenseVector(parts2.seq:_*)).norm(Double.PositiveInfinity))
       }
       System.exit(0)
