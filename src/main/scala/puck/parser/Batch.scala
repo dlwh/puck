@@ -4,13 +4,16 @@ import breeze.linalg.{DenseVector, DenseMatrix}
 import breeze.collection.mutable.TriangularArray
 import puck.linalg.CLMatrix
 import puck.util.BitHacks
+import epic.parser.SimpleRefinedGrammar
+import scala.concurrent.Future
 
 /**
  * TODO
  *
  * @author dlwh
  **/
-private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
+private[parser] case class Batch[W](
+                                    sentences: IndexedSeq[IndexedSeq[W]],
                                     devInside: CLMatrix[Float],
                                     devOutside: CLMatrix[Float],
                                     masks: PruningMask) {
@@ -22,8 +25,6 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
   val lengthOffsets = lengths.scan(0)(_ + _)
 
   def numCellsUsed: Int = cellOffsets.last
-
-
 
   assert(numCellsUsed <= devInside.cols, numCellsUsed + " " +  devInside.cols)
 

@@ -15,12 +15,15 @@ import puck.PointerFreer
  *
  * @author dlwh
  **/
-case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
+case class CLMaskKernels(maskSize: Int,
+                         blocksPerSentence: Int,
+                         blockSize: Int,
+                         getMasksKernel: CLKernel) {
 
 
   def write(prefix: String, out: ZipOutputStream) {
     ZipUtil.addKernel(out, s"$prefix/computeMasksKernel", getMasksKernel)
-    ZipUtil.serializedEntry(out, s"$prefix/MasksInts", Array(maskSize))
+    ZipUtil.serializedEntry(out, s"$prefix/MasksInts", Array(maskSize, blocksPerSentence, blockSize))
   }
 
   def getMasks(masks: CLMatrix[Int],
@@ -46,12 +49,12 @@ case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
     val evL = intBufferL.write(queue, 0, lengths.length, ptrL, false, events:_*)
 
     getMasksKernel.setArgs(masks.data.safeBuffer,
-      inside.data.safeBuffer, outside.data.safeBuffer, intBufferCI, intBufferL,
+      inside.data.safeBuffer, outside.data.safeBuffer, intBufferCI, intBufferL, LocalSize.ofIntArray(maskSize * blockSize),
       Integer.valueOf(chartIndices(chartIndices.length-1)), Integer.valueOf(inside.rows),
       Integer.valueOf(root), java.lang.Float.valueOf(threshold))
     //, LocalSize.ofIntArray(fieldSize * groupSize * 5))
 
-    val ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices.length-1, 1), Array(1, 1), evCI, evL)
+    val ev = getMasksKernel.enqueueNDRange(queue, Array(blocksPerSentence * blockSize, chartIndices.length-1, 1), Array(blockSize, 1, 1), evCI, evL)
 //    queue.finish()
     PointerFreer.enqueue(ptrCI.release(), ev)
     PointerFreer.enqueue(intBufferCI.release(), ev)
@@ -66,16 +69,26 @@ case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
 object CLMaskKernels {
   def read(prefix: String, zf: ZipFile)(implicit ctxt: CLContext) = {
     val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry(s"$prefix/MasksInts")))
-    CLMaskKernels(ints(0), ZipUtil.readKernel(zf, s"$prefix/computeMasksKernel"))
+    CLMaskKernels(ints(0), ints(1), ints(2), ZipUtil.readKernel(zf, s"$prefix/computeMasksKernel"))
   }
 
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
     val cellSize = (structure.numNonTerms max structure.numTerms)
     val maskSize = puck.roundUpToMultipleOf(structure.numCoarseSyms, 32) / 32
 
+    val blocksPerSentence = 4
+
+    val blockSize =  if (context.getDevices.head.toString.contains("Apple") && context.getDevices.head.toString.contains("Intel Core")) {
+      1
+    } else {
+      val wgSizes = context.getDevices.head.getMaxWorkItemSizes
+      val x = wgSizes(0) min 32
+      x.toInt
+    }
+
     val prog = context.createProgram(programText(cellSize, structure))
 
-    CLMaskKernels(maskSize, prog.createKernel("computeMasks"))
+    CLMaskKernels(maskSize, blocksPerSentence, blockSize, prog.createKernel("computeMasks"))
   }
 
 
@@ -157,11 +170,18 @@ __kernel void computeMasks(__global mask_t* masksOut,
                            __global const float* outside,
                            __global const int* indices,
                            __global const int* lengths,
+                           __local mask_t* tempMasks,
                            const int numIndices,
                            int numSyms,
                            int root,
                            float thresh) {
-  const int sentence = get_global_id(0);
+  const int part = get_group_id(0);
+  const int numParts = get_num_groups(0);
+
+  const int threadid = get_local_id(0);
+  const int numThreads = get_local_size(0);
+
+  const int sentence = get_global_id(1);
   const int firstCell = indices[sentence];
   const int lastCell = indices[sentence + 1];
   int length = lengths[sentence];
@@ -169,17 +189,20 @@ __kernel void computeMasks(__global mask_t* masksOut,
 
   float cutoff = root_score + thresh;
 
-  for(int cell = firstCell; cell < lastCell; cell++) {
+
+  for(int cell = firstCell + part; cell < lastCell; cell += numParts) {
     __constant const int* projections = (cell-firstCell >= length) ? nonterminalProjections : terminalProjections;
 
     __global const float* in = inside + (cell * numSyms);
     __global const float* out = outside + (cell * numSyms);
     mask_t myMask;
+    #pragma unroll
     for(int i = 0; i < NUM_FIELDS; ++i) {
       myMask.fields[i] = 0;
     }
 
-    for(int sym = 0; sym < NUM_SYMS; ++sym) {
+    #pragma unroll
+    for(int sym = threadid; sym < NUM_SYMS; sym += numThreads) {
       float score = (in[sym] + out[sym]);
       int keep = score >= cutoff;
       int field = projections[sym];
@@ -187,8 +210,23 @@ __kernel void computeMasks(__global mask_t* masksOut,
       set_bit(&myMask, field, keep);
     }
 
+    tempMasks[threadid] = myMask;
+    barrier(CLK_LOCAL_MEM_FENCE);
 
-    masksOut[cell] = myMask;
+    for(uint offset = numThreads/2; offset > 0; offset >>= 1){
+       if(threadid < offset) {
+         #pragma unroll
+         for(int i = 0; i < NUM_FIELDS; ++i) {
+            tempMasks[threadid].fields[i] =  tempMasks[threadid].fields[i] | tempMasks[threadid + offset].fields[i];
+         }
+       }
+       barrier(CLK_LOCAL_MEM_FENCE);
+    }
+
+
+
+    if(threadid == 0)
+      masksOut[cell] = tempMasks[0];
   }
 
 }
