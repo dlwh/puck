@@ -3,6 +3,7 @@ import com.nativelibs4java.opencl._
 import com.nativelibs4java.opencl.CLEvent.CommandExecutionStatus
 import scala.collection.mutable.ArrayBuffer
 import breeze.numerics.sqrt
+import breeze.stats.MeanAndVariance
 
 class CLProfiler(actuallyProfile: Boolean) {
   private var startingWallTime: Long = -1L
@@ -82,7 +83,7 @@ class CLProfiler(actuallyProfile: Boolean) {
       }
       val eventTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandEnd - e.getProfilingCommandStart)/1E9)
       val sum = eventTimes.sum
-      val (mean:Double, variance, _) = breeze.stats.meanAndVariance(eventTimes)
+      val MeanAndVariance(mean:Double, variance, _) = breeze.stats.meanAndVariance(eventTimes)
       val std:Double = sqrt(variance)
 //      val queueTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandStart - e.getProfilingCommandQueued)/1E9).sum
 //      val submitTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandEnd - e.getProfilingCommandSubmit)/1E9).sum
