@@ -18,9 +18,9 @@ import puck.PointerFreer
 case class CLMBRKernels(maskSize: Int, getMasksKernel: CLKernel) {
 
 
-  def write(out: ZipOutputStream) {
-    ZipUtil.addKernel(out, "computeMBRKernel", getMasksKernel)
-    ZipUtil.serializedEntry(out, "MBRInts", Array(maskSize))
+  def write(prefix: String, out: ZipOutputStream) {
+    ZipUtil.addKernel(out, s"$prefix/computeMBRKernel", getMasksKernel)
+    ZipUtil.serializedEntry(out, s"$prefix/MBRInts", Array(maskSize))
   }
 
   def getMasks(masks: CLMatrix[Int],
@@ -51,7 +51,7 @@ case class CLMBRKernels(maskSize: Int, getMasksKernel: CLKernel) {
       Integer.valueOf(root))
     //, LocalSize.ofIntArray(fieldSize * groupSize * 5))
 
-    val ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices.length-1, 1), Array(1, 1), evCI, evL)
+    var ev = getMasksKernel.enqueueNDRange(queue, Array(chartIndices.length-1, 1), Array(1, 1), evCI, evL)
 //    queue.finish()
     PointerFreer.enqueue(ptrCI.release(), ev)
     PointerFreer.enqueue(intBufferCI.release(), ev)
@@ -64,14 +64,15 @@ case class CLMBRKernels(maskSize: Int, getMasksKernel: CLKernel) {
 }
 
 object CLMBRKernels {
-  def read(zf: ZipFile)(implicit ctxt: CLContext) = {
-    val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("MBRInts")))
-    CLMBRKernels(ints(0), ZipUtil.readKernel(zf, "computeMBRKernel"))
+  def read(prefix: String, zf: ZipFile)(implicit ctxt: CLContext) = {
+    val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry(s"$prefix/MBRInts")))
+    CLMBRKernels(ints(0), ZipUtil.readKernel(zf, s"$prefix/computeMBRKernel"))
   }
 
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
     val cellSize = (structure.numNonTerms max structure.numTerms)
     val maskSize = puck.roundUpToMultipleOf(structure.numCoarseSyms, 32) / 32
+
 
     val prog = context.createProgram(programText(cellSize, structure, semiring))
 
@@ -129,39 +130,46 @@ __kernel void computeMBR(__global decode_t* decodeOut,
   int length = lengths[sentence];
   const float root_score = inside[(lastCell-1) * numSyms + root];
 
+   int firstTop = firstCell + (lastCell-firstCell)/2;
 
   for(int cell = firstCell; cell < lastCell; cell++) {
     __constant const int* projections = (cell-firstCell >= length) ? nonterminalProjections : terminalProjections;
 
+    int isSingleWordTop = (cell - firstTop <= length);
+
     __global const float* in = inside + (cell * numSyms);
     __global const float* out = outside + (cell * numSyms);
-      
+
     float coarseMargs["""+structure.numCoarseSyms+"""];
     for(int coarseSym = 0; coarseSym < """+structure.numCoarseSyms+"""; ++coarseSym) {
       coarseMargs[coarseSym] = 0.0f;
     }
     for(int sym = 0; sym < NUM_SYMS; ++sym) {
-""" + {if (semiring.isInstanceOf[LogSumRuleSemiring.type]) {
-    "coarseMargs[projections[sym]] += exp(in[sym] - root_score + out[sym]);\n"
-  } else {
-    "coarseMargs[projections[sym]] += in[sym]/root_score * out[sym];\n"
-  } }+ """
+ """ + {if (semiring.isInstanceOf[LogSumRuleSemiring.type]) {
+      "coarseMargs[projections[sym]] += exp(in[sym] - root_score + out[sym]);\n"
+    } else {
+      "coarseMargs[projections[sym]] += in[sym]/root_score * out[sym];\n"
+    } }+ """
     }
-      
+
     decode_t myDecode;
     myDecode.score = -INFINITY;
     myDecode.symbol = -1;
+    float totalScore = 0.0f;
     for(int coarseSym = 0; coarseSym < """+structure.numCoarseSyms+"""; ++coarseSym) {
+      totalScore += coarseMargs[coarseSym];
       if (coarseMargs[coarseSym] > myDecode.score) {
       	myDecode.score = coarseMargs[coarseSym];
       	myDecode.symbol = coarseSym;
       }
     }
 
+    //if(isSingleWordTop) myDecode.score = totalScore;
+
     decodeOut[cell] = myDecode;
   }
 
 }
-      """
+                                                                   """
   }
 }

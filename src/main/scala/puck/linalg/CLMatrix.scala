@@ -41,7 +41,7 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
                                                          val isTranspose: Boolean = false)(implicit val queue: CLQueue, ct: ClassTag[V])
   extends Matrix[V] with MatrixLike[V, CLMatrix[V]] {
   /** Creates a matrix with the specified data array, rows, and columns. */
-  def this(rows: Int, cols: Int)(implicit ct: ClassTag[V], context: CLContext, queue: CLQueue) = this(rows, cols, context.createBuffer[V](CLMem.Usage.InputOutput, ct.runtimeClass.asInstanceOf[Class[V]], rows * cols), 0, rows)
+  def this(rows: Int, cols: Int)(implicit ct: ClassTag[V], context: CLContext, queue: CLQueue) = this(rows, cols, context.createBuffer[V](CLMem.Usage.InputOutput, ct.runtimeClass.asInstanceOf[Class[V]], rows.toLong * cols), 0, rows)
   /** Creates a matrix with the specified data array, rows, and columns. Data must be column major */
   def this(rows: Int, cols: Int, data: CLBuffer[V], offset: Int = 0)(implicit queue: CLQueue, ct: ClassTag[V]) = this(rows, cols, data, offset, rows)
 
@@ -100,16 +100,17 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
     require(b.rows == this.rows, "Matrices must have same number of rows")
     require(b.cols == this.cols, "Matrices must have same number of columns")
     val evv = data.unmap(events:_*)
-    val floats =  Pointer.pointerToArray[V](b.data)
-    val ev = if(isGapless(b) && this.isGapless && b.isTranspose == this.isTranspose) {
-       IndexedSeq(data.buffer.write(queue, offset, size, floats.next(b.offset), blocking, evv))
-    } else if(b.isTranspose == this.isTranspose) {
+    val _b = if(isGapless(b)) b else b.copy
+    val floats =  Pointer.pointerToArray[V](_b.data)
+    val ev = if(this.isGapless && _b.isTranspose == this.isTranspose) {
+       IndexedSeq(data.buffer.write(queue, offset, size, floats.next(_b.offset), blocking, evv))
+    } else if(_b.isTranspose == this.isTranspose) {
       // copy one "column" at b time
-      val rr = if(b.isTranspose) b.cols else b.rows
-      val cc = if(b.isTranspose) b.rows else b.cols
+      val rr = if(_b.isTranspose) _b.cols else _b.rows
+      val cc = if(_b.isTranspose) _b.rows else _b.cols
       val ev = for(column <- 0 until cc) yield {
        data.buffer.write(queue, offset + majorStride * column, 
-         rr, floats.next(b.offset + b.majorStride * column), blocking, evv)
+         rr, floats.next(_b.offset + _b.majorStride * column), blocking, evv)
       }
       ev
     } else {
@@ -571,6 +572,12 @@ trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
     }
   }
 
+
+  implicit object SetCLMDMIntOp extends OpSet.InPlaceImpl2[CLMatrix[Int], DenseMatrix[Int]] {
+    def apply(a: CLMatrix[Int], b: DenseMatrix[Int]) {
+      a.writeFrom(b, true)
+    }
+  }
 
 
   implicit object setCLMCLMFloat extends SetCLMCLMVOp[Float]

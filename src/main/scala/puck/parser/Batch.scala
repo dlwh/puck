@@ -3,8 +3,8 @@ package puck.parser
 import breeze.linalg.{DenseVector, DenseMatrix}
 import breeze.collection.mutable.TriangularArray
 import puck.linalg.CLMatrix
-import puck.util.BitHacks
-import com.nativelibs4java.opencl.CLBuffer
+import com.nativelibs4java.opencl.{CLQueue, CLMem, CLContext}
+import org.bridj.Pointer
 
 /**
  * TODO
@@ -14,18 +14,26 @@ import com.nativelibs4java.opencl.CLBuffer
 private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
                                     devInside: CLMatrix[Float],
                                     devOutside: CLMatrix[Float],
-                                    masks: PruningMask) {
+                                    masks: PruningMask)(implicit ctxt: CLContext, queue: CLQueue) {
+  var partitionScales = DenseVector.zeros[Double](sentences.length)
+
   val cellOffsets = sentences.scanLeft(0)((acc, sent) => acc + TriangularArray.arraySize(sent.length) * 2).toArray
 
   val lengths = sentences.map(_.length).toArray
   val lengthOffsets = lengths.scan(0)(_ + _)
 
-  def lengthsDev: CLBuffer[Integer] = ???
-  def cellOffsetsDev: CLBuffer[Integer] = ???
+  lazy val cellOffsetsDev = ctxt.createIntBuffer(CLMem.Usage.Input, Pointer.pointerToInts(cellOffsets:_*))
+  lazy val lengthsDev = ctxt.createIntBuffer(CLMem.Usage.Input, Pointer.pointerToInts(lengths:_*))
+  lazy val masksDev = masks match {
+    case m:DenseMatrixMask =>
+      val mat = CLMatrix.zeros[Int](m.matrix.rows, m.matrix.cols)
+      mat := m.matrix
+      Some(mat)
+    case _ =>
+      None
+  }
 
   def numCellsUsed: Int = cellOffsets.last
-
-
 
   assert(numCellsUsed <= devInside.cols, numCellsUsed + " " +  devInside.cols)
 
@@ -34,7 +42,8 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
   val totalLength = sentences.map(_.length).sum
   assert(numCellsUsed <= devInside.cols)
 
-  def isAllowedSpan(sent: Int, begin: Int, end: Int) = botMaskFor(sent, begin, end).forall(BitHacks.any)
+  def isAllowedSpan(sent: Int, begin: Int, end: Int) = masks.isAllowedSpan(sent, begin, end)
+  def isAllowedTopSpan(sent: Int, begin: Int, end: Int) = masks.isAllowedTopSpan(sent, begin, end)
 
   def rootIndex(sent: Int) = insideCharts(sent).top.rootIndex
   def rootIndices = Array.tabulate(sentences.length)(rootIndex)
@@ -48,7 +57,10 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
 
   def insideBotCell(sent: Int, begin: Int, end: Int) = cellOffsets(sent) + ChartHalf.chartIndex(begin, end, lengths(sent))//insideCharts(sent).bot.cellOffset(begin, end)
   def insideTopCell(sent: Int, begin: Int, end: Int) = cellOffsets(sent)/2 + cellOffsets(sent+1)/2 +  ChartHalf.chartIndex(begin, end, lengths(sent))//insideCharts(sent).bot.cellOffset(begin, end)
-//  def insideTopCell(sent: Int, begin: Int, end: Int) = insideCharts(sent).top.cellOffset(begin, end)
+  def insideBotOffset(sent: Int) = cellOffsets(sent)
+  def insideTopOffset(sent: Int) = cellOffsets(sent)/2 + cellOffsets(sent+1)/2
+  def outsideBotOffset(sent: Int) = cellOffsets(sent)
+  def outsideTopOffset(sent: Int) = cellOffsets(sent)/2 + cellOffsets(sent+1)/2
 
   def outsideBotCell(sent: Int, begin: Int, end: Int) = cellOffsets(sent) + ChartHalf.chartIndex(begin, end, lengths(sent))//outsideCharts(sent).bot.cellOffset(begin, end)
   def outsideTopCell(sent: Int, begin: Int, end: Int) = cellOffsets(sent)/2 + cellOffsets(sent+1)/2 +  ChartHalf.chartIndex(begin, end, lengths(sent))//outsideCharts(sent).bot.cellOffset(begin, end)

@@ -19,11 +19,11 @@ import java.io.{FileOutputStream, File}
  * @author dlwh
  **/
 abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L], writeDirectToChart: Boolean) extends GenRuleMultiply[C, L] {
-  def javaBinaryRuleApplication(rules: util.List[IndexedBinaryRule[C, L]], name: String, context: CLContext):CLBinaryRuleUpdater
+  def javaBinaryRuleApplication(rules: util.List[IndexedBinaryRule[C, L]], name: String, context: CLContext, lt: LoopType):CLBinaryRuleUpdater
   def javaUnaryRuleApplication(rules: util.List[IndexedUnaryRule[C, L]], name: String, context: CLContext):CLUnaryRuleUpdater
 
-  def binaryRuleApplication(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String)(implicit cl: CLContext): CLBinaryRuleUpdater = {
-    javaBinaryRuleApplication(rules.map((IndexedBinaryRule[C, L] _).tupled).asJava, name, cl)
+  def binaryRuleApplication(rules: IndexedSeq[(BinaryRule[SymId[C, L]], Int)], name: String, loopType: LoopType)(implicit cl: CLContext): CLBinaryRuleUpdater = {
+    javaBinaryRuleApplication(rules.map((IndexedBinaryRule[C, L] _).tupled).asJava, name, cl, loopType)
   }
 
 
@@ -45,8 +45,10 @@ abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L],
       programs.foreach(_.addBuildOption("-DNVIDIA"))
 //      programs.foreach(_.addBuildOption("-cl-nv-opt-level=0"))
 //      programs.foreach(_.addBuildOption("-cl-opt-disable"))
-      //programs.foreach(_.addBuildOption("-cl-nv-arch"))
+//      programs.foreach(_.addBuildOption("-cl-nv-arch"))
       //programs.foreach(_.addBuildOption("sm_30"))
+//      programs.foreach(_.addBuildOption("sm_35"))
+
     }
 
     val result = (programs zip partitions.asScala).map{ case (prog, part) =>
@@ -77,7 +79,7 @@ abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L],
       val names = r.kernels.map(_.getFunctionName)
       val parents = BitHacks.asBitSet(r.parents).iterator.map(structure.refinements.labels.coarseIndex.get(_:Int)).toSet
       val ruleCounts = r.rules.length
-      println(names,parents,ruleCounts)
+      //println(names,parents,ruleCounts)
     }
 
     result

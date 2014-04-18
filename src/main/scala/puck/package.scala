@@ -89,26 +89,65 @@ package object puck {
   implicit def bufjlDoubleToDoubleBuffer(buffer: CLBuffer[jl.Double]) = buffer.asInstanceOf[CLBuffer[Double]]
   implicit def bufjlIntToIntBuffer(buffer: CLBuffer[jl.Integer]) = buffer.asInstanceOf[CLBuffer[Int]]
 
+  val writeTimer = new puck.util.Timer
+  val allTimer = new puck.util.Timer
+
 
   implicit class RichCLIntBuffer(val buffer: CLBuffer[Integer])(implicit tag: scala.reflect.ClassTag[Integer]) {
 
     def writeArray(queue: CLQueue, arr: Array[Int], lengthOfArray: Int, events: CLEvent*):CLEvent = {
+      allTimer.tic()
+      require(buffer.getElementCount >= lengthOfArray)
       require(lengthOfArray <= arr.length)
       val ptr = if(lengthOfArray == arr.length) {
         Pointer.pointerToArray[Integer](arr)
       } else {
         Pointer.allocateInts(lengthOfArray).setIntsAtOffset(0, arr, 0, lengthOfArray)
       }
+//      val in = System.currentTimeMillis()
+      writeTimer.tic()
       val ev = buffer.write(queue, ptr, false, events:_*)
+      writeTimer.toc()
+//      val out = System.currentTimeMillis()
+//      val trace = new Exception
+//      val t = trace.getStackTrace.apply(1)
+      //println(s"Write took ${(out -in)/1000.0}s from $t. ${lengthOfArray} elements.")
+
 
       PointerFreer.enqueue({ptr.release()}, ev)
+      allTimer.toc()
+
+      ev
+    }
+
+
+    def writeArrayAtOffset(queue: CLQueue, offset: Int, arr: Array[Int], lengthOfArray: Int, events: CLEvent*):CLEvent = {
+      allTimer.tic()
+      require(lengthOfArray <= arr.length)
+      val ptr = if(lengthOfArray == arr.length) {
+        Pointer.pointerToArray[Integer](arr)
+      } else {
+        Pointer.allocateInts(lengthOfArray).setIntsAtOffset(0, arr, 0, lengthOfArray)
+      }
+//      val in = System.currentTimeMillis()
+      writeTimer.tic()
+      val ev = buffer.write(queue, offset, lengthOfArray, ptr, false, events:_*)
+      writeTimer.toc()
+//      val out = System.currentTimeMillis()
+//      val trace = new Exception
+//      val t = trace.getStackTrace.apply(1)
+      //println(s"Write took ${(out -in)/1000.0}s from $t. ${lengthOfArray} elements.")
+
+
+      PointerFreer.enqueue({ptr.release()}, ev)
+      allTimer.toc()
 
       ev
     }
   }
 
   implicit class RichCLEvent(val event: CLEvent) extends AnyVal {
-    def profileIn(group: puck.util.CLProfiler) = group.prof(event)
+    def profileIn(group: puck.util.CLProfiler#EventTimer) = group.prof(event)
   }
 
   def roundUpToMultipleOf(num: Int, divisor: Int) = (num + divisor - 1)/divisor * divisor
@@ -118,7 +157,7 @@ package object puck {
     val x = f
     val out = System.currentTimeMillis()
     val duration = (out-in)/1000.0
-    println(f"$name took ${duration}s seconds. (${numItems/duration} per second)")
+    println(f"$name took ${duration}s seconds. (${numItems/duration}%.3f per second)")
     x
   }
 

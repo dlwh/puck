@@ -14,13 +14,13 @@ case class CLInsideKernels(insideNNKernels: CLBinaryRuleUpdater,
                            insideNUKernels: CLUnaryRuleUpdater,
                            insideTUKernels: CLUnaryRuleUpdater) {
 
-  def write(out: ZipOutputStream) {
-    insideNTKernels.write("insideNT", out)
-    insideNNKernels.write("insideNN", out)
-    insideTNKernels.write("insideTN", out)
-    insideTTKernels.write("insideTT", out)
-    insideNUKernels.write("insideNU", out)
-    insideTUKernels.write("insideTU", out)
+  def write(prefix: String, out: ZipOutputStream) {
+    insideNTKernels.write(s"$prefix/insideNT", out)
+    insideNNKernels.write(s"$prefix/insideNN", out)
+    insideTNKernels.write(s"$prefix/insideTN", out)
+    insideTTKernels.write(s"$prefix/insideTT", out)
+    insideNUKernels.write(s"$prefix/insideNU", out)
+    insideTUKernels.write(s"$prefix/insideTU", out)
   }
 }
 
@@ -55,13 +55,13 @@ object GenType {
 }
 
 object CLInsideKernels {
-  def read(in: ZipFile)(implicit context: CLContext) = {
-    val insideNT = CLBinaryRuleUpdater.read(in, "insideNT")
-    val insideNN = CLBinaryRuleUpdater.read(in, "insideNN")
-    val insideTN = CLBinaryRuleUpdater.read(in, "insideTN")
-    val insideTT = CLBinaryRuleUpdater.read(in, "insideTT")
-    val insideNU = CLUnaryRuleUpdater.read(in, "insideNU")
-    val insideTU = CLUnaryRuleUpdater.read(in, "insideTU")
+  def read(prefix: String, in: ZipFile)(implicit context: CLContext) = {
+    val insideNT = CLBinaryRuleUpdater.read(in, s"$prefix/insideNT")
+    val insideNN = CLBinaryRuleUpdater.read(in, s"$prefix/insideNN")
+    val insideTN = CLBinaryRuleUpdater.read(in, s"$prefix/insideTN")
+    val insideTT = CLBinaryRuleUpdater.read(in, s"$prefix/insideTT")
+    val insideNU = CLUnaryRuleUpdater.read(in, s"$prefix/insideNU")
+    val insideTU = CLUnaryRuleUpdater.read(in, s"$prefix/insideTU")
     CLInsideKernels(insideNN, insideNT, insideTN, insideTT, insideNU, insideTU)
   }
 
@@ -75,13 +75,13 @@ object CLInsideKernels {
 //    val parserGen = new CoarseParentSymbolSegmentationGenRuleMultiply[C, L](structure)
 //	  val parserGen = new GreedySegmentationGenRuleMultiply[C, L](structure)
 //    val parserGen = new NoninlinedRuleMultiply(structure)
-    val insideNNKernels =  parserGen.binaryRuleApplication(structure.nontermRules, "inside_nn_binaries")
+    val insideNNKernels =  parserGen.binaryRuleApplication(structure.nontermRules, "inside_nn_binaries", LoopType.Inside)
 
-    val insideNTKernels =  parserGen.binaryRuleApplication(structure.rightTermRules, "inside_nt_binaries")
+    val insideNTKernels =  parserGen.binaryRuleApplication(structure.rightTermRules, "inside_nt_binaries", LoopType.InsideNT)
 
-    val insideTNKernels =  parserGen.binaryRuleApplication(structure.leftTermRules, "inside_tn_binaries")
+    val insideTNKernels =  parserGen.binaryRuleApplication(structure.leftTermRules, "inside_tn_binaries", LoopType.InsideTN)
 
-    val insideTTKernels =  parserGen.binaryRuleApplication(structure.bothTermRules, "inside_tt_binaries")
+    val insideTTKernels =  parserGen.binaryRuleApplication(structure.bothTermRules, "inside_tt_binaries", LoopType.Inside)
 
     val insideNUKernels =  parserGen.unaryRuleApplication(structure.unaryRules, "inside_n_unaries")
 

@@ -57,7 +57,7 @@ class CLMatrixTransposeCopy private(wgSize: Array[Int], kernel: CLKernel, kernel
     val ptr = Pointer.pointerToArray[java.lang.Integer](dstColPointers)
     val intBuffer = queue.getContext.createIntBuffer(CLMem.Usage.InputOutput, numCols)
     val ev = intBuffer.write(queue, 0, numCols, ptr, false, events:_*)
-    val res = permuteTransposeCopyOut(dst, intBuffer.asInstanceOf[CLBuffer[Int]], numCols, src, ev)
+    val res = permuteTransposeCopyOut(dst, intBuffer.asInstanceOf[CLBuffer[Int]], 0, numCols, src, ev)
     res.invokeUponCompletion(new Runnable() {
       def run() = { ptr.release(); intBuffer.release() }
     })
@@ -65,16 +65,16 @@ class CLMatrixTransposeCopy private(wgSize: Array[Int], kernel: CLKernel, kernel
   }
 
   def permuteTransposeCopyOut(dst: CLMatrix[Float],
-                              dstColPointers: CLBuffer[Int], numCols: Int,
+                              dstColPointers: CLBuffer[Int], dstColOffset: Int, numCols: Int,
                               src: CLMatrix[Float],
                               events: CLEvent*)(implicit queue: CLQueue):CLEvent = synchronized {
     require(dst.rows == src.cols)
     require(dst.isTranspose == src.isTranspose)
-    assert(numCols == src.rows)
+    assert(numCols == src.rows, s"numCols $numCols does not match src rows ${src.rows}")
 
     kernelOut.setArgs(
       dst.data.safeBuffer, Integer.valueOf(dst.offset), Integer.valueOf(dst.majorStride), 
-      dstColPointers,
+      dstColPointers, Integer.valueOf(dstColOffset),
       src.data.safeBuffer, Integer.valueOf(src.offset), Integer.valueOf(src.majorStride), 
       Integer.valueOf(numCols),
       Integer.valueOf(src.cols))
@@ -169,18 +169,20 @@ __kernel void transpose_copy(__global T* _dst, int dstOff, int dstMajorStride,
 }
 
 __kernel void transpose_copy_out(
-      __global T* _dst, int dstOff, int dstMajorStride, __global int* dstPtrs,
+      __global T* _dst, int dstOff, int dstMajorStride,
+       __global int* _dstPtrs, int dstColOffset,
       __global T* _src, int srcOff, int srcMajorStride, 
       int srcRows, int srcCols) {
   // copy each col into block[i]
   __local T block[BLOCK_SIZE][BLOCK_SIZE+1]; // + 1 to avoid bank conflicts
-  event_t copyInEvents[BLOCK_SIZE];
+  __global int* dstPtrs = _dstPtrs + dstColOffset;
 
   __global T* dst = _dst + dstOff;
   __global T* src = _src + srcOff;
 
   int srcCol = get_global_id(0);
   int threadid = get_local_id(0);
+  int numThreads = get_local_size(0);
   // srcCol - threadid is the same for all threads in a workgroup.
   int firstSrcCol = get_group_id(0) * BLOCK_SIZE;
   int nColsToDo = max(min(BLOCK_SIZE, srcCols - firstSrcCol),0);
@@ -193,16 +195,19 @@ __kernel void transpose_copy_out(
 
 
   for(int i = 0; i < nColsToDo; ++i) {
-    copyInEvents[i] = async_work_group_copy(block[i], // block(i, ::)
-      src + srcMajorStride * (firstSrcCol + i) + firstSrcRow, // src(firstSrcRow --> nRowsToDo, myPtrs(i))
-      nRowsToDo, 0); //
-    // TODO: why is this necessary on intel? the wait_group_events below doesn't work.
-    wait_group_events(1, copyInEvents + i);
+    for(int row = threadid; row < nRowsToDo; row += numThreads) {
+      block[i][row] = src[srcMajorStride * (firstSrcCol + i) + firstSrcRow + row];
+    }
+    //copyInEvents[i] = async_work_group_copy(block[i], // block(i, ::)
+    //  src + srcMajorStride * (firstSrcCol + i) + firstSrcRow, // src(firstSrcRow --> nRowsToDo, myPtrs(i))
+    // nRowsToDo, 0); //
+    //// TODO: why is this necessary on intel? the wait_group_events below doesn't work.
+    //wait_group_events(1, copyInEvents + i);
   }
 
 
-  wait_group_events(nColsToDo, copyInEvents);
   wait_group_events(1, &copyFirstPtr);
+  barrier(CLK_LOCAL_MEM_FENCE);
 
   // each block[i] now contains the slice src(firstSrcRow --> nRowsToDo, firstSrcCol + i)
   // we want to move src(firstSrcRow, ::) to dst(::, dstPtrs(firstSrcRow))

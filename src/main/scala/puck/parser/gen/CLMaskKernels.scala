@@ -18,9 +18,9 @@ import puck.PointerFreer
 case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
 
 
-  def write(out: ZipOutputStream) {
-    ZipUtil.addKernel(out, "computeMasksKernel", getMasksKernel)
-    ZipUtil.serializedEntry(out, "MasksInts", Array(maskSize))
+  def write(prefix: String, out: ZipOutputStream) {
+    ZipUtil.addKernel(out, s"$prefix/computeMasksKernel", getMasksKernel)
+    ZipUtil.serializedEntry(out, s"$prefix/MasksInts", Array(maskSize))
   }
 
   def getMasks(masks: CLMatrix[Int],
@@ -64,9 +64,10 @@ case class CLMaskKernels(maskSize: Int, getMasksKernel: CLKernel) {
 }
 
 object CLMaskKernels {
-  def read(zf: ZipFile)(implicit ctxt: CLContext) = {
-    val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry("MasksInts")))
-    CLMaskKernels(ints(0), ZipUtil.readKernel(zf, "computeMasksKernel"))
+
+  def read(prefix: String, zf: ZipFile)(implicit ctxt: CLContext) = {
+    val ints = ZipUtil.deserializeEntry[Array[Int]](zf.getInputStream(zf.getEntry(s"$prefix/MasksInts")))
+    CLMaskKernels(ints(0), ZipUtil.readKernel(zf, s"$prefix/computeMasksKernel"))
   }
 
   def make[C, L](structure: RuleStructure[C, L])(implicit context: CLContext, semiring: RuleSemiring) = {
@@ -79,8 +80,8 @@ object CLMaskKernels {
   }
 
 
-  def maskHeader[C, L](structure: RuleStructure[C, L]) = {
-    val maskSize = puck.roundUpToMultipleOf(structure.numCoarseSyms, 32) / 32
+  def maskHeader[C, L](numCoarseSyms: Int) = {
+    val maskSize = maskSizeFor(numCoarseSyms)
     """#define NUM_FIELDS """ + maskSize + """
 
   typedef struct { int fields[NUM_FIELDS]; } mask_t;
@@ -91,19 +92,33 @@ object CLMaskKernels {
     mask->fields[field] = mask->fields[field] | (shouldSet<<(modulus));
   }
 
-  /* Intel gets sad from this one?
-  inline int is_set(mask_t* mask, int bit) {
-    int field = (bit/32);
-    int modulus = bit%32;
-    return mask->fields[field] & (1<<(modulus));
-  }
-  */
-
    #define is_set(mask, bit)  ((mask)->fields[(bit)/32] & (1<<((bit)%32)))
+
+   inline int maskIntersects(const mask_t* mask1, const mask_t* mask2) {
+   #pragma unroll
+     for(int i = 0; i < NUM_FIELDS; ++i) {
+       if(mask1->fields[i] & mask2->fields[i]) return 1;
+     }
+
+     return 0;
+   }
+
+    inline int maskAny(const mask_t* mask1) {
+   #pragma unroll
+     for(int i = 0; i < NUM_FIELDS; ++i) {
+       if(mask1->fields[i]) return 1;
+     }
+
+     return 0;
+   }
 
                                            """
   }
 
+
+  def maskSizeFor[L, C](numCoarseSyms: Int): Int = {
+    puck.roundUpToMultipleOf(numCoarseSyms, 32) / 32
+  }
 
   def genCheckIfMaskIsEmpty[C, L](structure: RuleStructure[C, L],
                                     nameOfMaskVariable: String,
@@ -127,7 +142,7 @@ object CLMaskKernels {
   def programText[L, C](cellSize: Int, structure: RuleStructure[C, L]): String = {
 
 
-    maskHeader(structure) ++ """
+    maskHeader(structure.numCoarseSyms) ++ """
       #define NUM_SYMS """ + cellSize + """
 
                                         """ + structure.projectedTerminalMap.padTo(cellSize, 0).mkString("__constant int terminalProjections[] = {", ", ", "};") +

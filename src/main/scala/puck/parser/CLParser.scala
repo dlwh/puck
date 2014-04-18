@@ -1,13 +1,12 @@
 package puck
 package parser
 
-import epic.AwesomeBitSet
 import gen._
 import com.nativelibs4java.opencl._
 import com.typesafe.scalalogging.slf4j.Logging
 import puck.util._
 import puck.linalg.CLMatrix
-import puck.linalg.kernels.{CLMatrixSliceCopy, CLMatrixTransposeCopy}
+import puck.linalg.kernels.CLMatrixTransposeCopy
 import breeze.collection.mutable.TriangularArray
 import breeze.linalg.{DenseVector, DenseMatrix}
 import epic.trees.annotations.TreeAnnotator
@@ -15,33 +14,24 @@ import epic.parser._
 import breeze.config.CommandLineParser
 import epic.trees._
 import java.io._
-import java.util.zip.{ZipFile, ZipOutputStream}
+import java.util.zip.{ZipEntry, ZipFile, ZipOutputStream}
 import scala.collection.mutable.ArrayBuffer
-import BitHacks._
-import epic.trees.UnaryTree
-import scala.Some
-import epic.parser.ViterbiDecoder
-import epic.trees.NullaryTree
-import epic.trees.BinaryTree
-import epic.trees.annotations.Xbarize
-import epic.trees.Span
 import epic.parser.SimpleRefinedGrammar.CloseUnaries
 import epic.parser.projections.{ProjectionIndexer, GrammarRefinements, ParserChartConstraintsFactory, ConstraintCoreGrammarAdaptor}
 import scala.collection.parallel.immutable.ParSeq
 import java.util.Collections
 import epic.trees.UnaryTree
-import scala.Some
 import epic.parser.ViterbiDecoder
 import epic.trees.NullaryTree
 import epic.trees.BinaryTree
 import epic.trees.annotations.Xbarize
 import epic.trees.Span
-import puck.parser.RuleStructure
-import scala.io.Source
+import scala.io.{Codec, Source}
 import epic.lexicon.Lexicon
 import breeze.util.Index
 import org.bridj.Pointer
-import java.nio.FloatBuffer
+import scala.reflect.ClassTag
+
 
 /**
  * TODO
@@ -50,17 +40,12 @@ import java.nio.FloatBuffer
  **/
 class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         maxAllocSize: Long = 1<<30,
-                        doEmptySpans: Boolean = false,
-                        profile: Boolean = true,
-                        var oldPruning: Boolean = false,
-                        trackRules: Boolean = false)(implicit val context: CLContext) extends Logging {
-  val skipFineWork = false
+                        profile: Boolean = true)(implicit val context: CLContext) extends Logging {
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
     val mask = computeMasks(sentences)
     parsers.last.parse(sentences, mask)
   }
-
 
   def partitions(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[Float] = synchronized {
     val mask = computeMasks(sentences)
@@ -72,10 +57,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     parsers.last.insideOutside(sentences, mask)
   }
 
-
   private def computeMasks(sentences: IndexedSeq[IndexedSeq[W]]): PruningMask = {
-    val ev = maskCharts.assignAsync(-1)
-    ev.waitFor()
     parsers.dropRight(1).foldLeft(NoPruningMask:PruningMask)( (a,b) => b.updateMasks(sentences, a))
   }
 
@@ -83,247 +65,178 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   def isViterbi = data.last.isViterbi
 
-  private val initMemFillEvents  = new CLProfiler("initMemfill")
-  private val memFillEvents  = new CLProfiler("memfill")
-  private val hdTransferEvents  = new CLProfiler("Host2Dev Transfer")
-  private val transferEvents  = new CLProfiler("Transfer")
-  private val binaryEvents  = new CLProfiler("Binary")
-  private val unaryEvents  = new CLProfiler("Unary")
-  private val sumToChartsEvents  = new CLProfiler("SumToCharts")
-  private val sumEvents  = new CLProfiler("Sum")
-  private val masksEvents  = new CLProfiler("Masks")
-  val allProfilers =  IndexedSeq(transferEvents, binaryEvents, unaryEvents, sumToChartsEvents, sumEvents, initMemFillEvents, memFillEvents, hdTransferEvents, masksEvents)
+  private val profiler = new CLProfiler(profile)
+
+  private val initMemFillEvents  = profiler.eventTimer("initMemfill")
+  private val memFillEvents  = profiler.eventTimer("memfill")
+  private val hdTransferEvents  = profiler.eventTimer("Host2Dev Transfer")
+  private val transferEvents  = profiler.eventTimer("Transfer")
+  private val binaryEvents  = profiler.eventTimer("Binary")
+  private val unaryEvents  = profiler.eventTimer("Unary")
+  private val unarySumEvents  = profiler.eventTimer("Unary Sum")
+  private val posEvents  = profiler.eventTimer("POS")
+  private val masksEvents  = profiler.eventTimer("Masks")
 
   // TODO:
 
   def release() {
-    devParentRaw.release()
-    devInsideRaw.release()
-    devOutsideRaw.release()
-    devLeftRaw.release()
-    devRightRaw.release()
     queue.release()
-    devParentPtrs.release()
-
-    maskParent.release()
-    maskCharts.release()
   }
 
-  // size in floats, just the number of symbols
-  val cellSize:Int = roundUpToMultipleOf(data.map(_.numSyms).max, 32)
-  val maskSize:Int = {
-    assert(data.forall(_.maskSize == data.head.maskSize))
-    data.head.maskSize
-  }
 
-  val (numDefaultWorkCells:Int, numDefaultChartCells: Int) = {
-    val sizeOfFloat = 4
-    val fractionOfMemoryToUse = 0.7 // slack!
-    val maxSentencesPerBatch: Long = 400
-//    val fractionOfMemoryToUse = 0.9 // slack!
-    val amountOfMemory = ((context.getDevices.head.getGlobalMemSize min maxAllocSize) * fractionOfMemoryToUse).toInt  - maxSentencesPerBatch * 3 * 4;
-    val maxPossibleNumberOfCells = ((amountOfMemory / sizeOfFloat) / (cellSize + 4 + maskSize)).toInt // + 4 for each kind of offset
-    // We want numGPUCells and numGPUChartCells to be divisible by 16, so that we get aligned strided access:
-    //       On devices of compute capability 1.0 or 1.1, the k-th thread in a half warp must access the
-    //       k-th word in a segment aligned to 16 times the size of the elements being accessed; however,
-    //       not all threads need to participate... If sequential threads in a half warp access memory that is
-    //       sequential but not aligned with the segments, then a separate transaction results for each element
-    //       requested on a device with compute capability 1.1 or lower.
-    val numberOfUnitsOf32 = maxPossibleNumberOfCells / 32
-    // average sentence length of sentence, let's say n.
-    // for the gpu charts, we'll need (n choose 2) * 2 * 2 =
-    // for the "P/L/R" parts, the maximum number of relaxations (P = L * R * rules) for a fixed span
-    // in a fixed sentence is (n/2)^2= n^2/4.
-    // Take n = 32, then we want our P/L/R arrays to be of the ratio (3 * 256):992 \approx 3/4 (3/4 exaclty if we exclude the - n term)
-    // doesn't quite work the way we want (outside), so we'll bump the number to 4/5
-    val relativeSizeOfChartsToP = 7
-    val baseSize = numberOfUnitsOf32 / (3 + relativeSizeOfChartsToP)
-    val extra = numberOfUnitsOf32 % (3 + relativeSizeOfChartsToP)
-    val plrSize = baseSize
-    // TODO, can probably do a better job of these calculations?
-    (plrSize * 32, (baseSize * relativeSizeOfChartsToP + extra) * 32)
-  }
-
-  def maxNumWorkCells = parsers.map(_.numWorkCells).max
-  def maxNumChartCells = parsers.map(_.numChartCells).max
-
-  // On the Device side we have 4 Matrices:
-  // One is where we calculate P = L * R * rules, for fixed spans and split points (the "bot")
-  // One is the L part of the above
-  // Another is the R part.
-  // finally, we have the array of parse charts
-  private val devParentRaw, devLeftRaw, devRightRaw = context.createFloatBuffer(CLMem.Usage.InputOutput, numDefaultWorkCells.toLong * cellSize)
-  private lazy val maskParent = new CLMatrix[Int](maskSize, maxNumWorkCells)
-  private lazy val devParentPtrs = context.createIntBuffer(CLMem.Usage.Input, maxNumWorkCells)
-  private lazy val offsetBuffer = new CLBufferPointerPair[Integer](context.createIntBuffer(CLMem.Usage.Input, maxNumWorkCells * 3))
-  private lazy val devSplitPointOffsets = context.createIntBuffer(CLMem.Usage.Input, maxNumWorkCells + 1)
-  // transposed
-  private val devInsideRaw, devOutsideRaw = context.createFloatBuffer(CLMem.Usage.InputOutput, numDefaultChartCells/2 * cellSize)
-  private lazy val devInsideScale, devOutsideScale = context.createFloatBuffer(CLMem.Usage.InputOutput, maxNumChartCells)
-  private lazy val ptrScale = Pointer.allocateFloats(devInsideScale.getElementCount)
-  //  private val maskCharts = new CLMatrix[Int](maskSize, numDefaultChartCells)
-  private lazy val maskCharts = new CLMatrix[Int](maskSize, maxNumChartCells)
-  lazy val defaultInsideScales = DenseVector.zeros[Float](maxNumChartCells)
-  lazy val defaultOutsideScales = defaultInsideScales
+  private val parsers = (0 until data.length).map(i => new ActualParser(data(i), i < data.length - 1 && data(i + 1).isScaling))
 
   // other stuff
   private val zmk = ZeroMemoryKernel()
   private val transposeCopy = CLMatrixTransposeCopy()
 
-  private val parsers = (0 until data.length).map(i => new ActualParser(data(i), i < data.length - 1 && data(i + 1).isScaling))
   var pruned = 0
   var total = 0
-  var rulesEvaled = 0L
-  var theoreticalRules = 0L
-  var rulesTotal = 0L
-  var sortTime = 0L
 
   private class ActualParser(val data: CLParserData[C, L, W], nextParserNeedsScales: Boolean) {
     import data._
 
-
     def parse(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("parse", sentences.length) {
-        getBatches(sentences, mask).iterator.flatMap { batch =>
-          var ev = inside(batch)
-          ev = outside(batch, ev)
+        withWorkSpace(mask.hasMasks) {workspace =>
+          workspace.getBatches(sentences, mask).iterator.flatMap { batch =>
+            var ev = inside(workspace, batch)
 
-          if(!data.isScaling && !data.isLogSum) {
-            val ev3 = computeViterbiMasks(batch, ev)
-            Option(ev3).foreach(_.waitFor())
-            val parseMask = extractMasks(batch, false)
-            val parses = extractParses(batch, parseMask, ev3)
-            maskCharts.data.waitUnmap()
-            parses
-          } else {
-            val ev3 = computeMBRParts(batch, ev)
-            Option(ev3).foreach(_.waitFor())
-            val parseMask = extractMasks(batch, false)
-            val parses = extractMBRParses(batch, parseMask, ev3)
-            maskCharts.data.waitUnmap()
-            parses
-          }
-        }.toIndexedSeq
+            if(data.isViterbi) {
+              val ev3 = computeViterbiParts(workspace, batch, ev)
+              Option(ev3).foreach(_.waitFor())
+              val parseMask: DenseMatrixMask = extractMasks(workspace, batch, false)
+              val parses = extractParses(batch, parseMask.matrix, ev3)
+              parses
+            } else {
+              ev = outside(workspace, batch, ev)
+              val ev3 = computeMBRParts(workspace, batch, ev)
+              Option(ev3).foreach(_.waitFor())
+              val parseMask = extractMasks(workspace, batch, false)
+              val parses = extractMBRParses(workspace, batch, parseMask, ev3)
+              parses
+            }
+          }.toIndexedSeq
+        }
       }
+
     }
 
     def insideOutside(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("parse", sentences.length) {
-        getBatches(sentences, mask).iterator.foreach { batch =>
-          var ev = inside(batch)
-          ev = outside(batch, ev)
-          val ev3 = if(data.isViterbi) computeViterbiMasks(batch, ev) else computeMBRParts(batch, ev)
-          Option(ev3).foreach(_.waitFor())
+        withWorkSpace(mask.hasMasks) { workspace =>
+          workspace.getBatches(sentences, mask).iterator.foreach { batch =>
+            var ev = inside(workspace, batch)
+            ev = outside(workspace, batch, ev)
+            val ev3 = if(data.isViterbi) computeViterbiParts(workspace, batch, ev) else computeMBRParts(workspace, batch, ev)
+            Option(ev3).foreach(_.waitFor())
+          }
         }
       }
     }
 
+    private def withWorkSpace[B](hasMasks: Boolean)(w: WorkSpace=>B) = {
+      val myCellSize:Int = roundUpToMultipleOf(data.numSyms, 32)
+      resource.managed(WorkSpace.allocate(myCellSize, data.maskSize, maxAllocSize, if(hasMasks) 8 else 7)).acquireAndGet(w)
+    }
+
     def partitions(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("partitions", sentences.length) {
-        getBatches(sentences, mask).iterator.flatMap { batch =>
-          var ev = inside(batch)
-          val dest = context.createFloatBuffer(CLMem.Usage.Output, sentences.length)
-          ev = devParentPtrs.writeArray(queue, batch.rootIndices.toArray, batch.numSentences, ev) profileIn hdTransferEvents
-          ev = data.util.getRootScores(dest, devInside, devParentPtrs, batch.numSentences, structure.root, ev)
-          if(semiring.needsScaling) {
-            val scaledScores = dest.read(queue, ev).getFloats(batch.numSentences)
-            for(i <- 0 until batch.numSentences) yield semiring.toLogSpace(scaledScores(i), mask.insideTopScaleFor(i, 0, batch.lengths(i)))
-          } else {
-            dest.read(queue, ev).getFloats(batch.numSentences)
-          }
-        }.toIndexedSeq
+         withWorkSpace(mask.hasMasks) {workspace =>
+          workspace.getBatches(sentences, mask).iterator.flatMap { batch =>
+            var ev = inside(workspace, batch)
+            val dest = context.createFloatBuffer(CLMem.Usage.Output, sentences.length)
+            ev = workspace.pPtrBuffer.writeArray(queue, batch.rootIndices.toArray, batch.numSentences, ev) profileIn hdTransferEvents
+            ev = data.util.getRootScores(dest, workspace.devInside, workspace.pPtrBuffer, batch.numSentences, structure.root, ev)
+            if(semiring.needsScaling) {
+              val scaledScores = dest.read(queue, ev).getFloats(batch.numSentences)
+              for(i <- 0 until batch.numSentences) yield semiring.toLogSpace(scaledScores(i), batch.masks.insideTopScaleFor(i, 0, batch.lengths(i))) + batch.partitionScales(i).toFloat
+            } else {
+              dest.read(queue, ev).getFloats(batch.numSentences)
+            }
+          }.toIndexedSeq
+        }
       }
     }
 
     def updateMasks(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask): PruningMask = synchronized {
       logTime("masks", sentences.length) {
-        val masks = getBatches(sentences, mask).iterator.map {  batch =>
-          val mask = computePruningMasks(batch):PruningMask
-          mask
-        }.toIndexedSeq
-        val newMasks = masks.reduceLeft(_ ++ _)
+        withWorkSpace(mask.hasMasks) {workspace =>
+          val masks = workspace.getBatches(sentences, mask).iterator.map {  batch =>
+            workspace.maskCharts.assignAsync(-1).waitFor()
+            val mask = computePruningMasks(workspace, batch):PruningMask
+            mask
+          }.toIndexedSeq
+          val newMasks = masks.reduceLeft(_ ++ _)
 
-        newMasks
+          newMasks
+        }
       }
     }
 
-    def computePruningMasks(batch: Batch[W], ev: CLEvent*): DenseMatrixMask = {
-      val insideEvents = inside(batch, ev:_*)
-      val outsideEvents = outside(batch, insideEvents)
-      val ev2 = computeMasks(batch, -9, outsideEvents)
+    def computePruningMasks(workspace: WorkSpace, batch: Batch[W], ev: CLEvent*): DenseMatrixMask = {
+      val insideEvents = inside(workspace, batch, ev:_*)
+      val outsideEvents = outside(workspace, batch, insideEvents)
+      val ev2 = computeMasks(workspace, batch, -9, outsideEvents)
       ev2.waitFor()
-      extractMasks(batch, true)
+      extractMasks(workspace, batch, true)
    }
 
 
-    def extractMasks(batch: Batch[W], updateScales: Boolean): DenseMatrixMask = {
+    def extractMasks(workspace: WorkSpace, batch: Batch[W], updateScales: Boolean): DenseMatrixMask = {
+      import workspace._
       val denseMasks = maskCharts(::, 0 until batch.numCellsUsed).toDense
       maskCharts.data.waitUnmap()
       if(nextParserNeedsScales) {
+        val ptrScale = Pointer.allocateFloats(devInsideScale.getElementCount)
         val insideEv = if(updateScales) data.scaling.getScaling(devInsideScale, devInside(::, 0 until batch.numCellsUsed)) else null
         devInsideScale.read(queue, 0, batch.numCellsUsed, ptrScale, true, insideEv)
         val inside = new DenseVector(ptrScale.getFloats(batch.numCellsUsed))
         val outsideEv = if(updateScales) data.scaling.getScaling(devOutsideScale, devOutside(::, 0 until batch.numCellsUsed)) else null
         devOutsideScale.read(queue, 0, batch.numCellsUsed, ptrScale, true, outsideEv)
         val outside = new DenseVector(ptrScale.getFloats(batch.numCellsUsed))
+        ptrScale.release()
         new DenseMatrixMask(denseMasks, inside, outside, batch.lengths, batch.cellOffsets)
       } else {
-        new DenseMatrixMask(denseMasks, defaultInsideScales(0 until batch.numCellsUsed), defaultOutsideScales(0 until batch.numCellsUsed), batch.lengths, batch.cellOffsets)
+        new DenseMatrixMask(denseMasks, DenseVector.zeros[Float](batch.numCellsUsed), DenseVector.zeros[Float](batch.numCellsUsed), batch.lengths, batch.cellOffsets)
 
       }
     }
 
-    def myCellSize:Int = roundUpToMultipleOf(data.numSyms, 32)
-    val numWorkCells = ((devParentRaw.getElementCount) / myCellSize ).toInt
-    val numChartCells = ((devInsideRaw.getElementCount) / myCellSize ).toInt
-
-    // (dest, leftSource, rightSource) (right Source if binary rules)
-    val pArray, lArray, rArray = new Array[Int](numWorkCells)
-    val splitPointOffsets = new Array[Int](numWorkCells+1)
 
 
-    val devParent = new CLMatrix[Float]( numWorkCells, myCellSize, devParentRaw)
-    val devLeft = new CLMatrix[Float]( numWorkCells, myCellSize, devLeftRaw)
-    val devRight = new CLMatrix[Float]( numWorkCells, myCellSize, devRightRaw)
+    private def zero: Float = data.semiring.zero
 
-    val devInside = new CLMatrix[Float](myCellSize, numChartCells, devInsideRaw)
-    val devOutside = new CLMatrix[Float](myCellSize, numChartCells, devOutsideRaw)
-
-    def _zero: Float = data.semiring.zero
-
-    def inside(batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
-      allProfilers.foreach(_.clear())
-      allProfilers.foreach(_.tick())
+    def inside(workspace: WorkSpace, batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
+      import workspace._
+      profiler.clear()
+      profiler.tick()
       pruned = 0
       total = 0
-      sortTime = 0
-      rulesEvaled = 0
-      theoreticalRules = 0
-      rulesTotal = 0
 
-      val evZeroCharts = zmk.fillMemory(devInside.data, _zero, events:_*) profileIn initMemFillEvents
-      val evZeroOutside = zmk.fillMemory(devOutside.data, _zero, events:_*) profileIn initMemFillEvents
+      val evZeroCharts = zmk.fillMemory(devInside.data, zero, events:_*) profileIn initMemFillEvents
+      val evZeroOutside = zmk.fillMemory(devOutside.data, zero, events:_*) profileIn initMemFillEvents
 
       var ev = evZeroCharts
 
       if(batch.hasMasks && semiring.needsScaling) {
-        ev = devInsideScale.write(queue, batch.masks.getIScales, false, ev).profileIn(hdTransferEvents)
-        ev = devOutsideScale.write(queue, batch.masks.getOScales, false, ev).profileIn(hdTransferEvents)
+        ev = devInsideScale.write(queue, batch.masks.getIScales, false, ev) profileIn hdTransferEvents
+        ev = devOutsideScale.write(queue, batch.masks.getOScales, false, ev) profileIn hdTransferEvents
         queue.finish()
-//        println(devInsideScale.read(queue).getFloats(batch.numCellsUsed).toIndexedSeq)
-//        println(devOutsideScale.read(queue).getFloats(batch.numCellsUsed).toIndexedSeq)
       }
 
-      ev = initializeTagScores(batch, ev, evZeroOutside)
+      ev = initializeTagScores(workspace, batch, ev, evZeroOutside)
 
+      val insideTU = new UnaryUpdateManager(data.inside.insideTUKernels, devInside, devInsideScale, devInsideScale, insideTop, insideBot)
 
-      ev = insideTU.doUpdates(batch, 1, ev)
+      ev = insideTU.doUpdates(workspace, batch, 1, ev)
 
       for (span <- 2 to batch.maxLength) {
         print(s"$span ")
-        ev = insideBinaryPass(batch, span, ev)
+        ev = insideBinaryPass(workspace, batch, span, ev)
 
-        ev = insideNU.doUpdates(batch, span, ev)
+        val insideNU = new UnaryUpdateManager(data.inside.insideNUKernels, devInside, devInsideScale, devInsideScale, insideTop, insideBot)
+        ev = insideNU.doUpdates(workspace, batch, span, ev)
 
       }
 
@@ -338,75 +251,75 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
       if (profile) {
         queue.finish()
-        allProfilers.foreach(_.tock())
-        allProfilers.foreach(p => println(s"Inside $p"))
-        println(f"Time accounted for: ${allProfilers.map(_.processingTime).sum}%.3f")
-        println("Sorting took: " + sortTime/1000.0)
+        profiler.tock()
+        println(profiler.report("inside"))
+        println(s"Enqueuing writes took ${writeTimer.clear()}s")
+        println(s"Spin up for writes took ${allTimer.clear()}s")
         println(s"Pruned $pruned/$total")
-        println(s"Rules evaled: $rulesEvaled/$rulesTotal ${(rulesEvaled.toDouble/rulesTotal)}")
-        println(s"Rules Theoretical (by rulesTotal): $theoreticalRules/$rulesTotal ${(theoreticalRules.toDouble/rulesTotal)}")
-        println(s"Rules Theoretical (by rulesEvaled): $theoreticalRules/$rulesEvaled ${(theoreticalRules.toDouble/rulesEvaled)}")
       }
 
       ev
     }
 
-    def outside(batch: Batch[W], event: CLEvent):CLEvent = synchronized {
+    def outside(workspace: WorkSpace, batch: Batch[W], event: CLEvent):CLEvent = synchronized {
+      import workspace._
       var ev = event
-      allProfilers.foreach(_.clear())
-      allProfilers.foreach(_.tick())
-      rulesEvaled = 0
-      rulesTotal = 0
-      theoreticalRules = 0
+      profiler.clear()
+      profiler.tick()
       pruned  = 0
       total = 0
 
-     ev = offsetBuffer.writeInts(0, batch.outsideRootIndices, 0, batch.numSentences, ev) profileIn hdTransferEvents
-      ev = data.util.setRootScores(devOutside, offsetBuffer.buffer, batch.numSentences, structure.root, data.semiring.one, ev) profileIn memFillEvents
-//      ev = data.util.setRootScores(devOutside, devParentPtrs, batch.numSentences, structure.root, data.semiring.one, ev) profileIn memFillEvents
+     ev = pPtrBuffer.writeArray(queue, batch.outsideRootIndices, batch.numSentences, ev) profileIn hdTransferEvents
+      ev = data.util.setRootScores(devOutside, pPtrBuffer, batch.numSentences, structure.root, data.semiring.one, ev) profileIn memFillEvents
 
-      ev = outsideNU.doUpdates(batch, batch.maxLength, ev)
+      val outsideNU = new UnaryUpdateManager(data.outside.outsideNUKernels, devOutside, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
+      ev = outsideNU.doUpdates(workspace: WorkSpace, batch, batch.maxLength, ev)
 
       for (span <- (batch.maxLength - 1) to 1 by -1) {
         print(s"$span ")
-        ev = outsideBinaryPass(batch, span, ev)
+        ev = outsideBinaryPass(workspace, batch, span, ev)
         if (span == 1) {
-          ev = outsideTU.doUpdates(batch, span, ev)
+          val outsideTU = new UnaryUpdateManager(data.outside.outsideTUKernels, devOutside, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
+          ev = outsideTU.doUpdates(workspace, batch, span, ev)
         } else {
-          ev = outsideNU.doUpdates(batch, span, ev)
+          val outsideNU = new UnaryUpdateManager(data.outside.outsideNUKernels, devOutside, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
+          ev = outsideNU.doUpdates(workspace, batch, span, ev)
         }
 
       }
 
-      ev = outsideTT_L.doUpdates(batch, 1, ev)
-      ev = outsideNT_R.doUpdates(batch, 1, ev)
-      ev = outsideTN_L.doUpdates(batch, 1, ev)
-      ev = outsideTT_R.doUpdates(batch, 1, ev)
-//      queue.finish()
-//      println(batch.outsideCharts(2).bot.cellString(4, 5, structure, data.semiring, batch.masks.outsideScaleFor(2, _, _)))
+      // here, "parentChart" is actually the left child, left is the parent, right is the right completion
+      val outsideTT_L = new BinaryUpdateManager(data.outside.outside_L_TTKernels, true, devOutside, devOutsideScale, devOutside, devOutsideScale, devInside, devInsideScale, outsideBot, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
+      val outsideTN_L = new BinaryUpdateManager(data.outside.outside_L_TNKernels, true, devOutside, devOutsideScale, devOutside, devOutsideScale, devInside, devInsideScale, outsideBot, outsideBot, insideTop, (b, e, l) => (e+1 to l))
+
+      // here, "parentChart" is actually the right child, right is the parent, left is the left completion
+      val outsideTT_R = new BinaryUpdateManager(data.outside.outside_R_TTKernels, true, devOutside, devOutsideScale, devInside, devInsideScale, devOutside, devOutsideScale, outsideBot, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
+      val outsideNT_R = new BinaryUpdateManager(data.outside.outside_R_NTKernels, true, devOutside, devOutsideScale, devInside, devInsideScale, devOutside, devOutsideScale, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
+
+      ev = outsideTT_L.doUpdates(workspace, batch, 1, ev)
+      ev = outsideNT_R.doUpdates(workspace, batch, 1, ev)
+      ev = outsideTN_L.doUpdates(workspace, batch, 1, ev)
+      ev = outsideTT_R.doUpdates(workspace, batch, 1, ev)
+      profiler.tock()
 
       if (profile) {
         queue.finish()
-        allProfilers.foreach(_.tock())
         Thread.sleep(15)
-        allProfilers.foreach(p => println(s"Outside $p"))
-        println(f"Time accounted for: ${allProfilers.map(_.processingTime).sum}%.3f")
-        println("Sorting took: " + sortTime/1000.0)
+        println(profiler.report("outside"))
+        println(s"Enqueuing writes took ${writeTimer.clear()}s")
+        println(s"Spin up for writes took ${allTimer.clear()}s")
         println(s"Pruned $pruned/$total")
-        println(s"Rules evaled: $rulesEvaled/$rulesTotal ${(rulesEvaled.toDouble/rulesTotal)}")
       }
 
       ev
     }
 
-    def computeViterbiMasks(batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
-      computeMasks(batch, -4E-3f, events:_*)
-    }
 
-    private def computeMBRParts(batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
+    private def computeMBRParts(workspace: WorkSpace, batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
+      import workspace._
       if(profile) {
-        allProfilers.foreach(_.clear())
-        allProfilers.foreach(_.tick())
+        profiler.clear()
+        profiler.tick()
       }
 
       val evr = data.mbr.getMasks(maskCharts(::, 0 until batch.numCellsUsed),
@@ -414,48 +327,95 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         devOutside(::, 0 until batch.numCellsUsed),
         batch.cellOffsets, batch.lengths, structure.root, events:_*) profileIn masksEvents
       if (profile) {
+        profiler.tock()
         queue.finish()
-        allProfilers.foreach(_.tock())
-        allProfilers.foreach(p => println(s"Masks $p"))
+        println(profiler.report("mbr"))
       }
 
       evr
     }
 
-    def initializeTagScores(batch: Batch[W], events: CLEvent*) = {
-      val totalLength = batch.totalLength
-      val tagScores = DenseMatrix.zeros[Float](totalLength, myCellSize)
-      tagScores := _zero
-      for (i <- (0 until batch.numSentences).par) {
-        val sent = batch.sentences(i)
-        val anch = data.grammar.tagScorer.anchor(sent)
-        val lexAnch = data.grammar.lexicon.anchor(sent)
-        var offset = batch.lengthOffsets(i)
-        for (pos <- 0 until sent.length) {
-          val myScale = if(semiring.needsScaling) math.exp(-batch.masks.insideScaleFor(i, pos, pos + 1)) else 1.0
-          for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
-            val index = ref
-            val score = anch.scoreTag(pos, data.grammar.refinedGrammar.labelIndex.get(index))
-            val gpuIndex = data.structure.labelIndexToTerminal(index)
-            //        if(pos == 0) println(pos,t,ref,data.grammar.refinements.labels.fineIndex.get(ref), gpuIndex,score)
-            pArray(offset) = batch.insideBotCell(i, pos, pos + 1)
-            tagScores(offset, gpuIndex) = data.semiring.fromLogSpace(score.toFloat) * myScale.toFloat
-          }
-          offset += 1
-        }
+    private def computeViterbiParts(workspace: WorkSpace, batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
+      import workspace._
+      if(profile) {
+        profiler.clear()
+        profiler.tick()
       }
 
-      val ev2 = devParentPtrs.writeArray(queue, pArray, totalLength, events:_*) profileIn hdTransferEvents
-      val ev = devParent(0 until totalLength, ::).writeFrom(tagScores, false, ev2) map (_ profileIn  hdTransferEvents)
-      transposeCopy.permuteTransposeCopyOut(devInside,  devParentPtrs, totalLength, devParent(0 until totalLength, ::), (ev2 +: ev):_*) profileIn sumToChartsEvents
+      val evr = data.viterbi.viterbi(structure, maskCharts(::, 0 until batch.numCellsUsed),
+        devInside(::, 0 until batch.numCellsUsed),
+        batch.cellOffsets, batch.lengths, structure.root, events:_*) profileIn masksEvents
+      if (profile) {
+        profiler.tock()
+        queue.finish()
+        println(profiler.report("viterbi"))
+      }
+
+      evr
     }
 
+    def initializeTagScores(workspace: WorkSpace, batch: Batch[W], events: CLEvent*) = {
+      logTime("pos tags", batch.numSentences) {
+        import workspace._
+        val totalLength = batch.totalLength
+        val tagScores = DenseMatrix.zeros[Float](totalLength, cellSize)
+        tagScores := zero
+        for (i <- (0 until batch.numSentences).par) {
+          val sent = batch.sentences(i)
+          val anch = data.grammar.tagScorer.anchor(sent)
+          val lexAnch = data.grammar.lexicon.anchor(sent)
+          var scoreScale = 0.0
+          var offset = batch.lengthOffsets(i)
+          for (pos <- 0 until sent.length) {
+            val myScale = if(semiring.needsScaling) math.exp(-batch.masks.insideScaleFor(i, pos, pos + 1)) else 1.0
+            var maxScore = zero
+            for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
+              val index = ref
+              val score = anch.scoreTag(pos, data.grammar.refinedGrammar.labelIndex.get(index))
+              val gpuIndex = data.structure.labelIndexToTerminal(index)
+              //        if(pos == 0) println(pos,t,ref,data.grammar.refinements.labels.fineIndex.get(ref), gpuIndex,score)
+              pArray(offset) = batch.insideBotCell(i, pos, pos + 1)
+              tagScores(offset, gpuIndex) = data.semiring.fromLogSpace(score.toFloat) * myScale.toFloat
+              maxScore = maxScore + tagScores(offset, gpuIndex)
+            }
+
+            if(semiring.needsScaling) {
+              scoreScale += math.log(maxScore/2)
+
+              for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
+                val index = ref
+                val gpuIndex = data.structure.labelIndexToTerminal(index)
+                tagScores(offset, gpuIndex) /= (maxScore/2)
+              }
+
+            }
 
 
-    private def computeMasks(batch: Batch[W], threshold: Float, events: CLEvent*):CLEvent = synchronized {
+            offset += 1
+          }
+          batch.partitionScales(i) = scoreScale
+        }
+
+        val ev2 = pPtrBuffer.writeArray(queue, pArray, totalLength, events:_*) profileIn hdTransferEvents
+        var offset = 0
+        var ev = ev2
+        while(offset < totalLength) {
+          val toDoThisTime = math.min(devLeft.rows, totalLength - offset)
+          val evW = devLeft(0 until toDoThisTime, ::).writeFrom(tagScores(offset until offset + toDoThisTime, ::), false, ev) map (_ profileIn  hdTransferEvents)
+          ev = transposeCopy.permuteTransposeCopyOut(devInside,  pPtrBuffer, offset, toDoThisTime, devLeft(0 until toDoThisTime, ::), evW:_*) profileIn posEvents
+          val wl = transposeCopy.permuteTransposeCopy(devRight(0 until toDoThisTime, ::), devInside, pPtrBuffer, offset, toDoThisTime, ev) profileIn transferEvents
+          ev = wl
+          offset += toDoThisTime
+        }
+        ev
+      }
+    }
+
+    private def computeMasks(workspace: WorkSpace, batch: Batch[W], threshold: Float, events: CLEvent*):CLEvent = synchronized {
+      import workspace._
       if(profile) {
-        allProfilers.foreach(_.clear())
-        allProfilers.foreach(_.tick())
+        profiler.clear()
+        profiler.tick()
       }
 
       val evr = data.masks.getMasks(maskCharts(::, 0 until batch.numCellsUsed),
@@ -464,124 +424,103 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         batch.cellOffsets, batch.lengths, structure.root, threshold, events:_*) profileIn masksEvents
       if (profile) {
         queue.finish()
-        allProfilers.foreach(_.tock())
-        allProfilers.foreach(p => println(s"Masks $p"))
+        profiler.tock()
+        println(profiler.report("masks"))
       }
 
       evr
     }
 
-
-
-    private def insideBinaryPass(batch: Batch[W], span: Int, events: CLEvent*) = {
+    private def insideBinaryPass(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent*) = {
       var ev = events
+      import workspace._
+      val insideNT = new BinaryUpdateManager(data.inside.insideNTKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideTop, insideBot, (b, e, l) => (e-1 to e-1))
+      val insideTN = new BinaryUpdateManager(data.inside.insideTNKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideBot, insideTop, (b, e, l) => (b+1 to b+1))
+      val insideNN = new BinaryUpdateManager(data.inside.insideNNKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1))
       if (span == 2) {
-        ev = Seq(insideTT.doUpdates(batch, span, ev :_*))
+        val insideTT = new BinaryUpdateManager(data.inside.insideTTKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideBot, insideBot, (b, e, l) => (b+1 to b+1))
+        ev = Seq(insideTT.doUpdates(workspace, batch, span, ev :_*))
       }
 
-      ev = Seq(insideNT.doUpdates(batch, span, ev :_*))
-      ev = Seq(insideTN.doUpdates(batch, span, ev :_*))
-      ev = Seq(insideNN.doUpdates(batch, span, ev :_*))
+      ev = Seq(insideNT.doUpdates(workspace, batch, span, ev :_*))
+      ev = Seq(insideTN.doUpdates(workspace, batch, span, ev :_*))
+      ev = Seq(insideNN.doUpdates(workspace, batch, span, ev :_*))
       ev.head
     }
 
-    private def outsideBinaryPass(batch: Batch[W], span: Int, events: CLEvent) = {
+    private def outsideBinaryPass(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent) = {
       var ev = events
 
-      ev = outsideTN_R.doUpdates(batch, span, ev)
-      ev = outsideNT_L.doUpdates(batch, span, ev)
-      ev = outsideNN_L.doUpdates(batch, span, ev)
-      ev = outsideNN_R.doUpdates(batch, span, ev)
+      import workspace._
+
+      val outsideTN_R = new BinaryUpdateManager(data.outside.outside_R_TNKernels, false, devOutside, devOutsideScale, devInside, devInsideScale, devOutside, devOutsideScale, outsideTop, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
+
+      ev = outsideTN_R.doUpdates(workspace, batch, span, ev)
+      val outsideNT_L = new BinaryUpdateManager(data.outside.outside_L_NTKernels, false, devOutside, devOutsideScale, devOutside, devOutsideScale, devInside, devInsideScale, outsideTop, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
+      ev = outsideNT_L.doUpdates(workspace, batch, span, ev)
+      val outsideNN_L = new BinaryUpdateManager(data.outside.outside_L_NNKernels, false, devOutside, devOutsideScale, devOutside, devOutsideScale, devInside, devInsideScale, outsideTop, outsideBot, insideTop, (b, e, l) => (e+1 to l))
+      ev = outsideNN_L.doUpdates(workspace, batch, span, ev)
+      val outsideNN_R = new BinaryUpdateManager(data.outside.outside_R_NNKernels, false, devOutside, devOutsideScale, devInside, devInsideScale, devOutside, devOutsideScale, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1))
+      ev = outsideNN_R.doUpdates(workspace, batch, span, ev)
 
       ev
     }
 
-    private val insideBot = {(b: Batch[W], s: Int, beg: Int, end: Int) =>  b.insideBotCell(s, beg, end) }
-    private val insideTop = {(b: Batch[W], s: Int, beg: Int, end: Int) =>  b.insideTopCell(s, beg, end) }
-    private val outsideBot = {(b: Batch[W], s: Int, beg: Int, end: Int) =>  b.outsideBotCell(s, beg, end) }
-    private val outsideTop = {(b: Batch[W], s: Int, beg: Int, end: Int) =>  b.outsideTopCell(s, beg, end) }
+    private val insideBot = {(b: Batch[W], s: Int) =>  b.insideBotOffset(s)}
+    private val insideTop = {(b: Batch[W], s: Int) =>  b.insideTopOffset(s) }
+    private val outsideBot = {(b: Batch[W], s: Int) =>  b.outsideBotOffset(s) }
+    private val outsideTop = {(b: Batch[W], s: Int) =>  b.outsideTopOffset(s) }
 
-    private def insideTU = new UnaryUpdateManager(data.inside.insideTUKernels, devInside, devInsideScale, devInsideScale, insideTop, insideBot)
-    private def insideNU = new UnaryUpdateManager(data.inside.insideNUKernels, devInside, devInsideScale, devInsideScale, insideTop, insideBot)
-
-    private def insideTT = new BinaryUpdateManager(data.inside.insideTTKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideBot, insideBot, (b, e, l) => (b+1 to b+1))
-    private def insideNT = new BinaryUpdateManager(data.inside.insideNTKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideTop, insideBot, (b, e, l) => (e-1 to e-1))
-    private def insideTN = new BinaryUpdateManager(data.inside.insideTNKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideBot, insideTop, (b, e, l) => (b+1 to b+1))
-    private def insideNN = new BinaryUpdateManager(data.inside.insideNNKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1), trackRules)
-
-    // here, "parentChart" is actually the left child, left is the parent, right is the right completion
-    private def outsideTT_L = new BinaryUpdateManager(data.outside.outside_L_TTKernels, true, devOutside, devOutsideScale, devOutside, devOutsideScale, devInside, devInsideScale, outsideBot, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
-    private def outsideNT_L = new BinaryUpdateManager(data.outside.outside_L_NTKernels, false, devOutside, devOutsideScale, devOutside, devOutsideScale, devInside, devInsideScale, outsideTop, outsideBot, insideBot, (b, e, l) => (e+1 to e+1))
-    private def outsideTN_L = new BinaryUpdateManager(data.outside.outside_L_TNKernels, true, devOutside, devOutsideScale, devOutside, devOutsideScale, devInside, devInsideScale, outsideBot, outsideBot, insideTop, (b, e, l) => (e+1 to l))
-    private def outsideNN_L = new BinaryUpdateManager(data.outside.outside_L_NNKernels, false, devOutside, devOutsideScale, devOutside, devOutsideScale, devInside, devInsideScale, outsideTop, outsideBot, insideTop, (b, e, l) => (e+1 to l))
-
-    // here, "parentChart" is actually the right child, right is the parent, left is the left completion
-    private def outsideTT_R = new BinaryUpdateManager(data.outside.outside_R_TTKernels, true, devOutside, devOutsideScale, devInside, devInsideScale, devOutside, devOutsideScale, outsideBot, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
-    private def outsideNT_R = new BinaryUpdateManager(data.outside.outside_R_NTKernels, true, devOutside, devOutsideScale, devInside, devInsideScale, devOutside, devOutsideScale, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
-    private def outsideTN_R = new BinaryUpdateManager(data.outside.outside_R_TNKernels, false, devOutside, devOutsideScale, devInside, devInsideScale, devOutside, devOutsideScale, outsideTop, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
-    private def outsideNN_R = new BinaryUpdateManager(data.outside.outside_R_NNKernels, false, devOutside, devOutsideScale, devInside, devInsideScale, devOutside, devOutsideScale, outsideTop, insideTop, outsideBot, (b, e, l) => (0 to b-1), trackRules)
-
-    private def outsideTU = new UnaryUpdateManager(data.outside.outsideTUKernels, devOutside, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
-    private def outsideNU = new UnaryUpdateManager(data.outside.outsideNUKernels, devOutside, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
-
-    def extractParses(batch: Batch[W], mask: PruningMask, events: CLEvent*): ParSeq[BinarizedTree[C]] = {
-      require(mask.hasMasks, "Can't use null pruning mask for parse extraction!")
-      events.foreach(_.waitFor())
+    def extractParses(batch: Batch[W], mask: DenseMatrix[Int], events: CLEvent*): ParSeq[BinarizedTree[C]] = {
+      CLEvent.waitFor(events:_*)
       val in = if (profile) System.currentTimeMillis() else 0L
       val trees = for (s <- 0 until batch.numSentences par) yield try {
         val length = batch.sentences(s).length
+        val cellOffset = batch.cellOffsets(s)
+        val treeArray = mask(::, cellOffset until (cellOffset + 2 * length - 1))
 
-        def recTop(begin: Int, end: Int):BinarizedTree[C] = {
-          val column:DenseVector[Int] = mask.maskForTopCell(s, begin, end).get
-          val x = firstSetBit(column:DenseVector[Int])
-          if (x == -1) {
-            assert(begin == end - 1, s"$column ($begin, $end) $length $s ${batch.numSentences}")
-            recBot(begin, end)
+        def top(cell: Int) = treeArray(0, cell)
+        def bot(cell: Int) = treeArray(1, cell)
+        def width(cell: Int) = treeArray(2, cell)
+        def score(cell: Int) = java.lang.Float.intBitsToFloat(treeArray(3, cell))
+        var begin = 0
+        def rec(p: Int):BinarizedTree[C] = {
+          val t = top(p)
+          val b = bot(p)
+          val w = width(p)
+
+//          println(begin, if(t < 0) "" else structure.nontermIndex.get(t), t, if(w > 1) structure.nontermIndex.get(b) else structure.termIndex.get(b), b, w, score(p))
+          val botPart = if(w == 1) {
+            begin += 1
+            val botSym: C = structure.refinements.labels.project(structure.termIndex.get(b))
+            assert(botSym != "")
+            NullaryTree(botSym, Span(begin - 1, begin))
           } else {
-            assert(column.valuesIterator.exists(_ != 0), (begin, end))
-//            val label = structure.nontermIndex.get(x)
-            val label = structure.refinements.labels.coarseIndex.get(x)
-            val t = recBot(begin, end)
-            new UnaryTree[C](label, t, IndexedSeq.empty, Span(begin, end))
+            val botSym: C = structure.refinements.labels.project(structure.nontermIndex.get(b))
+            val lc = rec(p + 1)
+            val lcWidth = lc.end - lc.begin
+            assert(begin == lc.end, (begin, lc.begin, lc.end))
+            val rc = rec(p + 2 * lcWidth)
+            assert(begin == rc.end, (begin, rc.begin, rc.end))
+            BinaryTree(botSym, lc, rc, Span(lc.begin, rc.end))
           }
-        }
 
-        def recBot(begin: Int, end: Int):BinarizedTree[C] = {
-          val column:DenseVector[Int] = mask.maskForBotCell(s, begin, end).get
-          val x = firstSetBit(column:DenseVector[Int])
-          if (begin == end - 1) {
-//            val label = structure.termIndex.get(x)
-            val label = structure.refinements.labels.coarseIndex.get(x)
-            NullaryTree(label, Span(begin, end))
+          if(t == -1) {
+            botPart
           } else {
-//            val label = structure.nontermIndex.get(x)
-            val label = structure.refinements.labels.coarseIndex.get(x)
-            for (split <- (begin+1) until end) {
-              val leftIsTerminal = begin == split - 1
-              val rightIsTerminal = end == split + 1
-              val left = if(leftIsTerminal) mask.isAllowedSpan(s, begin, split) else mask.isAllowedTopSpan(s, begin, split)
-              val right = if(rightIsTerminal) mask.isAllowedSpan(s, split, end) else mask.isAllowedTopSpan(s, split, end)
-              if (left && right) {
-                return BinaryTree[C](label, recTop(begin, split), recTop(split, end), Span(begin, end))
-              }
-            }
-
-            error(s"nothing here $length!" + " "+ (begin, end) +
-              {for (split <- (begin+1) until end) yield {
-                val leftIsTerminal = begin == split - 1
-                val rightIsTerminal = end == split + 1
-                val left = if(leftIsTerminal) mask.isAllowedSpan(s, begin, split) else mask.isAllowedTopSpan(s, begin, split)
-                val right = if(rightIsTerminal) mask.isAllowedSpan(s, split, end) else mask.isAllowedTopSpan(s, split, end)
-                (ChartHalf.chartIndex(begin, split, length), ChartHalf.chartIndex(split, end, length), split, left,right)
-
-              }} + " " +batch.sentences(s))
+            val topSym: C = structure.refinements.labels.project(structure.nontermIndex.get(t))
+            UnaryTree(topSym, botPart, IndexedSeq.empty, botPart.span)
           }
+
+
         }
-
-        recTop(0, length)
-
+        val t = rec(0)
+//        println(t.render(batch.sentences(s)))
+        t
       } catch {
-        case ex: Throwable => ex.printStackTrace(); null
+        case ex: Exception =>
+          ex.printStackTrace()
+          null
       }
       val out = if (profile) System.currentTimeMillis() else 0L
       if (profile) {
@@ -590,9 +529,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       trees
     }
 
-    val unaryThreshold = 0.5
+    private val unaryThreshold = 0.4
 
-    def extractMBRParses(batch: Batch[W], mask: PruningMask, events: CLEvent*): ParSeq[BinarizedTree[C]] = {
+    def extractMBRParses(workspace: WorkSpace, batch: Batch[W], mask: PruningMask, events: CLEvent*): ParSeq[BinarizedTree[C]] = {
       require(mask.hasMasks, "Can't use null pruning mask for parse extraction!")
       events.foreach(_.waitFor())
       val in = if (profile) System.currentTimeMillis() else 0L
@@ -617,9 +556,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
             var botScaled = botFloat
 
             if(data.isScaling) {
-              topScaled *= math.exp(batch.masks.insideScaleFor(s, begin, end) + batch.masks.outsideScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length)).toFloat
+              topScaled *= math.exp(batch.masks.insideTopScaleFor(s, begin, end) + batch.masks.outsideTopScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length)).toFloat
               botScaled *= math.exp(batch.masks.insideScaleFor(s, begin, end) + batch.masks.outsideScaleFor(s, begin, end) - batch.masks.insideTopScaleFor(s, 0, length)).toFloat
             }
+
+            if(length == 1) {
+              println(batch.sentences(s) + " " + botScaled + " " + topScaled)
+            }
+
             if(topScaled.isInfinite || botScaled.isInfinite) {
               println("Overflow! taking counter measures")
             }
@@ -629,6 +573,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
             if (botScaled.isNaN) {
               botScaled = 0.0f
             }
+
 
             topScaled = math.min(topScaled, 1.0f)
             botScaled = math.min(botScaled, 1.0f)
@@ -695,98 +640,72 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     }
 
-
-
-      private[CLParser] def getBatches(sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask): IndexedSeq[Batch[W]] = {
-      val result = ArrayBuffer[Batch[W]]()
-      var current = ArrayBuffer[IndexedSeq[W]]()
-      var currentCellTotal = 0
-      for ( (s, i) <- sentences.zipWithIndex) {
-        currentCellTotal += TriangularArray.arraySize(s.length) * 2
-        if (currentCellTotal > numChartCells) {
-          currentCellTotal -= TriangularArray.arraySize(s.length) * 2
-          assert(current.nonEmpty)
-          result += createBatch(current, masks.slice(i - current.length, i))
-          currentCellTotal = TriangularArray.arraySize(s.length) * 2
-          current = ArrayBuffer()
-        }
-        current += s
-      }
-
-
-      if (current.nonEmpty) {
-        result += createBatch(current, masks.slice(sentences.length - current.length, sentences.length))
-      }
-      result
-    }
-
-    private[CLParser] def createBatch(sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask): Batch[W] = {
-      val batch = Batch[W](sentences, devInside, devOutside, masks)
-      println(f"Batch size of ${sentences.length}, ${batch.numCellsUsed} cells used, total inside ${batch.numCellsUsed * myCellSize * 4.0/1024/1024}%.2fM  ")
-      batch
-    }
-
     private class UnaryUpdateManager(kernels: CLUnaryRuleUpdater,
-                                     scoreMatrix: CLMatrix[Float],
+                                     chart: CLMatrix[Float],
                                      parentScale: CLBuffer[Float],
                                      childScale: CLBuffer[Float],
-                                     parentChart: (Batch[W],Int, Int, Int)=>Int,
-                                     childChart: (Batch[W],Int, Int, Int)=>Int) {
+                                     parentChart: (Batch[W],Int)=>Int,
+                                     childChart: (Batch[W],Int)=>Int) {
 
-      var offset = 0 // number of cells used so far.
+      var queueSize = 0 // number of cells used so far.
 
-
-      private def enqueue(batch: Batch[W], span: Int, parent: Int, left: Int, events: Seq[CLEvent]) = {
-        lArray(offset) = left
-        pArray(offset) = parent
-        offset += 1
-        if (offset >= numWorkCells)  {
-          logger.debug(s"flush unaries!")
-          flushQueue(batch, span, events)
+      private def enqueue(workspace: WorkSpace, batch: Batch[W], span: Int, parent: Int, left: Int, events: Seq[CLEvent]) = {
+        import workspace._
+        lArray(queueSize) = left
+        pArray(queueSize) = parent
+        queueSize += 1
+        if (queueSize >= workspace.lArray.length)  {
+          flushQueue(workspace, batch, span, events)
         } else {
           events
         }
       }
 
-      private def flushQueue(batch: Batch[W], span: Int, ev: Seq[CLEvent]) = {
-        if (offset != 0) {
-          val zz = zmk.shapedFill(devParent(0 until offset, ::), _zero, ev:_*) profileIn memFillEvents
+      private def flushQueue(workspace: WorkSpace, batch: Batch[W], span: Int, _ev: Seq[CLEvent]) = {
+        import workspace._
+        val scoreMatrix = chart
+        var ev = _ev
+        var offset = 0
 
-          val bufArray = new Array[Int](offset * 3)
-          System.arraycopy(pArray, 0, bufArray, 0, offset)
-          System.arraycopy(lArray, 0, bufArray, offset, offset)
-          val evx = offsetBuffer.buffer.writeArray(queue, bufArray, offset * 3, ev:_*) profileIn hdTransferEvents
+        val evp = pPtrBuffer.writeArray(queue, pArray, queueSize, ev:_*) profileIn hdTransferEvents
+        val evl = lPtrBuffer.writeArray(queue, lArray, queueSize, ev:_*) profileIn hdTransferEvents
 
-          val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), scoreMatrix, offsetBuffer.buffer, offset, offset, evx) profileIn transferEvents
+        while (offset < queueSize) {
+          if(offset != 0) println("uflush!")
+          val toDoThisTime = math.min(numWorkCells, queueSize - offset)
+          val zz = zmk.shapedFill(devRight(0 until toDoThisTime, ::), zero, ev:_*) profileIn memFillEvents
 
-          val endEvents = kernels.update(unaryEvents, devParent(0 until offset, ::), parentScale, offsetBuffer.buffer, devLeft(0 until offset, ::), childScale, offsetBuffer.buffer, offset, wl, zz)
+          val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until toDoThisTime, ::), scoreMatrix, lPtrBuffer, offset, toDoThisTime, evl) profileIn transferEvents
 
-          val _ev = transposeCopy.permuteTransposeCopyOut(scoreMatrix, offsetBuffer.buffer, offset, devParent(0 until offset, ::), (evx +: endEvents):_*) profileIn sumToChartsEvents
+          val endEvents = kernels.update(unaryEvents, devRight(0 until toDoThisTime, ::), parentScale, pPtrBuffer, offset, devLeft(0 until toDoThisTime, ::), childScale, lPtrBuffer, offset, wl, zz, evp)
 
-          offset = 0
-          Seq(_ev)
-        } else {
-          ev
+          val evu = transposeCopy.permuteTransposeCopyOut(scoreMatrix, pPtrBuffer, offset, toDoThisTime, devRight(0 until toDoThisTime, ::), (evp +: endEvents):_*) profileIn unarySumEvents
+          ev = Seq(evu)
+
+          offset += toDoThisTime
         }
+        queueSize = 0
+        ev
       }
 
-      def doUpdates(batch: Batch[W], span: Int, events: CLEvent*) = {
+      def doUpdates(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent*) = {
         var ev = events
 
         for {
           sent <- 0 until batch.numSentences
+          len = batch.lengths(sent)
           start <- 0 to batch.sentences(sent).length - span
           if batch.isAllowedSpan(sent, start, start + span)
         } {
           val end = start + span
-          val parentTi = parentChart(batch, sent, start, end)
-          val child = childChart(batch, sent, start, end)
+          val parentCell = parentChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
+          val childCell = childChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
 
-          ev = enqueue(batch, span, parentTi, child, ev)
+          ev = enqueue(workspace, batch, span, parentCell, childCell, ev)
         }
 
-        if (offset > 0) {
-          flushQueue(batch, span, ev)
+        if (queueSize > 0) {
+          flushQueue(workspace, batch, span, ev)
         }
 
         assert(ev.length == 1)
@@ -803,193 +722,73 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                                       leftScale: CLBuffer[Float],
                                       rightChartMatrix: CLMatrix[Float],
                                       rightScale: CLBuffer[Float],
-                                      parentChart: (Batch[W], Int, Int, Int)=>Int,
-                                      leftChart: (Batch[W], Int, Int, Int)=>Int,
-                                      rightChart: (Batch[W], Int, Int, Int)=>Int,
-                                      ranger: (Int, Int, Int)=>Range,
-                                      trackRulesForThisSetOfRules: Boolean = false) {
-      lazy val totalRulesInKernels = (updater.kernels.map(_.rules.length).sum)
+                                      parentChart: (Batch[W], Int)=>Int,
+                                      leftChart: (Batch[W], Int)=>Int,
+                                      rightChart: (Batch[W], Int)=>Int,
+                                      ranger: (Int, Int, Int)=>Range) {
 
 
-       var splitPointOffset = 0 // number of unique parent spans used so far
-       var offset = 0 // number of work cells used so far.
+       private def flushQueue(workspace: WorkSpace, block: IndexedSeq[Int], batch: Batch[W],
+                              queueSize: Int,
+                              _ev: Seq[CLEvent]): Seq[CLEvent] = {
+         import workspace._
 
-       // TODO: ugh, state
-       var lastParent = -1
+         var ev = _ev
+         var offset = 0
 
-       private def enqueue(block: IndexedSeq[Int], batch: Batch[W], span: Int, parent: Int, left: Int, right: Int, events: Seq[CLEvent]): Seq[CLEvent] = {
-         if (splitPointOffset == 0 || lastParent != parent) {
-           splitPointOffsets(splitPointOffset) = offset
-           splitPointOffset += 1
-         }
-         lastParent = parent
-         pArray(offset) = parent
-         lArray(offset) = left
-         rArray(offset) = right
-
-         if(profile && trackRulesForThisSetOfRules) {
-           rulesEvaled += block.map(updater.kernels(_).rules.length).sum.toLong
-         }
-
-         offset += 1
-         if (offset >= numWorkCells)  {
-           println("flush?")
-           flushQueue(block, batch, span, events)
-         } else {
-           events
-         }
-       }
-
-
-       private def flushQueue(block: IndexedSeq[Int], batch: Batch[W], span: Int, ev: Seq[CLEvent]): Seq[CLEvent] = {
-         if (offset != 0) {
-           splitPointOffsets(splitPointOffset) = offset
-
-           // copy ptrs to opencl
-
-           val bufArray = new Array[Int](offset * 3)
-           System.arraycopy(pArray, 0, bufArray, 0, offset)
-           System.arraycopy(lArray, 0, bufArray, offset, offset)
-           System.arraycopy(rArray, 0, bufArray, offset * 2, offset)
-
-           val evx = offsetBuffer.buffer.writeArray(queue, bufArray, offset * 3, ev:_*)
-
-           // do transpose based on ptrs
-           val evTransLeft  = if(skipFineWork && batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devLeft(0 until offset, ::), leftChartMatrix, offsetBuffer.buffer, offset, offset, evx) profileIn transferEvents
-           val evTransRight = if(skipFineWork && batch.hasMasks) null else transposeCopy.permuteTransposeCopy(devRight(0 until offset, ::), rightChartMatrix, offsetBuffer.buffer, offset * 2, offset, evx) profileIn transferEvents
+         while (offset < queueSize) {
+           val toDoThisTime = math.min(numWorkCells, queueSize - offset)
 
            val updateDirectToChart = updater.directWriteToChart
-           
-           // copy parent pointers
-           // corresponding splits
-           val evWriteDevSplitPoint =  if ((skipFineWork && batch.hasMasks) || updateDirectToChart) null else devSplitPointOffsets.writeArray(queue, splitPointOffsets, splitPointOffset + 1, ev:_*) profileIn hdTransferEvents
+           require(updateDirectToChart)
 
-           val zeroParent = if((skipFineWork && batch.hasMasks) || updateDirectToChart) null else zmk.shapedFill(devParent(0 until offset, ::), _zero, ev:_*) profileIn memFillEvents
 
-           val targetChart = if(updateDirectToChart) parentChartMatrix else devParent(0 until offset, ::)
+           // do transpose based on ptrs
+           val evTransLeft  = transposeCopy.permuteTransposeCopy(devLeft(0 until toDoThisTime, ::), leftChartMatrix, lPtrBuffer, offset, toDoThisTime, ev:_*) profileIn transferEvents
+           val evTransRight = transposeCopy.permuteTransposeCopy(devRight(0 until toDoThisTime, ::), rightChartMatrix, rPtrBuffer, offset, toDoThisTime, ev:_*) profileIn transferEvents
+
+           val targetChart =  parentChartMatrix
            val kEvents = updater.update(block, binaryEvents,
-             targetChart, parentScale, offsetBuffer.buffer,
-             devLeft(0 until offset, ::), leftScale, offsetBuffer.buffer, offset,
-             devRight(0 until offset, ::), rightScale, offsetBuffer.buffer, offset * 2,
-             maskCharts, evTransLeft, evTransRight, evx, zeroParent)
-
-           val sumEv: CLEvent = if((skipFineWork && batch.hasMasks) || updateDirectToChart) null else sumSplitPoints(span, Seq(evx, evWriteDevSplitPoint) ++ kEvents: _*)
+             targetChart, parentScale, pPtrBuffer, offset,
+             devLeft(0 until toDoThisTime, ::), leftScale, lPtrBuffer, offset,
+             devRight(0 until toDoThisTime, ::), rightScale, rPtrBuffer, offset,
+             maskCharts, evTransLeft, evTransRight)
 
 
-           offset = 0
-           splitPointOffset = 0
-           if(sumEv eq null) kEvents else IndexedSeq(sumEv)
-         } else {
-           ev
+
+           offset += toDoThisTime
+           ev = kEvents
          }
+
+         ev
        }
 
 
-       def sumSplitPoints(span: Int, events: CLEvent*): CLEvent = {
-         val sumEv = data.util.sumSplitPoints(devParent,
-           parentChartMatrix,
-           offsetBuffer.buffer, splitPointOffset,
-           devSplitPointOffsets,
-           32 / span max 1, data.numSyms, events:_*) profileIn sumEvents
-         sumEv
-       }
-
-       def doUpdates(batch: Batch[W], span: Int, events: CLEvent*) = {
+       def doUpdates(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent*) = {
 
          var ev = events
-         splitPointOffset = 0
-         lastParent = -1
-
-
-         val merge = !batch.hasMasks || oldPruning
-
-         val allSpans = if (batch.hasMasks) {
-           val allSpans = for {
-             sent <- 0 until batch.numSentences
-             start <- 0 to batch.sentences(sent).length - span
-             _ = total += 1
-             mask <- if(parentIsBot) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
-             if {val x = any(mask); if(!x) pruned += 1; x || doEmptySpans || trackRulesForThisSetOfRules }
-           } yield (sent, start, start+span, mask)
-
-           val ordered = orderSpansBySimilarity(allSpans)
-           ordered
-         } else {
-           for {
-             sent <- 0 until batch.numSentences
-             start <- 0 to batch.sentences(sent).length - span
-           } yield (sent, start, start+span, null)
-         }
-
-
+         val merge = !batch.hasMasks
 
          val numBlocks = updater.numKernelBlocks
-
 
          val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).groupBy(updater.kernels(_).parents.data.toIndexedSeq).values.toIndexedSeq
 
          for(block <- blocks) {
-           val parentCounts = DenseVector.zeros[Int](data.maskSize * 32)
-           val blockParents = updater.kernels(block.head).parents
-           //        if(allSpans.head._4 != null)
-           //          println(BitHacks.asBitSet(blockParents).cardinality)
-           for ( (sent, start, end, mask) <- allSpans ) {
-             if(profile && trackRulesForThisSetOfRules) {
-               val numRules = block.map(updater.kernels(_).rules.length).sum
-               val numSplits = ranger(start, start + span, batch.sentences(sent).length).filter(split => split >= 0 && split <= batch.sentences(sent).length).length
-               rulesTotal += numSplits.toLong * numRules
 
-             }
-             if(mask == null || oldPruning || intersects(blockParents, mask)) {
+           val blockParents: DenseVector[Int] = updater.kernels(block.head).parents
 
-
-               val splitRange = ranger(start, start + span, batch.sentences(sent).length)
-               var split =  splitRange.start
-               val splitEnd = splitRange.terminalElement
-               val step = splitRange.step
-               while (split != splitEnd) {
-                 if (split >= 0 && split <= batch.sentences(sent).length) {
-                   val end = start + span
-                   val parentTi = parentChart(batch, sent, start, end)
-                   val leftChildAllowed = if (split < start) batch.isAllowedSpan(sent,split, start) else batch.isAllowedSpan(sent, start, split)
-                   val rightChildAllowed = if (split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
-
-                   if (doEmptySpans || (leftChildAllowed && rightChildAllowed)) {
-                     val leftChild = if (split < start) leftChart(batch, sent, split,start) else leftChart(batch, sent, start, split)
-                     val rightChild = if (split < end) rightChart(batch, sent, split,end) else rightChart(batch, sent, end, split)
-                     ev = enqueue(block, batch, span, parentTi, leftChild, rightChild, ev)
-                     if(profile && trackRules && mask != null) {
-                       val mask2 = BitHacks.asBitSet(mask)
-                       for(m <- mask2.iterator) {
-                        parentCounts(m) += 1
-                       }
-                     }
-                   }
-                 }
-                 split += step
-               }
-
-             }
-
+           val (evq, numToDo) = {
+             updater.enqueuer.enqueue(workspace, batch, span, !parentIsBot, leftChart eq ActualParser.this.insideTop, rightChart eq ActualParser.this.insideTop, if(batch.hasMasks) Some(blockParents.toArray) else None, ev:_*)
            }
 
-           if(trackRulesForThisSetOfRules && profile)
-            theoreticalRules += block.flatMap(updater.kernels(_).rules).groupBy(_.parent.coarse).map { case (k,v) => parentCounts(k) * v.length}.sum
+           val queueSize = numToDo
 
-           if (offset > 0) {
-             ev = flushQueue(block, batch, span, ev)
+           ev = Seq(evq)
+
+           if (queueSize > 0) {
+             ev = flushQueue(workspace, block, batch, queueSize, ev)
            }
          }
-
-
-//         if(profile  && trackRulesForThisSetOfRules) {
-//           rulesTotal += {for {
-//             sent <- 0 until batch.numSentences
-//             start <- 0 to batch.sentences(sent).length - span
-//             split <- ranger(start, start + span, batch.sentences(sent).length)
-//             if (split >= 0 && split <= batch.sentences(sent).length)
-//           } yield split}.sum.toLong * totalRulesInKernels
-//         }
 
          assert(ev.length == 1)
          ev.head
@@ -1001,40 +800,17 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
 
 
-  def intersects(blockMask: DenseVector[Int], spanMask: DenseVector[Int]):Boolean = {
+  private def intersects(blockMask: DenseVector[Int], spanMask: DenseVector[Int]):Boolean = {
     var i = 0
     assert(blockMask.length == spanMask.length)
     while(i < blockMask.length) {
-      if( (blockMask(i) & spanMask(i)) != 0) return true
+      if( (blockMask.unsafeValueAt(i) & spanMask.unsafeValueAt(i)) != 0) return true
       i += 1
     }
 
     false
 
   }
-
-
-
-
-
-
-  // Sentence, Begin, End, BitMask
-  def orderSpansBySimilarity(spans: IndexedSeq[(Int, Int, Int, DenseVector[Int])]): IndexedSeq[(Int, Int, Int, DenseVector[Int])] = {
-//    val res = spans.groupBy(v =>v._4.toArray.toIndexedSeq).values.flatten.toIndexedSeq
-//    res
-    if(oldPruning) {
-      import BitHacks.OrderBitVectors.OrderingBitVectors
-      val in = System.currentTimeMillis()
-      val res = spans.sortBy(_._4)
-      val out = System.currentTimeMillis()
-      sortTime += (out - in)
-      res
-    } else {
-      spans
-
-    }
-  }
-
 
 }
 
@@ -1043,6 +819,7 @@ object CLParser extends Logging {
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = Xbarize(),
                     device: String = "nvidia",
                     profile: Boolean = false,
+                    parseTrain: Boolean = false,
                     numToParse: Int = 1000, codeCache: File = new File("grammar.grz"), cache: Boolean = true,
                     maxParseLength: Int = 10000,
                     jvmParse: Boolean = false, parseTwice: Boolean = false,
@@ -1051,10 +828,18 @@ object CLParser extends Logging {
                     justInsides: Boolean = false,
                     noExtraction: Boolean = false,
                     mem: String = "1g",
-                    reproject: Boolean = true,
+                    reproject: Boolean = false,
                     viterbi: Boolean = true,
                     logsum: Boolean = false,
+                    numToDrop: Int = 0,
+                    evalReference: Boolean = false,
                     printTrees: Boolean = false)
+
+  def repeatToSize[T:ClassTag](arr: IndexedSeq[T], size: Int) = {
+    val len = arr.length
+    val mult = roundUpToMultipleOf(size,len)/len
+    IndexedSeq.fill(mult)(arr).flatten
+  }
 
   def main(args: Array[String]) = {
     import ParserParams.JointParams
@@ -1066,8 +851,6 @@ object CLParser extends Logging {
 
     implicit val context: CLContext = {
       val (good, bad) = JavaCL.listPlatforms().flatMap(_.listAllDevices(true)).partition(d => device.r.findFirstIn(d.toString.toLowerCase()).nonEmpty)
-      println(good.toIndexedSeq)
-      println(bad.toIndexedSeq)
       if(good.isEmpty) {
         JavaCL.createContext(Collections.emptyMap(), bad.sortBy(d => d.toString.toLowerCase().contains("geforce")).last)
       } else {
@@ -1080,77 +863,79 @@ object CLParser extends Logging {
     println("Training Parser...")
     println(params)
     val transformed = params.treebank.copy(binarization="left", keepUnaryChainsFromTrain = false).trainTrees
-    val gold = params.treebank.trainTrees.filter(_.words.length <= maxParseLength).take(numToParse)
+    val whatToParse = if(parseTrain) params.treebank.trainTrees else params.treebank.trainTrees
+    val gold = repeatToSize(whatToParse.filter(_.words.length <= maxParseLength).drop(numToDrop), numToParse)
     val toParse =  gold.map(_.words)
 
-    var grammars: IndexedSeq[SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String]] = if (textGrammarPrefix == null) {
-      IndexedSeq(GenerativeParser.annotated(annotator, transformed))
-    } else {
-      val paths = textGrammarPrefix.split(":")
-      paths.zipWithIndex.map{ case (f,i) => SimpleRefinedGrammar.parseBerkeleyText(f,  -12, CloseUnaries.None)}
-    }
-
-    if(reproject && grammars.length > 1) {
-      val writer = new FileWriter("qqq")
-      grammars.head.prettyPrint(writer)
-      writer.close()
-      val (newc, newr) = reprojectGrammar(grammars.head, textGrammarPrefix.split(":").head, grammars.last, textGrammarPrefix.split(":").last)
-      grammars = IndexedSeq(newc, newr)
-    }
-
-
-    val grammar = grammars.last
-
-    var parserData:CLParserData[AnnotatedLabel, AnnotatedLabel, String] = if (cache && codeCache != null && codeCache.exists()) {
-      CLParserData.read(new ZipFile(codeCache))
-    } else {
-      null
-    }
 
     val defaultGenerator = GenType.CoarseParent
     val prunedGenerator = GenType.CoarseParent
 
     val finePassSemiring = if(viterbi) {
       ViterbiRuleSemiring
+    } else if (logsum) {
+      LogSumRuleSemiring
     } else {
-      if (logsum) {
-    	  LogSumRuleSemiring
-      } else {
-    	  RealSemiring
-      }
+      RealSemiring
     }
 
-    if (parserData == null || parserData.grammar.signature != grammar.signature) {
-      println("Regenerating parser data")
-      val gen = if(grammars.length > 1) prunedGenerator else defaultGenerator
-      parserData =  CLParserData.make(grammar, gen, grammars.length > 1, finePassSemiring)
-      if (cache && codeCache != null) {
-        parserData.write(new BufferedOutputStream(new FileOutputStream(codeCache)))
+    val parserDatas: IndexedSeq[CLParserData[AnnotatedLabel, AnnotatedLabel, String]] = if (cache && codeCache != null && codeCache.exists()) {
+      CLParserData.readSequence[AnnotatedLabel, AnnotatedLabel, String](new ZipFile(codeCache))
+    } else if (textGrammarPrefix == null) {
+      IndexedSeq(CLParserData.make(GenerativeParser.annotated(annotator, transformed), defaultGenerator, true, finePassSemiring))
+    } else {
+      val paths = textGrammarPrefix.split(":")
+      var grammars = paths.zipWithIndex.map{ case (f,i) => SimpleRefinedGrammar.parseBerkeleyText(f,  -12, CloseUnaries.None)}
+      if(reproject && grammars.length > 1) {
+        val (newc, newr) = reprojectGrammar(grammars.head, textGrammarPrefix.split(":").head, grammars.last, textGrammarPrefix.split(":").last)
+        grammars = Array(newc, newr)
       }
+
+      val fineLayer =  CLParserData.make(grammars.last, if(grammars.length > 1) prunedGenerator else defaultGenerator, true, finePassSemiring)
+      val coarseGrammars = grammars.dropRight(1)
+      val coarseData = coarseGrammars.map(CLParserData.make(_,  defaultGenerator, directWrite = true, ViterbiRuleSemiring))
+
+      coarseData :+ fineLayer
     }
 
-
-
-    val allData = grammars.dropRight(1).map(CLParserData.make(_,  defaultGenerator, false, ViterbiRuleSemiring)) :+ parserData
+    if (cache && !codeCache.exists() && codeCache != null) {
+      CLParserData.writeSequence(codeCache, parserDatas)
+    }
 
     val kern = {
-      fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](allData, profile, parseMemString(mem))
+      fromParserDatas[AnnotatedLabel, AnnotatedLabel, String](parserDatas, profile, parseMemString(mem))
     }
 
+    val grammars = parserDatas.map(_.grammar)
 
-    if (checkPartitions) {
-      val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
-      println(partsX)
-      val parser = Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
-      val parts2 = toParse.par.map(parser.marginal(_).logPartition)
-      println(parts2)
-      println("max difference: " + (DenseVector(partsX.map(_.toDouble):_*) - DenseVector(parts2.seq:_*)).norm(Double.PositiveInfinity))
-      System.exit(0)
+
+    val parser = if(grammars.length > 1) {
+      val gr = grammars.last
+      Parser(new ConstraintCoreGrammarAdaptor(gr.grammar, gr.lexicon, new ParserChartConstraintsFactory(Parser(grammars.head, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate)),
+        gr,
+        if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
+    } else {
+      val grammar = grammars.last
+      Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
     }
 
-    if (justInsides) {
+    println("Up and running...")
+
+    if(evalReference) {
+      val res = ParserTester.evalParser(gold, parser, "cpu-reference", 4)
+      println(res)
+    }
+
+    println("Running...")
+
+    if (justInsides || checkPartitions) {
       val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
-      println(partsX)
+      println(partsX.last)
+      if (checkPartitions) {
+        val parts2 = toParse.par.map(parser.marginal(_).logPartition)
+        println(parts2.last)
+        println("max difference: " + (DenseVector(partsX.map(_.toDouble):_*) - DenseVector(parts2.seq:_*)).norm(Double.PositiveInfinity))
+      }
       System.exit(0)
     }
 
@@ -1162,26 +947,20 @@ object CLParser extends Logging {
 
 
     val trees = logTime("CL Parsing:", toParse.length)(kern.parse(toParse))
-    println(eval(trees zip gold.map(_.tree) zip toParse, printTrees))
+    println(eval(trees zip gold.map(_.tree) zip toParse, "opencl", printTrees))
     if (parseTwice) {
       val trees = logTime("CL Parsing x2:", toParse.length)(kern.parse(toParse))
-      println(eval(trees zip gold.map(_.tree) zip toParse))
+      println(eval(trees zip gold.map(_.tree) zip toParse, "opencl-twice"))
     }
     if (jvmParse) {
-      val parser = if(grammars.length > 1) {
-        Parser(new ConstraintCoreGrammarAdaptor(grammar.grammar, grammar.lexicon, new ParserChartConstraintsFactory(Parser(grammars.head, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate)),
-          grammar,
-          if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
-      } else {
-        Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
-      }
+
       val margs = logTime("JVM Parse", toParse.length) {
         toParse.par.map { w =>
           val m = parser.apply(w)
           m
         }.seq.toIndexedSeq
       }
-      println(eval(margs zip gold.map(_.tree) zip toParse))
+      println(eval(margs zip gold.map(_.tree) zip toParse, ""))
     }
 
     kern.release()
@@ -1199,14 +978,20 @@ object CLParser extends Logging {
     kern
   }
 
-  def eval(trees: IndexedSeq[((BinarizedTree[AnnotatedLabel], BinarizedTree[AnnotatedLabel]), IndexedSeq[String])], printTrees: Boolean = false) = {
+  def eval(trees: IndexedSeq[((BinarizedTree[AnnotatedLabel], BinarizedTree[AnnotatedLabel]), IndexedSeq[String])], name: String, printTrees: Boolean = false) = {
     val chainReplacer = AnnotatedLabelChainReplacer
+    val outDir = new File(s"eval-$name")
+    outDir.mkdirs()
+    val goldOut = new PrintStream(new FileOutputStream(new File(outDir, "gold")))
+    val guessOut = new PrintStream(new FileOutputStream(new File(outDir, "guess")))
     val eval: ParseEval[String] = new ParseEval(Set("","''", "``", ".", ":", ",", "TOP"))
-    trees filter (_._1 ne null) map { case ((guess, gold), words) =>
+    val res = trees filter (_._1 ne null) map { case ((guess, gold), words) =>
       val tree: Tree[String] = chainReplacer.replaceUnaries(guess).map(_.label)
       val guessTree = Trees.debinarize(Trees.deannotate(tree))
       val deBgold: Tree[String] = Trees.debinarize(Trees.deannotate(chainReplacer.replaceUnaries(gold).map(_.label)))
       val stats = eval.apply(guessTree, deBgold)
+      goldOut.println(deBgold.render(words, false))
+      guessOut.println(guessTree.render(words, false))
       if(printTrees) {
         println("Guess:\n"  + guessTree.render(words))
         println("Gold:\n"  + deBgold.render(words))
@@ -1215,6 +1000,10 @@ object CLParser extends Logging {
       }
       stats
     } reduceLeft (_ + _)
+
+    goldOut.close()
+    guessOut.close()
+    res
   }
 
   def parseMemString(x: String) = x.last.toLower match {
@@ -1312,6 +1101,7 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
                                  inside: CLInsideKernels,
                                  outside: CLOutsideKernels,
                                  masks: CLMaskKernels,
+                                 viterbi: CLViterbi,
                                  mbr: CLMBRKernels,
                                  scaling: CLScalingKernels,
                                  util: CLParserUtils) {
@@ -1323,32 +1113,30 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
   def numSyms = structure.nontermIndex.size max structure.termIndex.size
   def maskSize = masks.maskSize
 
-  def write(out: OutputStream) {
-    val zout = new ZipOutputStream(out)
-    ZipUtil.serializedEntry(zout, "grammar", grammar)
-    ZipUtil.serializedEntry(zout, "structure", structure)
-    ZipUtil.serializedEntry(zout, "semiring", semiring)
-    inside.write(zout)
-    outside.write(zout)
-    util.write(zout)
-    masks.write(zout)
-    mbr.write(zout)
-    scaling.write(zout)
-    zout.close()
+  def write(prefix:String, zout: ZipOutputStream) {
+    ZipUtil.serializedEntry(zout, s"$prefix/grammar", grammar)
+    ZipUtil.serializedEntry(zout, s"$prefix/structure", structure)
+    ZipUtil.serializedEntry(zout, s"$prefix/semiring", semiring)
+    inside.write(prefix, zout)
+    outside.write(prefix, zout)
+    util.write(prefix, zout)
+    masks.write(prefix, zout)
+    mbr.write(prefix, zout)
+    viterbi.write(prefix, zout)
+    scaling.write(prefix, zout)
   }
 }
 
 object CLParserData {
   def make[C, L, W](grammar: SimpleRefinedGrammar[C, L, W], genType: GenType, directWrite: Boolean, semiring: RuleSemiring)(implicit context: CLContext) = {
-//    implicit val viterbi = ViterbiRuleSemiring
-    implicit val viterbi = semiring
+    implicit val semi = semiring
     val ruleScores: Array[Float] = Array.tabulate(grammar.refinedGrammar.index.size){r =>
       val projectedRule = grammar.refinements.rules.project(r)
       if(projectedRule < 0) {
-        viterbi.fromLogSpace(-12)
+        semi.fromLogSpace(-12)
       } else {
         val score = grammar.ruleScoreArray(projectedRule)(grammar.refinements.rules.localize(r))
-        viterbi.fromLogSpace(score.toFloat)
+        semi.fromLogSpace(score.toFloat)
       }
     }
     val structure = new RuleStructure(grammar.refinements, grammar.refinedGrammar, ruleScores)
@@ -1356,23 +1144,42 @@ object CLParserData {
     val outside =  CLOutsideKernels.make(structure, directWrite, semiring, genType)
     val util = CLParserUtils.make(structure)
     val masks = CLMaskKernels.make(structure)
+    val viterbi = CLViterbi.make(structure)
     val mbr = CLMBRKernels.make(structure)
     val scaling = CLScalingKernels.make(structure)
 
-    new CLParserData(grammar, structure, viterbi, inside, outside, masks, mbr, scaling, util)
+    new CLParserData(grammar, structure, semi, inside, outside, masks, viterbi, mbr, scaling, util)
   }
 
-  def read[C, L, W](file: ZipFile)(implicit context: CLContext) = {
-    val gr = ZipUtil.deserializeEntry[SimpleRefinedGrammar[C, L, W]](file.getInputStream(file.getEntry("grammar")))
-    val structure = ZipUtil.deserializeEntry[RuleStructure[C, L]](file.getInputStream(file.getEntry("structure")))
-    val semiring = ZipUtil.deserializeEntry[RuleSemiring](file.getInputStream(file.getEntry("semiring")))
-    val inside = CLInsideKernels.read(file)
-    val outside = CLOutsideKernels.read(file)
-    val util = CLParserUtils.read(file)
-    val masks = CLMaskKernels.read(file)
-    val mbr = CLMBRKernels.read(file)
-    val scaling = CLScalingKernels.read(file)
+  def read[C, L, W](prefix: String, file: ZipFile)(implicit context: CLContext): CLParserData[C, L, W] = {
+    val gr = ZipUtil.deserializeEntry[SimpleRefinedGrammar[C, L, W]](file.getInputStream(file.getEntry(s"$prefix/grammar")))
+    val structure = ZipUtil.deserializeEntry[RuleStructure[C, L]](file.getInputStream(file.getEntry(s"$prefix/structure")))
+    val semiring = ZipUtil.deserializeEntry[RuleSemiring](file.getInputStream(file.getEntry(s"$prefix/semiring")))
+    val inside = CLInsideKernels.read(prefix, file)
+    val outside = CLOutsideKernels.read(prefix, file)
+    val util = CLParserUtils.read(prefix, file)
+    val masks = CLMaskKernels.read(prefix, file)
+    val mbr = CLMBRKernels.read(prefix, file)
+    val viterbi = CLViterbi.read(prefix, file)
+    val scaling = CLScalingKernels.read(prefix, file)
 
-    CLParserData(gr, structure, semiring, inside, outside, masks, mbr, scaling, util)
+    CLParserData(gr, structure, semiring, inside, outside, masks, viterbi, mbr, scaling, util)
+  }
+
+  def readSequence[C, L, W](file: ZipFile)(implicit context: CLContext):IndexedSeq[CLParserData[C, L, W]] = {
+    val parsers = Source.fromInputStream(file.getInputStream(file.getEntry("parserNames")))(Codec.UTF8).getLines().map(_.trim).toArray
+    for(p <- parsers) yield read[C, L, W](p, file)
+  }
+
+  def writeSequence[C, L, W](file: File, parsers: Seq[CLParserData[C, L, W]])(implicit context: CLContext) = {
+    val out = new ZipOutputStream(new FileOutputStream(file))
+    val names = Array.tabulate(parsers.length)(x => s"parser-$x")
+    ZipUtil.addEntry(out, "parserNames", names.mkString("\n").getBytes("UTF-8"))
+
+    for( (d, n) <- parsers zip names) {
+      d.write(n, out)
+    }
+
+    out.close()
   }
 }

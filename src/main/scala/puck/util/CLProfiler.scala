@@ -1,11 +1,15 @@
 package puck.util
 import com.nativelibs4java.opencl._
 import com.nativelibs4java.opencl.CLEvent.CommandExecutionStatus
+import scala.collection.mutable.ArrayBuffer
+import breeze.numerics.sqrt
+import breeze.stats.MeanAndVariance
 
-class CLProfiler(name: String) {
-  private var startingWallTime:Long = -1L
+class CLProfiler(actuallyProfile: Boolean) {
+  private var startingWallTime: Long = -1L
   private var totalWallTime: Long = 0
-  private var events = collection.mutable.ArrayBuffer[CLEvent]()
+
+  def eventTimer(timerName: String) = new EventTimer(timerName)
 
   def tick() {
     startingWallTime = System.currentTimeMillis
@@ -18,51 +22,76 @@ class CLProfiler(name: String) {
     startingWallTime = -1L
   }
 
-  def +=(event: CLEvent):this.type = {
-    if (event ne null) events += event
-    this
+  override def toString():String = report("")
+
+  def report(name: String) = {
+    val header = s"Profile for phase $name {"
+    val accounted = allTimers.map(_.processingTime).sum
+    val time = f"Wall Clock Time: ${totalWallTime/1E3}%.3fs of which ${accounted}%.6fs is accounted for in processing. (${accounted / totalWallTime * 1E5}%.3f%%)"
+    allTimers.filter(_.processingTime != 0.0).mkString(s"$header\n  $time\n  ", "\n  ","\n}")
   }
 
-  def ++=(event: Traversable[CLEvent]):this.type = {
-    if (event ne null) events ++= event
-    this
-  }
+  private val allTimers = new ArrayBuffer[EventTimer]()
 
-  def prof(events: Seq[CLEvent]):events.type = {
-    this.events ++= events
-    events
-  }
+  def clear() { allTimers foreach (_.clear()); totalWallTime = 0}
 
-  def prof(event: CLEvent):event.type = {
-    this.events += event
-    event
-  }
+  class EventTimer(portion: String) {
+    allTimers += this
+    private val events = collection.mutable.ArrayBuffer[CLEvent]()
 
-  def clear() {
-    startingWallTime = -1L
-    totalWallTime = -1L
-    events.clear()
-  }
-
-  def processingTime = {
-    val badEvents = events.filter(_ ne null).filter(_.getCommandExecutionStatus != CommandExecutionStatus.Complete)
-    if(badEvents.nonEmpty) {
-      println(s"Bunch of bad events! ${badEvents.map{x => x -> x.getCommandExecutionStatus}}")
+    def +=(event: CLEvent): this.type = {
+      if (actuallyProfile && event != null) events += event
+      this
     }
-    val eventTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandEnd - e.getProfilingCommandStart)/1E9).sum
-    eventTimes
+
+    def ++=(event: Traversable[CLEvent]): this.type = {
+      events foreach +=
+      this
+    }
+
+    def prof(events: Seq[CLEvent]): events.type = {
+      this ++= events
+      events
+    }
+
+    def prof(event: CLEvent): event.type = {
+      this += event
+      event
+    }
+
+    private[CLProfiler] def clear() {
+      events.clear()
+    }
+
+    def processingTime = {
+      val badEvents = events.filter(_ ne null).filter(_.getCommandExecutionStatus != CommandExecutionStatus.Complete)
+      if (badEvents.nonEmpty) {
+        println(s"Bunch of bad events! ${
+          badEvents.map {
+            x => x -> x.getCommandExecutionStatus
+          }
+        }")
+      }
+      val eventTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandEnd - e.getProfilingCommandStart) / 1E9).sum
+      eventTimes
+    }
+
+    override def toString = {
+      val badEvents = events.filter(_ ne null).filter(_.getCommandExecutionStatus != CommandExecutionStatus.Complete)
+      if(badEvents.nonEmpty) {
+        println(s"Bunch of bad events! ${badEvents.map{x => x -> x.getCommandExecutionStatus}}")
+      }
+      val eventTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandEnd - e.getProfilingCommandStart)/1E9)
+      val sum = eventTimes.sum
+      val MeanAndVariance(mean:Double, variance, _) = breeze.stats.meanAndVariance(eventTimes)
+      val std:Double = sqrt(variance)
+//      val queueTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandStart - e.getProfilingCommandQueued)/1E9).sum
+//      val submitTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandEnd - e.getProfilingCommandSubmit)/1E9).sum
+      f"Event Timer $portion: $sum%.6fs processing time. ${events.length} events, avg. $mean%.6fs per event, stddev $std%.6fs"
+    }
   }
 
-  override def toString() = {
-    val badEvents = events.filter(_ ne null).filter(_.getCommandExecutionStatus != CommandExecutionStatus.Complete)
-    if(badEvents.nonEmpty) {
-      println(s"Bunch of bad events! ${badEvents.map{x => x -> x.getCommandExecutionStatus}}")
-    }
-    val eventTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandEnd - e.getProfilingCommandStart)/1E9).sum
-    val queueTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandStart - e.getProfilingCommandQueued)/1E9).sum
-    val submitTimes = events.filter(_ ne null).filter(_.getCommandExecutionStatus == CommandExecutionStatus.Complete).map(e => (e.getProfilingCommandEnd - e.getProfilingCommandSubmit)/1E9).sum
-    f"Profile $name: ${totalWallTime / 1000.}%.3fs wall time. ${eventTimes}%.6fs processing time. ${queueTimes}%.6fs in queue. ${submitTimes}%.6fs submit."
-  }
+
 
 }
 

@@ -8,7 +8,7 @@ import epic.trees.TreeInstance
 import epic.trees.annotations.Xbarize
 import scala.collection.mutable.ArrayBuffer
 import java.io._
-import java.util.zip.ZipFile
+import java.util.zip.{ZipOutputStream, ZipFile}
 import epic.trees.StandardTreeProcessor
 import epic.trees.TreeInstance
 import epic.trees.annotations.Xbarize
@@ -24,14 +24,14 @@ class CLParserDataTest extends FunSuite {
   test("write/read works") {
     implicit val clcontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.GPU)
     val grammar = ParserTestHarness.grammar.asInstanceOf[SimpleRefinedGrammar[String, String, String]]
-    val data = CLParserData.make(grammar, GenType.VariableLength, false, ViterbiRuleSemiring)
+    val data = CLParserData.make(grammar, GenType.CoarseParent, false, ViterbiRuleSemiring)
     val tempFile = File.createTempFile("xxx","parserdata")
     tempFile.deleteOnExit()
-    val out = new FileOutputStream(tempFile)
-    data.write(out)
+    val out = new ZipOutputStream(new FileOutputStream(tempFile))
+    data.write("", out)
     out.close()
     val in = new ZipFile(tempFile)
-    val input = CLParserData.read(in)
+    val input = CLParserData.read("", in)
     assert(data.grammar.signature === input.grammar.signature)
   }
 

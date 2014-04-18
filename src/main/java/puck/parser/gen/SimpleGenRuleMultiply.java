@@ -17,7 +17,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 	public static final int WARP_SIZE = 32;
 	public static final int NUM_WARPS = 48;
 	public static final int NUM_SM = 8;
-	
+
     public RuleStructure<C, L> structure;
     private boolean writeDirectToChart;
     private RuleSemiring semiring;
@@ -33,7 +33,9 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 
     public abstract List<IndexedBinaryRule<C, L>>[][] segmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules);
 
-    public CLBinaryRuleUpdater javaBinaryRuleApplication(List<IndexedBinaryRule<C, L>> indexedBinaryRules, String name, CLContext context) {
+    @Override
+    public CLBinaryRuleUpdater javaBinaryRuleApplication(List<IndexedBinaryRule<C, L>> indexedBinaryRules,
+                                                         String name, CLContext context, LoopType loop) {
         ArrayList<String> kernelTexts = new ArrayList<String>();
         List<IndexedBinaryRule<C, L>>[][] segments = segmentBinaries(indexedBinaryRules);
         boolean supportsExtendedAtomics =  supportsExtendedAtomics(context);
@@ -44,7 +46,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         List<RuleKernel> kernels = compileKernels(context, this.<IndexedBinaryRule<C, L>>flatten(segments), kernelTexts);
         int[] globalSize = {WARP_SIZE * NUM_WARPS, NUM_SM, 1};
         int[] wgSize = {WARP_SIZE, 1, 1};
-        return new CLBinaryRuleUpdater(kernels, globalSize, wgSize, writeDirectToChart);
+        return new CLBinaryRuleUpdater(kernels, loop.queue(structure.numCoarseSyms(), context), globalSize, wgSize, writeDirectToChart);
     }
 
 
@@ -71,7 +73,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 
         appendAddition(sb);
         sb.append(WRITE_PARENT_ATOMIC);
-        sb.append(CLMaskKernels.maskHeader(structure));
+        sb.append(CLMaskKernels.maskHeader(structure.numCoarseSyms()));
 
         sb.append("\n\n");
 
@@ -182,7 +184,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         sb.append(String.format(
                 " __kernel void %s(__global volatile float* parents," +
                                 "__global const float* parentScale," +
-                "                  __global int* parentIndex, " + // cell offset into parents column if writeDirect, and always parentScale
+                "                  __global int* _parentIndex, int parentOff," + // cell offset into parents column if writeDirect, and always parentScale
                 "                  __global float* left," +
                 "                  __global const float* leftScale," +
                         "                  __global int* _leftIndex, int leftOff, " +
@@ -192,6 +194,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
                 "                  __global const mask_t* masks, int numRows, int cellsToDo) {\n" +
                 "    int numWorkers = get_global_size(0);\n" +
                 "    int grammarSubPartition = get_group_id(1);\n" +
+                "    __global int* parentIndex = _parentIndex + parentOff;\n" +
                 "    __global int* leftIndex = _leftIndex + leftOff;\n" +
                 "    __global int* rightIndex = _rightIndex + rightOff;\n" +
                 "    for (int row = get_global_id(0); row < cellsToDo; row += numWorkers) {\n" +
@@ -246,7 +249,8 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
         sb.append(String.format(
                 " __kernel void %s(__global volatile float* parents," +
                         "__global const float* parentScale," +
-                        "                  __global int* parentIndex, " + // cell offset into parents column if writeDirect, and always parentScale
+                        "                  __global int* _parentIndex, " + // cell offset into parents column if writeDirect, and always parentScale
+                        "                 int parentOff, " +
                         " __global float* child, " +
                         "__global const float* childScale," +
                         "                  __global int* _childIndex, " + // cell offset into childs column if writeDirect, and always childScale
@@ -262,6 +266,7 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 
         if(semiring.needsScaling()) {
             sb.append("__global int* childIndex = _childIndex + childOff;");
+            sb.append("__global int* parentIndex = _parentIndex + parentOff;");
             sb.append("float scale = native_exp(-parentScale[parentIndex[row]] + childScale[childIndex[row]]);");
         } else {
             sb.append("float scale = 1.0f;");
@@ -310,8 +315,8 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
 //        return String.format("write_parent_atomic_nvidia_gen(&%s, %s);\n", dest, src);
     	if(symIsUniqueToSubsegmentation) {
             return String.format("%s = semiring_add(%s, %s);\n", dest, dest, src);
-        } else if(semiringIsViterbi() && GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics && NVIDIA_IS_STILL_STUPID) {
-            return String.format("write_parent_atomic_nvidia_gen(&%s, %s);\n", dest, src);
+//        } else if(semiringIsViterbi() && GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics && NVIDIA_IS_STILL_STUPID) {
+//            return String.format("write_parent_atomic_nvidia_gen(&%s, %s);\n", dest, src);
         } else if(semiringIsViterbi() & GRAMMAR_IS_GENERATIVE && supportsExtendedAtomics) {
             return String.format("write_parent_gen_atomic(&%s, %s);\n", dest, src);
         } else {
@@ -329,11 +334,12 @@ public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMul
     private static final String WRITE_PARENT_ATOMIC = "" +
             "     typedef union { int old; float oldf; } intbox;\n" +
             "     \n" +
+            "#ifndef NVIDIA\n" +
             "     inline void write_parent_gen_atomic(volatile __global float* loc, float value) {\n" +
             "        atomic_min((volatile __global int*)loc, *(int*)&value);\n" +
             "      }\n"+
-            " #ifdef NVIDIA \n" +
-            "     inline void write_parent_atomic_nvidia_gen(volatile __global float* loc, float value) {\n" +
+            "#else \n" +
+            "     inline void write_parent_gen_atomic(volatile __global float* loc, float value) {\n" +
             "        volatile __global int* d_ptr = (volatile __global int*)loc;\n" +
             "        int z = *(int*)&value;\n" +
             "        asm volatile(\"atom.global.min.s32 %0, [%1], %2;\" : \"=r\"(z), \"+l\"(d_ptr): \"r\"(z));\n" +
