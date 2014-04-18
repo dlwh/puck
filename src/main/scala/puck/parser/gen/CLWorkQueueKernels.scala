@@ -1,7 +1,7 @@
 package puck.parser.gen
 
 import com.nativelibs4java.opencl._
-import puck.util.{ZipUtil, CLScan}
+import puck.util.{CLProfiler, ZipUtil, CLScan}
 import puck.parser.{PruningMask, Batch, WorkSpace}
 import org.bridj.Pointer
 import puck.parser.Batch
@@ -16,7 +16,9 @@ import java.util.zip.{ZipFile, ZipOutputStream}
 class CLWorkQueueKernels(enqueueKernel: CLKernel, maskSize: Int)(implicit ctxt: CLContext) {
   private val scanKernel = CLScan.make
 
-  def enqueue[W](ws: WorkSpace,
+  def enqueue[W](queueProf: CLProfiler#EventTimer,
+                 scanProf: CLProfiler#EventTimer,
+                 ws: WorkSpace,
                  batch: Batch[W],
                  spanLength: Int,
                  pTop: Boolean,
@@ -30,14 +32,17 @@ class CLWorkQueueKernels(enqueueKernel: CLKernel, maskSize: Int)(implicit ctxt: 
       batch.cellOffsetsDev, batch.lengthsDev, batch.masksDev.map(_.data.safeBuffer).getOrElse(ws.lPtrBuffer), mask.getOrElse(Array.fill(maskSize)(-1)), I(mask.nonEmpty), I(pTop), I(lTop), I(rTop), Integer.valueOf(spanLength), I(true))
 
     val computeNeededEv = enqueueKernel.enqueueNDRange(queue, Array(batch.numSentences), Array(1), events:_*)
+    queueProf += computeNeededEv
 
     val evScan = scanKernel.scan(ws.queueOffsets, scratch, batch.numSentences, computeNeededEv)
+    scanProf += evScan
     PointerFreer.enqueue({scratch.release()}, evScan)
 
     enqueueKernel.setArg(3, ws.queueOffsets)
     enqueueKernel.setArg(13, I(false))
 
     val res = enqueueKernel.enqueueNDRange(queue, Array(batch.numSentences), Array(1), evScan)
+    queueProf += res
     val numNeeded = ws.queueOffsets.read(queue, batch.numSentences - 1, 1, evScan).get()
 
     (res, numNeeded.intValue())

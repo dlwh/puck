@@ -76,6 +76,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private val unarySumEvents  = profiler.eventTimer("Unary Sum")
   private val posEvents  = profiler.eventTimer("POS")
   private val masksEvents  = profiler.eventTimer("Masks")
+  private val queueEvents  = profiler.eventTimer("Queue")
+  private val scanEvents  = profiler.eventTimer("Scan")
 
   // TODO:
 
@@ -778,7 +780,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
            val blockParents: DenseVector[Int] = updater.kernels(block.head).parents
 
            val (evq, numToDo) = {
-             updater.enqueuer.enqueue(workspace, batch, span, !parentIsBot, leftChart eq ActualParser.this.insideTop, rightChart eq ActualParser.this.insideTop, if(batch.hasMasks) Some(blockParents.toArray) else None, ev:_*)
+             updater.enqueuer.enqueue(queueEvents, scanEvents, workspace, batch, span, !parentIsBot, leftChart eq ActualParser.this.insideTop, rightChart eq ActualParser.this.insideTop, if(batch.hasMasks) Some(blockParents.toArray) else None, ev:_*)
            }
 
            val queueSize = numToDo
