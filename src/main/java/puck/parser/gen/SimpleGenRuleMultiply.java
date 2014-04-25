@@ -2,6 +2,7 @@ package puck.parser.gen;
 
 import com.nativelibs4java.opencl.CLContext;
 
+import org.apache.commons.math3.ml.clustering.Clusterer;
 import puck.package$;
 import puck.parser.*;
 
@@ -12,26 +13,35 @@ import java.util.*;
  *
  * @author dlwh
  */
-public abstract class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, L> {
+public class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, L> {
 	
 	public static final int WARP_SIZE = 32;
 	public static final int NUM_WARPS = 48;
 	public static final int NUM_SM = 8;
+    private final GrammarClusterer<C, L> clusterer;
 
     public RuleStructure<C, L> structure;
     private boolean writeDirectToChart;
     private RuleSemiring semiring;
 
-    public SimpleGenRuleMultiply(RuleStructure<C, L> structure, boolean writeDirectToChart, RuleSemiring semiring) {
+    public SimpleGenRuleMultiply(RuleStructure<C, L> structure,
+                                 boolean writeDirectToChart,
+                                 RuleSemiring semiring,
+                                 GrammarClusterer<C, L> clusterer) {
         super(structure, writeDirectToChart);
         this.structure = structure;
         this.writeDirectToChart = writeDirectToChart;
         this.semiring = semiring;
+        this.clusterer = clusterer;
     }
     
-    public abstract List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules);
+    public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {
+        return clusterer.segmentUnaries(indexedUnaryRules);
+    }
 
-    public abstract List<IndexedBinaryRule<C, L>>[][] segmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules);
+    public List<IndexedBinaryRule<C, L>>[][] segmentBinaries(List<IndexedBinaryRule<C, L>> indexedBinaryRules) {
+        return clusterer.segmentBinaries(indexedBinaryRules);
+    }
 
     @Override
     public CLBinaryRuleUpdater javaBinaryRuleApplication(List<IndexedBinaryRule<C, L>> indexedBinaryRules,

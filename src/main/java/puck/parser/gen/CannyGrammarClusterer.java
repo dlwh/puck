@@ -11,7 +11,7 @@ import org.slf4j.LoggerFactory;
 import puck.parser.RuleSemiring;
 import puck.parser.RuleStructure;
 
-public class CannySegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultiply<C, L> {
+public class CannyGrammarClusterer<C, L> implements GrammarClusterer<C, L> {
 	
 	public static final int BINARY_PARENT_NUM_MAJOR_SEGMENTS = 6;
 	public static final int BINARY_LEFT_NUM_MAJOR_SEGMENTS = 2;
@@ -22,10 +22,6 @@ public class CannySegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultipl
 	public static final int BINARY_RIGHT_NUM_MINOR_SEGMENTS = 2;
 
     private Logger logger = LoggerFactory.getLogger(this.getClass().getName());
-
-	public CannySegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, RuleSemiring semiring) {
-		super(structure, directWrite, semiring);
-	}
 
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {
 		List<IndexedUnaryRule<C, L>>[] segmentation = new List[] {indexedUnaryRules};

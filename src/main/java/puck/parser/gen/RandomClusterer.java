@@ -10,15 +10,11 @@ import org.slf4j.LoggerFactory;
 import puck.parser.RuleSemiring;
 import puck.parser.RuleStructure;
 
-public class RandomSegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultiply<C, L> {
+public class RandomClusterer<C, L> implements GrammarClusterer<C, L> {
 
 	public static final int BINARY_SEGMENT_SIZE = 2000;
     private Logger logger = LoggerFactory.getLogger(this.getClass().getName());
-	
-	public RandomSegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, RuleSemiring semiring) {
-		super(structure, directWrite, semiring);
-	}
-    
+
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {
 		List<IndexedUnaryRule<C, L>>[] segmentation = new List[] {indexedUnaryRules};
 		double min = Double.POSITIVE_INFINITY;

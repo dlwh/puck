@@ -30,27 +30,38 @@ trait GenType {
 
 object GenType {
   object VariableLength extends GenType {
-//    def generator[C, L](structure: RuleStructure[C, L]): GenRuleMultiply[C, L] = new SmartVariableGen(structure)
-    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, semiring: RuleSemiring): GenRuleMultiply[C, L] = new VariableSizeGreedyGenRuleMultiply(structure, directWrite, semiring)
+    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, semiring: RuleSemiring): GenRuleMultiply[C, L] = {
+      new SimpleGenRuleMultiply(structure, directWrite, semiring, new VariableSizeGreedyClusterer[C, L])
+    }
   }
   object Canny extends GenType {
-    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, semiring: RuleSemiring): GenRuleMultiply[C, L] = new CannySegmentationGenRuleMultiply(structure, directWrite, semiring)
+    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, semiring: RuleSemiring): GenRuleMultiply[C, L] = {
+      new SimpleGenRuleMultiply[C, L](structure, directWrite, semiring, new CannyGrammarClusterer[C, L])
+    }
   }
 
   object Random extends GenType {
-    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, semiring: RuleSemiring): GenRuleMultiply[C, L] = new RandomSegmentationGenRuleMultiply(structure, directWrite, semiring)
+    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, semiring: RuleSemiring): GenRuleMultiply[C, L] = {
+      new SimpleGenRuleMultiply(structure, directWrite, semiring, new RandomClusterer[C, L])
+    }
   }
 
   object CoarseParent extends GenType {
-    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, semiring: RuleSemiring): GenRuleMultiply[C, L] = new CoarseParentSymbolSegmentationGenRuleMultiply(structure, directWrite, semiring)
+    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, semiring: RuleSemiring): GenRuleMultiply[C, L] = {
+      new SimpleGenRuleMultiply(structure, directWrite, semiring,  new CoarseParentSymbolGrammarClusterer[C, L]())
+    }
   }
   
   object VariableLengthCoarseParent extends GenType {
-    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, semiring: RuleSemiring): GenRuleMultiply[C, L] = new VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply(structure, directWrite, semiring)
+    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, semiring: RuleSemiring): GenRuleMultiply[C, L] = {
+      new SimpleGenRuleMultiply(structure, directWrite, semiring,  new VariableSizeCoarseParentClusterer[C, L]())
+    }
   }
 
   object Greedy extends GenType {
-    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, semiring: RuleSemiring): GenRuleMultiply[C, L] = new GreedySegmentationGenRuleMultiply(structure, directWrite, semiring)
+    def generator[C, L](structure: RuleStructure[C, L], directWrite: Boolean, semiring: RuleSemiring): GenRuleMultiply[C, L] = {
+      new SimpleGenRuleMultiply(structure, directWrite, semiring,  new GreedyClusterer[C, L]())
+    }
   }
 }
 
