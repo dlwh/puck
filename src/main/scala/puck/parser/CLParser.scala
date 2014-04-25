@@ -896,12 +896,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                    val rightChildAllowed = if (split < end) batch.isAllowedSpan(sent,split,end) else batch.isAllowedSpan(sent, end, split)
 
                    if (leftChildAllowed && rightChildAllowed) {
-                     val leftChild = leftChartOffset + {
-                       if (split < start) ChartHalf.chartIndex(split, start, len) else ChartHalf.chartIndex(start, split, len)
-                     }
-                     val rightChild = rightChartOffset + {
-                       if (split < end) ChartHalf.chartIndex(split, end, len) else ChartHalf.chartIndex(end, split, len)
-                     }
+                     val leftChild = leftChartOffset + ChartHalf.chartIndex(split, start, len)
+                     val rightChild = rightChartOffset + ChartHalf.chartIndex(split, end, len)
 
                      ev = enqueue(workspace, block, batch, span, parentCell, leftChild, rightChild, ev)
                    }
@@ -961,7 +957,8 @@ object CLParser extends Logging {
                     logsum: Boolean = false,
                     numToDrop: Int = 0,
                     evalReference: Boolean = false,
-                    printTrees: Boolean = false)
+                    printTrees: Boolean = false,
+                    pauseBeforeRunning: Boolean = false)
 
   def repeatToSize[T:ClassTag](arr: IndexedSeq[T], size: Int) = {
     val len = arr.length
@@ -1047,11 +1044,16 @@ object CLParser extends Logging {
       Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
     }
 
-    println("Up and running...")
 
     if(evalReference) {
       val res = ParserTester.evalParser(gold, parser, "cpu-reference", 4)
       println(res)
+    }
+
+
+    if(pauseBeforeRunning) {
+      println("Up and running...")
+      readLine()
     }
 
     if (justInsides || checkPartitions) {

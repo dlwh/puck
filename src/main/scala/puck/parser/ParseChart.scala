@@ -58,8 +58,8 @@ class ChartHalf(val length: Int, val matrix: CLMatrix[Float], isBot: Boolean) {
 object ChartHalf {
   @inline
   def chartIndex(begin: Int, end: Int, length: Int) = {
-    val span = end - begin - 1
-    begin + span * length - span * (span - 1) / 2
+    val span = math.abs(end - begin) - 1
+    math.min(begin, end) + span * length - span * (span - 1) / 2
 
   }
 }
