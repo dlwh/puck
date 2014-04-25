@@ -1,8 +1,7 @@
-package puck
+package puck.util
 
 import java.util.concurrent.{ThreadFactory, LinkedBlockingDeque, TimeUnit, ThreadPoolExecutor}
 import com.nativelibs4java.opencl.CLEvent
-import org.bridj.Pointer
 
 /**
  * TODO

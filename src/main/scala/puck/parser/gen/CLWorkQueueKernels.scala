@@ -1,11 +1,10 @@
 package puck.parser.gen
 
 import com.nativelibs4java.opencl._
-import puck.util.{ZipUtil, CLScan}
+import puck.util.{PointerFreer, ZipUtil, CLScan}
 import puck.parser.{PruningMask, Batch, WorkSpace}
 import org.bridj.Pointer
 import puck.parser.Batch
-import puck.PointerFreer
 import java.util.zip.{ZipFile, ZipOutputStream}
 
 /**

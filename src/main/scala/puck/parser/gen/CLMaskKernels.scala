@@ -6,9 +6,8 @@ import puck.linalg.CLMatrix
 import com.nativelibs4java.opencl._
 import org.bridj.Pointer
 import java.util.zip.{ZipOutputStream, ZipFile}
-import puck.util.ZipUtil
+import puck.util.{PointerFreer, ZipUtil}
 import scala.Array
-import puck.PointerFreer
 
 /**
  * TODO
