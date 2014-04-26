@@ -17,7 +17,6 @@ public class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, 
 	
 	public static final int WARP_SIZE = 32;
 	public static final int NUM_WARPS = 48;
-	public static final int NUM_SM = 8;
     private final GrammarClusterer<C, L> clusterer;
 
     public RuleStructure<C, L> structure;

@@ -71,14 +71,33 @@ public class CoarseParentSymbolGrammarClusterer<C, L> implements GrammarClustere
 			if (segment.size() >= MIN_SINGLE_COARSE_PARENT_GROUP_SIZE) {
 //				segmentation.add(modSubsegmentBinaries(segment, NUM_SM));
 //				segmentation.add(equalSizeSubsegmentBinaries(segment, NUM_SM));
-				segmentation.add(equalNumParentsSegmentBinaries(segment, NUM_SM));
+//                List<IndexedBinaryRule<C, L>>[] subSegmentation = equalNumParentsSegmentBinaries(segment, NUM_SM);
+                List<IndexedBinaryRule<C, L>>[] subSegmentation = equalSizeSubsegmentBinaries(segment, NUM_SM);
+                List<List<IndexedBinaryRule<C, L>>> outSegmentation = new ArrayList<>();
+                for(List<IndexedBinaryRule<C, L>> s: subSegmentation) {
+                    if(!s.isEmpty()) {
+                        outSegmentation.add(s);
+                    }
+                }
+                if(!outSegmentation.isEmpty())
+                    segmentation.add(outSegmentation.toArray(new List[0]));
 			} else {
 				for (List<IndexedBinaryRule<C, L>> nextSegment : rulesSegmentedByParent) {
 					segment.addAll(nextSegment);
 				}
 //				segmentation.add(modSubsegmentBinaries(segment, NUM_SM));
 //				segmentation.add(equalSizeSubsegmentBinaries(segment, NUM_SM));
-				segmentation.add(equalNumParentsSegmentBinaries(segment, NUM_SM));
+
+//                List<IndexedBinaryRule<C, L>>[] subSegmentation = equalNumParentsSegmentBinaries(segment, NUM_SM);
+                List<IndexedBinaryRule<C, L>>[] subSegmentation = equalSizeSubsegmentBinaries(segment, NUM_SM);
+                List<List<IndexedBinaryRule<C, L>>> outSegmentation = new ArrayList<>();
+                for(List<IndexedBinaryRule<C, L>> s: subSegmentation) {
+                    if(!s.isEmpty()) {
+                        outSegmentation.add(s);
+                    }
+                }
+                if(!outSegmentation.isEmpty())
+                    segmentation.add(outSegmentation.toArray(new List[0]));
 				break;
 			}
 		}
@@ -86,10 +105,15 @@ public class CoarseParentSymbolGrammarClusterer<C, L> implements GrammarClustere
         double min = Double.POSITIVE_INFINITY;
         double max = Double.NEGATIVE_INFINITY;
         for (List[] segment : segmentation) {
+            double localMin = Double.POSITIVE_INFINITY;
+            double localMax = Double.NEGATIVE_INFINITY;
             for (List sub : segment) {
                 min = Math.min(sub.size(), min);
+                localMin = Math.min(sub.size(), localMin);
                 max = Math.max(sub.size(), max);
+                localMax = Math.max(sub.size(), localMax);
             }
+            logger.info("local min binary sub segment size: " + localMin + " " + localMax);
         }
         logger.info("min binary sub segment size: " + min);
         logger.info("max binary sub segment size: " + max);
