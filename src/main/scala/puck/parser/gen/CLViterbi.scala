@@ -4,12 +4,11 @@ import puck.parser._
 import epic.trees.{BinaryRule, UnaryRule}
 import java.util.zip.{ZipOutputStream, ZipFile}
 import com.nativelibs4java.opencl._
-import puck.util.ZipUtil
+import puck.util.{PointerFreer, ZipUtil}
 import puck.linalg.CLMatrix
 import org.bridj.Pointer
 import epic.trees.BinaryRule
 import epic.trees.UnaryRule
-import puck.PointerFreer
 import scala.Array
 import java.nio.{FloatBuffer, IntBuffer}
 import epic.trees.BinaryRule

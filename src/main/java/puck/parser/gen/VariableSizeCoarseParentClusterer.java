@@ -11,17 +11,17 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import puck.parser.RuleSemiring;
 import puck.parser.RuleStructure;
 
-public class VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply<C, L> extends SimpleGenRuleMultiply<C, L> {
+public class VariableSizeCoarseParentClusterer<C, L> implements GrammarClusterer<C, L> {
 	
 	public static int MAX_RULES_PER_BINARY_SEGMENT = 2000;
 	public static final int MIN_SINGLE_COARSE_PARENT_GROUP_SIZE = 300;
-	
-	public VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, RuleSemiring semiring) {
-		super(structure, directWrite, semiring);
-	}
+
+    private Logger logger = LoggerFactory.getLogger(this.getClass().getName());
 
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {
 		List<IndexedUnaryRule<C, L>>[] segmentation = new List[] {indexedUnaryRules};
@@ -31,8 +31,8 @@ public class VariableSizeCoarseParentSymbolSegmentationGenRuleMultiply<C, L> ext
 			min = Math.min(segment.size(), min);
 			max = Math.max(segment.size(), max);
 		}
-		System.out.println("min unary segment size: "+min);
-		System.out.println("max unary segment size: "+max);
+		logger.info("min unary segment size: " + min);
+		logger.info("max unary segment size: " + max);
 		return segmentation;
 	}
 	

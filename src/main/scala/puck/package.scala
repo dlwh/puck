@@ -2,7 +2,7 @@ import com.nativelibs4java.opencl.CLEvent.EventCallback
 import org.bridj.{PointerIO, Pointer}
 import com.nativelibs4java.opencl._
 import java.{lang=>jl}
-import puck.util.CLBufferMappedPointerPair
+import puck.util.{PointerFreer, CLBufferMappedPointerPair}
 import scala.reflect._
 
 /**

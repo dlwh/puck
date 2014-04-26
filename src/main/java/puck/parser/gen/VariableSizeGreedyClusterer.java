@@ -1,17 +1,17 @@
 package puck.parser.gen;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import puck.parser.RuleSemiring;
 import puck.parser.RuleStructure;
 
 import java.util.*;
 
-public class VariableSizeGreedyGenRuleMultiply<C, L>  extends SimpleGenRuleMultiply<C, L> {
+public class VariableSizeGreedyClusterer<C, L>  implements GrammarClusterer<C, L> {
 	
     private static int MAX_BADNESS = 60;
-	
-	public VariableSizeGreedyGenRuleMultiply(RuleStructure<C, L> structure, boolean directWrite, RuleSemiring semiring) {
-		super(structure, directWrite, semiring);
-	}
+
+    private Logger logger = LoggerFactory.getLogger(this.getClass().getName());
 
 	public List<IndexedUnaryRule<C, L>>[] segmentUnaries(List<IndexedUnaryRule<C, L>> indexedUnaryRules) {
 		List<IndexedUnaryRule<C, L>>[] segmentation = new List[] {indexedUnaryRules};
@@ -21,8 +21,8 @@ public class VariableSizeGreedyGenRuleMultiply<C, L>  extends SimpleGenRuleMulti
 			min = Math.min(segment.size(), min);
 			max = Math.max(segment.size(), max);
 		}
-		System.out.println("min unary segment size: "+min);
-		System.out.println("max unary segment size: "+max);
+		logger.info("min unary segment size: "+min);
+		logger.info("max unary segment size: "+max);
 		return segmentation;
 	}
 	

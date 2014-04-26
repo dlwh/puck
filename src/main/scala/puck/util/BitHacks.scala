@@ -78,32 +78,7 @@ object BitHacks {
     else ((i-1) * 32) + fsb
   }
 
-  // we want to sort each bit vector so that the one with the greatest high order bit comes last
-  def bitVectorLT(a: DenseVector[Int], b: DenseVector[Int]): Boolean = {
-    OrderBitVectors.OrderingBitVectors.compare(a,b) < 0
-  }
 
-  object OrderBitVectors {
-    implicit object OrderingBitVectors extends Ordering[DenseVector[Int]] {
-      def compare(a: DenseVector[Int], b: DenseVector[Int]): Int = {
-        var i = a.length - 1
-        // stupid java and its lack of unsigned ints
-        val ad = a.data
-        val bd = b.data
-        while(i >= 0) {
-          val ai = ad(a.stride * i + a.offset)
-          val bi = bd(b.stride * i + b.offset)
-          if(ai != bi) {
-            val al = (ai& ~(1<<31)).toLong | (ai >>> 31).toLong << 31
-            val bl = (bi& ~(1<<31)).toLong | (bi >>> 31).toLong << 31
-            return java.lang.Long.compare(al, bl)
-          }
-          i -= 1
-        }
-        0
-      }
-    }
-  }
 
   def any(x: DenseVector[Int]) = {
     var i = 0
