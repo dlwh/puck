@@ -2,7 +2,6 @@
 
 (c) 2014 David Hall
 
-
 Puck is a high-speed, high-accuracy parser for natural languages.
 It's (currently) designed for use with grammars trained with the
 Berkeley Parser and on NVIDIA cards.  On recent-ish NVIDIA cards
@@ -13,7 +12,7 @@ The current version is 0.1-SNAPSHOT.
 
 Puck is based on the research in two papers:
 
-* David Hall, Taylor Berg-Kirkpatrick, and Dan Klein. 2014. Better, Faster, Sparser GPU Parsing. To Appear in Proceedings of the Association for Computational Linguistics.
+* David Hall, Taylor Berg-Kirkpatrick, John Canny, and Dan Klein. 2014. Better, Faster, Sparser GPU Parsing. To Appear in Proceedings of the Association for Computational Linguistics.
 * John Canny, David Hall, and Dan Klein. 2013. A multi-Teraﬂop Constiuency Parser using GPUs. In
 Proceedings of Empirical Methods in Natural Language Processing.
 
