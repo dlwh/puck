@@ -19,6 +19,9 @@ import java.io.{FileOutputStream, File}
  * @author dlwh
  **/
 abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L], writeDirectToChart: Boolean) extends GenRuleMultiply[C, L] {
+  val WARP_SIZE = 32;
+  val NUM_WARPS = 48;
+  val NUM_SM = 8;
   def javaBinaryRuleApplication(rules: util.List[IndexedBinaryRule[C, L]], name: String, context: CLContext, lt: LoopType):CLBinaryRuleUpdater
   def javaUnaryRuleApplication(rules: util.List[IndexedUnaryRule[C, L]], name: String, context: CLContext):CLUnaryRuleUpdater
 
@@ -56,7 +59,9 @@ abstract class JavaFriendlyGenRuleMultiply[C, L](structure: RuleStructure[C, L],
       for(p <- getParents(part).asScala.map(_.coarse)) {
         mask(p/32) |= 1<<(p%32)
       }
-      RuleKernel(prog.createKernels(), part.asScala.toIndexedSeq, new DenseVector(mask))
+      val globalSize = Array(WARP_SIZE * NUM_WARPS, NUM_SM, 1);
+      val wgSize = Array(WARP_SIZE * 3, 1, 1);
+      RuleKernel(prog.createKernels(), part.asScala.toIndexedSeq, globalSize, wgSize, new DenseVector(mask))
     }.asJava
 
 

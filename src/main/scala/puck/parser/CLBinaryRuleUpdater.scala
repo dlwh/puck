@@ -18,11 +18,9 @@ import puck.parser.gen.{CLWorkQueueKernels, HasParent, IndexedBinaryRule}
  */
 case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
                                enqueuer: CLWorkQueueKernels,
-                               globalSize: Array[Int],
-                               wgSize: Array[Int],
                                directWriteToChart: Boolean,
                                extra: Option[Array[Int]] = None) {
-  def this(kernels: java.util.List[RuleKernel], enqueuer: CLWorkQueueKernels, globalSize: Array[Int], wgSize: Array[Int], directWrite: Boolean) = this(kernels.asScala.toIndexedSeq, enqueuer, globalSize, wgSize, directWrite)
+  def this(kernels: java.util.List[RuleKernel], enqueuer: CLWorkQueueKernels, directWrite: Boolean) = this(kernels.asScala.toIndexedSeq, enqueuer, directWrite)
 
   private val buffer = extra.map(arr => kernels.head.kernels.head.getProgram.getContext.createIntBuffer(CLMem.Usage.Input, Pointer.pointerToInts(arr:_*), true))
 
@@ -43,17 +41,18 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
     require(left.cols == right.cols)
     require(left.majorStride == right.majorStride)
 
-    block.flatMap(kernels(_).kernels).foldLeft(events) { (ev, k) =>
-      k.setArgs(parent.data.safeBuffer, parentScale, parentPointers, parentOff,
-        left.data.safeBuffer, leftScale, leftPointers, leftOff,
-        right.data.safeBuffer, rightScale, rightPointers, rightOff,
-        masks.data.safeBuffer,
-        Integer.valueOf(left.majorStride), Integer.valueOf(left.rows) )
-      buffer.foreach(buf => k.setArg(7, buf))
+    block.foldLeft(events) { (ev, i) =>
+      kernels(i).kernels.foldLeft(ev) { (ev, k) =>
+        k.setArgs(parent.data.safeBuffer, parentScale, parentPointers, parentOff,
+          left.data.safeBuffer, leftScale, leftPointers, leftOff,
+          right.data.safeBuffer, rightScale, rightPointers, rightOff,
+          masks.data.safeBuffer,
+          Integer.valueOf(left.majorStride), Integer.valueOf(left.rows) )
+        buffer.foreach(buf => k.setArg(7, buf))
 
-      val evv = k.enqueueNDRange(queue, globalSize, wgSize, ev:_*) profileIn profiler
-//      queue.finish()
-      IndexedSeq(evv)
+        val evv = k.enqueueNDRange(queue, kernels(i).globalSize, kernels(i).wgSize, ev:_*) profileIn profiler
+        IndexedSeq(evv)
+      }
     }
 
   }
@@ -64,8 +63,6 @@ case class CLBinaryRuleUpdater(kernels: IndexedSeq[RuleKernel],
       kernels(i).write(s"$name/$i", out)
     }
     enqueuer.write(s"$name/enqueuer", out)
-    ZipUtil.serializedEntry(out, s"$name/globalSize", globalSize)
-    ZipUtil.serializedEntry(out, s"$name/wgSize", wgSize)
     ZipUtil.serializedEntry(out, s"$name/extra", extra)
     ZipUtil.serializedEntry(out, s"$name/directWrite", java.lang.Boolean.valueOf(directWriteToChart))
   }
@@ -78,19 +75,21 @@ object CLBinaryRuleUpdater {
     val kernels = for(i <- 0 until x.intValue()) yield RuleKernel.read(in, s"$name/$i")
     val queue = CLWorkQueueKernels.read(s"$name/enqueuer", in)
 
-    val globalSize = ZipUtil.deserializeEntry[Array[Int]](in.getInputStream(in.getEntry(s"$name/globalSize")))
-    val wgSize = ZipUtil.deserializeEntry[Array[Int]](in.getInputStream(in.getEntry(s"$name/wgSize")))
     val extra = ZipUtil.deserializeEntry[Option[Array[Int]]](in.getInputStream(in.getEntry(s"$name/extra")))
     val directWrite = ZipUtil.deserializeEntry[java.lang.Boolean](in.getInputStream(in.getEntry(s"$name/directWrite")))
-    CLBinaryRuleUpdater(kernels, queue, globalSize, wgSize, directWrite.booleanValue(), extra)
+    CLBinaryRuleUpdater(kernels, queue, directWrite.booleanValue(), extra)
   }
 }
 
 case class RuleKernel(kernels: IndexedSeq[CLKernel],
                       rules: IndexedSeq[HasParent[_, _]],
+                      globalSize: Array[Int],
+                      wgSize: Array[Int],
                       parents: DenseVector[Int]) {
   def write(name: String, out: ZipOutputStream) {
     ZipUtil.addKernelSet(out, s"$name", kernels)
+    ZipUtil.serializedEntry(out, s"$name/globalSize", globalSize)
+    ZipUtil.serializedEntry(out, s"$name/wgSize", wgSize)
     ZipUtil.serializedEntry(out, s"$name/bits", parents)
     ZipUtil.serializedEntry(out, s"$name/rules", rules)
   }
@@ -100,8 +99,10 @@ object RuleKernel {
 
   def read(in: ZipFile, name: String)(implicit context: CLContext) = {
     val kernels = ZipUtil.readKernelSet(in, name)
+    val globalSize = ZipUtil.deserializeEntry[Array[Int]](in.getInputStream(in.getEntry(s"$name/globalSize")))
+    val wgSize = ZipUtil.deserializeEntry[Array[Int]](in.getInputStream(in.getEntry(s"$name/wgSize")))
     val parents = ZipUtil.deserializeEntry[DenseVector[Int]](in.getInputStream(in.getEntry(s"$name/bits")))
     val rules = ZipUtil.deserializeEntry[IndexedSeq[HasParent[_, _]]](in.getInputStream(in.getEntry(s"$name/rules")))
-    RuleKernel(kernels, rules, parents)
+    RuleKernel(kernels, rules, globalSize, wgSize, parents)
   }
 }

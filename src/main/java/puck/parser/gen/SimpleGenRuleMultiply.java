@@ -54,9 +54,7 @@ public class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, 
         }
 
         List<RuleKernel> kernels = compileKernels(context, this.<IndexedBinaryRule<C, L>>flatten(segments), kernelTexts);
-        int[] globalSize = {WARP_SIZE * NUM_WARPS, NUM_SM, 1};
-        int[] wgSize = {WARP_SIZE * 3, 1, 1};
-        return new CLBinaryRuleUpdater(kernels, loop.queue(structure.numCoarseSyms(), context), globalSize, wgSize, writeDirectToChart);
+        return new CLBinaryRuleUpdater(kernels, loop.queue(structure.numCoarseSyms(), context), writeDirectToChart);
     }
 
 
@@ -66,7 +64,7 @@ public class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, 
       // determine duplicate parents
       Set<Integer> allParents = new HashSet<Integer>();
       Set<Integer> dupParents = new HashSet<Integer>();
-      for(int m = 0; m < NUM_SM; ++m) {
+      for(int m = 0; m < subsegments.length; ++m) {
         for(SymId<C, L> sym: getParents(subsegments[m])) {
           if(allParents.contains(sym.gpu())) {
             dupParents.add(sym.gpu());
@@ -103,7 +101,7 @@ public class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, 
 
         }
 
-        for (int m=0; m<NUM_SM; ++m) {
+        for (int m=0; m< subsegments.length; ++m) {
         	sb.append("static void subpart"+m+"(const mask_t mask, __global volatile float* parents, __global int* parentIndex, int row, __global float* left, __global float* right, float scale, int numRows) {\n");
 //        	if (!subsegments[m].isEmpty()) sb.append(String.format("if (%s) return;\n", CLMaskKernels.genCheckIfMaskIsEmpty(structure, "mask", getParents(subsegments[m]))));
         	Map<Integer,String> declaredParents = new HashMap<Integer, String>();
@@ -192,7 +190,8 @@ public class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, 
         }
 
         sb.append(String.format(
-                " __kernel void %s(__global volatile float* parents," +
+                "#define NUM_SUB_PARTITIONS %d\n" +
+                "__kernel void %s(__global volatile float* parents," +
                                 "__global const float* parentScale," +
                 "                  __global int* _parentIndex, int parentOff," + // cell offset into parents column if writeDirect, and always parentScale
                 "                  __global float* left," +
@@ -203,12 +202,13 @@ public class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, 
                         "                  __global int* _rightIndex, int rightOff," +
                 "                  __global const mask_t* masks, int numRows, int cellsToDo) {\n" +
                 "    int numWorkers = get_global_size(0);\n" +
-                "    int grammarSubPartition = get_group_id(1);\n" +
+                "    int numPartitionGroups = get_num_groups(1);\n" +
                 "    __global int* parentIndex = _parentIndex + parentOff;\n" +
                 "    __global int* leftIndex = _leftIndex + leftOff;\n" +
                 "    __global int* rightIndex = _rightIndex + rightOff;\n" +
+                "    for(int grammarSubPartition = get_group_id(1); grammarSubPartition < NUM_SUB_PARTITIONS; grammarSubPartition += numPartitionGroups) {\n"+
                 "    for (int row = get_global_id(0); row < cellsToDo; row += numWorkers) {\n" +
-                "      const mask_t mask = masks[parentIndex[row]];\n", name));
+                "      const mask_t mask = masks[parentIndex[row]];\n", subsegments.length, name));
         sb.append("\n\n");
 
         if(semiring.needsScaling()) {
@@ -218,12 +218,13 @@ public class SimpleGenRuleMultiply<C, L> extends JavaFriendlyGenRuleMultiply<C, 
         }
 
         sb.append("switch (grammarSubPartition) {\n");
-        for (int m=0; m<NUM_SM; ++m) {
+        for (int m=0; m<subsegments.length; ++m) {
         	sb.append("case "+m+": subpart"+m+"(mask, parents, parentIndex, row, left, right, scale, numRows); continue;\n");
         }
         sb.append("default: continue;\n");
         sb.append("}\n");
 
+        sb.append("}\n");
         sb.append("}\n");
         sb.append("}\n");
         return sb.toString();
