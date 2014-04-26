@@ -986,7 +986,7 @@ object CLParser extends Logging {
   def repeatToSize[T:ClassTag](arr: IndexedSeq[T], size: Int) = {
     val len = arr.length
     val mult = roundUpToMultipleOf(size,len)/len
-    IndexedSeq.fill(mult)(arr).flatten
+    IndexedSeq.fill(mult)(arr).flatten.take(size)
   }
 
   def main(args: Array[String]) = {
@@ -1071,12 +1071,6 @@ object CLParser extends Logging {
     if(evalReference) {
       val res = ParserTester.evalParser(gold, parser, "cpu-reference", 4)
       println(res)
-    }
-
-
-    if(pauseBeforeRunning) {
-      println("Up and running...")
-      readLine()
     }
 
     if (justInsides || checkPartitions) {
