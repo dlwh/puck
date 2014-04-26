@@ -24,6 +24,8 @@ class CLWorkQueueKernels(enqueueKernel: CLKernel, maskSize: Int)(implicit ctxt: 
                  rTop: Boolean,
                  mask: Option[Array[Int]],
                  events: CLEvent*)(implicit queue: CLQueue):(CLEvent, Int) = synchronized {
+    ???
+    /*
     val scratch = ctxt.createIntBuffer(CLMem.Usage.InputOutput, batch.numSentences + 1)
     def I(x: Boolean) = if(x) Integer.valueOf(1) else Integer.valueOf(0)
     enqueueKernel.setArgs(ws.pPtrBuffer, ws.lPtrBuffer, ws.rPtrBuffer, scratch,
@@ -42,6 +44,7 @@ class CLWorkQueueKernels(enqueueKernel: CLKernel, maskSize: Int)(implicit ctxt: 
     val numNeeded = ws.queueOffsets.read(queue, batch.numSentences - 1, 1, evScan).get()
 
     (res, numNeeded.intValue())
+    */
   }
 
   def write(prefix: String, out: ZipOutputStream) {

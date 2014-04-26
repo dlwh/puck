@@ -6,13 +6,16 @@ import puck.linalg.CLMatrix
 import puck.util.BitHacks
 import com.nativelibs4java.opencl.{CLQueue, CLMem, CLContext}
 import org.bridj.Pointer
+import epic.parser.SimpleRefinedGrammar
+import scala.concurrent.Future
 
 /**
  * TODO
  *
  * @author dlwh
  **/
-private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
+private[parser] case class Batch[W](
+                                    sentences: IndexedSeq[IndexedSeq[W]],
                                     devInside: CLMatrix[Float],
                                     devOutside: CLMatrix[Float],
                                     masks: PruningMask)(implicit ctxt: CLContext, queue: CLQueue) {
@@ -22,17 +25,6 @@ private[parser] case class Batch[W](sentences: IndexedSeq[IndexedSeq[W]],
 
   val lengths = sentences.map(_.length).toArray
   val lengthOffsets = lengths.scan(0)(_ + _)
-
-  lazy val cellOffsetsDev = ctxt.createIntBuffer(CLMem.Usage.Input, Pointer.pointerToInts(cellOffsets:_*))
-  lazy val lengthsDev = ctxt.createIntBuffer(CLMem.Usage.Input, Pointer.pointerToInts(lengths:_*))
-  lazy val masksDev = masks match {
-    case m:DenseMatrixMask =>
-      val mat = CLMatrix.zeros[Int](m.matrix.rows, m.matrix.cols)
-      mat := m.matrix
-      Some(mat)
-    case _ =>
-      None
-  }
 
   def numCellsUsed: Int = cellOffsets.last
 

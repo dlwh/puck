@@ -30,7 +30,9 @@ import scala.io.{Codec, Source}
 import epic.lexicon.Lexicon
 import breeze.util.Index
 import org.bridj.Pointer
-
+import scala.reflect.ClassTag
+import scala.concurrent.{ExecutionContext, Await, Future}
+import scala.concurrent.duration.Duration
 
 
 /**
@@ -96,11 +98,51 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
   private class ActualParser(val data: CLParserData[C, L, W], nextParserNeedsScales: Boolean) {
     import data._
 
+    type TagFuture =  Future[(DenseMatrix[Float], Array[Int])]
+
+    def pretagger(b: Iterator[Batch[W]]):Iterator[(Batch[W],  TagFuture)] = new Iterator[(Batch[W], TagFuture)] {
+      var n: Option[(Batch[W], TagFuture) ] = None
+
+      hasNext
+
+
+      override def next(): (Batch[W], TagFuture) = {
+        hasNext
+        val q = n.get
+        n = None
+        hasNext
+        q
+      }
+
+      override def hasNext: Boolean = {
+        n.nonEmpty || {
+          if(b.hasNext) {
+            val bb = b.next
+            n = Some(bb -> pretag(bb))
+            true
+          } else {
+            false
+          }
+
+        }
+
+
+
+      }
+    }
+
+    def pretag(b: Batch[W]): TagFuture = {
+      import ExecutionContext.Implicits.global
+      Future {
+        computeTagScores(b, b.devInside.rows)
+      }
+    }
+
     def parse(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("parse", sentences.length) {
         withWorkSpace(mask.hasMasks) {workspace =>
-          workspace.getBatches(sentences, mask).iterator.flatMap { batch =>
-            var ev = inside(workspace, batch)
+          pretagger(workspace.getBatches(sentences, mask).iterator).flatMap { case (batch, tagFuture) =>
+            var ev = inside(workspace, batch, tagFuture)
 
             if(data.isViterbi) {
               val ev3 = computeViterbiParts(workspace, batch, ev)
@@ -125,8 +167,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def insideOutside(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("parse", sentences.length) {
         withWorkSpace(mask.hasMasks) { workspace =>
-          workspace.getBatches(sentences, mask).iterator.foreach { batch =>
-            var ev = inside(workspace, batch)
+          pretagger(workspace.getBatches(sentences, mask).iterator).foreach { case (batch, tf) =>
+            var ev = inside(workspace, batch, tf)
             ev = outside(workspace, batch, ev)
             val ev3 = if(data.isViterbi) computeViterbiParts(workspace, batch, ev) else computeMBRParts(workspace, batch, ev)
             Option(ev3).foreach(_.waitFor())
@@ -143,8 +185,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def partitions(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
       logTime("partitions", sentences.length) {
          withWorkSpace(mask.hasMasks) {workspace =>
-          workspace.getBatches(sentences, mask).iterator.flatMap { batch =>
-            var ev = inside(workspace, batch)
+           pretagger(workspace.getBatches(sentences, mask).iterator).flatMap { case (batch, tf) =>
+            var ev = inside(workspace, batch, tf)
             val dest = context.createFloatBuffer(CLMem.Usage.Output, sentences.length)
             ev = workspace.pPtrBuffer.writeArray(queue, batch.rootIndices.toArray, batch.numSentences, ev) profileIn hdTransferEvents
             ev = data.util.getRootScores(dest, workspace.devInside, workspace.pPtrBuffer, batch.numSentences, structure.root, ev)
@@ -162,9 +204,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     def updateMasks(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask): PruningMask = synchronized {
       logTime("masks", sentences.length) {
         withWorkSpace(mask.hasMasks) {workspace =>
-          val masks = workspace.getBatches(sentences, mask).iterator.map {  batch =>
+           val masks = pretagger(workspace.getBatches(sentences, mask).iterator).map {  case (batch, tf) =>
             workspace.maskCharts.assignAsync(-1).waitFor()
-            val mask = computePruningMasks(workspace, batch):PruningMask
+            val mask = computePruningMasks(workspace, batch, tf):PruningMask
             mask
           }.toIndexedSeq
           val newMasks = masks.reduceLeft(_ ++ _)
@@ -174,8 +216,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
     }
 
-    def computePruningMasks(workspace: WorkSpace, batch: Batch[W], ev: CLEvent*): DenseMatrixMask = {
-      val insideEvents = inside(workspace, batch, ev:_*)
+    def computePruningMasks(workspace: WorkSpace, batch: Batch[W], tf: TagFuture, ev: CLEvent*): DenseMatrixMask = {
+      val insideEvents = inside(workspace, batch, tf, ev:_*)
       val outsideEvents = outside(workspace, batch, insideEvents)
       val ev2 = computeMasks(workspace, batch, -9, outsideEvents)
       ev2.waitFor()
@@ -207,7 +249,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     private def zero: Float = data.semiring.zero
 
-    def inside(workspace: WorkSpace, batch: Batch[W], events: CLEvent*):CLEvent = synchronized {
+    def inside(workspace: WorkSpace, batch: Batch[W], tagFuture: TagFuture, events: CLEvent*):CLEvent = synchronized {
       import workspace._
       profiler.clear()
       profiler.tick()
@@ -225,7 +267,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         queue.finish()
       }
 
-      ev = initializeTagScores(workspace, batch, ev, evZeroOutside)
+
+        val (tagScores, pArray) =  Await.result ( tagFuture, Duration.Inf )
+
+        ev = writeTagScores(workspace, pArray, tagScores, ev, evZeroOutside)
 
       val insideTU = new UnaryUpdateManager(data.inside.insideTUKernels, devInside, devInsideScale, devInsideScale, insideTop, insideBot)
 
@@ -346,8 +391,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         devInside(::, 0 until batch.numCellsUsed),
         batch.cellOffsets, batch.lengths, structure.root, events:_*) profileIn masksEvents
       if (profile) {
-        profiler.tock()
         queue.finish()
+        profiler.tock()
         println(profiler.report("viterbi"))
       }
 
@@ -355,8 +400,33 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     }
 
     def initializeTagScores(workspace: WorkSpace, batch: Batch[W], events: CLEvent*) = {
-      import workspace._
+      val cellSize = batch.devInside.rows
       val totalLength = batch.totalLength
+
+      val (tagScores, pArray) = computeTagScores(batch, cellSize)
+
+      writeTagScores(workspace, pArray, tagScores, events:_*)
+    }
+
+
+    def writeTagScores(workspace: WorkSpace, pArray: Array[Int], tagScores: DenseMatrix[Float], events: CLEvent*): CLEvent = {
+      val totalLength = pArray.length
+      import workspace.{pArray => _, _}
+      val ev2 = pPtrBuffer.writeArray(queue, pArray, totalLength, events: _*) profileIn posEvents
+      var offset = 0
+      var ev = ev2
+      while (offset < totalLength) {
+        val toDoThisTime = math.min(devLeft.rows, totalLength - offset)
+        val evW = devLeft(0 until toDoThisTime, ::).writeFrom(tagScores(offset until offset + toDoThisTime, ::), false, ev) map (_ profileIn posEvents)
+        ev = transposeCopy.permuteTransposeCopyOut(devInside, pPtrBuffer, offset, toDoThisTime, devLeft(0 until toDoThisTime, ::), evW: _*) profileIn posEvents
+        offset += toDoThisTime
+      }
+      ev
+    }
+
+    def computeTagScores(batch: Batch[W], cellSize: Int): (DenseMatrix[Float], Array[Int]) = {
+      val totalLength = batch.totalLength
+      val pArray = new Array[Int](totalLength)
       val tagScores = DenseMatrix.zeros[Float](totalLength, cellSize)
       tagScores := zero
       for (i <- (0 until batch.numSentences).par) {
@@ -366,9 +436,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         var scoreScale = 0.0
         var offset = batch.lengthOffsets(i)
         for (pos <- 0 until sent.length) {
-          val myScale = if(semiring.needsScaling) math.exp(-batch.masks.insideScaleFor(i, pos, pos + 1)) else 1.0
+          val myScale = if (semiring.needsScaling) math.exp(-batch.masks.insideScaleFor(i, pos, pos + 1)) else 1.0
           var maxScore = zero
-          for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
+          for (t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
             val index = ref
             val score = anch.scoreTag(pos, data.grammar.refinedGrammar.labelIndex.get(index))
             val gpuIndex = data.structure.labelIndexToTerminal(index)
@@ -378,13 +448,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
             maxScore = maxScore + tagScores(offset, gpuIndex)
           }
 
-          if(semiring.needsScaling) {
-            scoreScale += math.log(maxScore/2)
+          if (semiring.needsScaling) {
+            scoreScale += math.log(maxScore / 2)
 
-            for(t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
+            for (t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
               val index = ref
               val gpuIndex = data.structure.labelIndexToTerminal(index)
-              tagScores(offset, gpuIndex) /= (maxScore/2)
+              tagScores(offset, gpuIndex) /= (maxScore / 2)
             }
 
           }
@@ -394,19 +464,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         }
         batch.partitionScales(i) = scoreScale
       }
-
-      val ev2 = pPtrBuffer.writeArray(queue, pArray, totalLength, events:_*) profileIn hdTransferEvents
-      var offset = 0
-      var ev = ev2
-      while(offset < totalLength) {
-        val toDoThisTime = math.min(devLeft.rows, totalLength - offset)
-        val evW = devLeft(0 until toDoThisTime, ::).writeFrom(tagScores(offset until offset + toDoThisTime, ::), false, ev) map (_ profileIn  hdTransferEvents)
-        ev = transposeCopy.permuteTransposeCopyOut(devInside,  pPtrBuffer, offset, toDoThisTime, devLeft(0 until toDoThisTime, ::), evW:_*) profileIn posEvents
-        val wl = transposeCopy.permuteTransposeCopy(devRight(0 until toDoThisTime, ::), devInside, pPtrBuffer, offset, toDoThisTime, ev) profileIn transferEvents
-        ev = wl
-        offset += toDoThisTime
-      }
-      ev
+      (tagScores, pArray)
     }
 
     private def computeMasks(workspace: WorkSpace, batch: Batch[W], threshold: Float, events: CLEvent*):CLEvent = synchronized {
@@ -421,8 +479,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         devOutside(::, 0 until batch.numCellsUsed),
         batch.cellOffsets, batch.lengths, structure.root, threshold, events:_*) profileIn masksEvents
       if (profile) {
-        profiler.tock()
         queue.finish()
+        profiler.tock()
         println(profiler.report("masks"))
       }
 
@@ -746,14 +804,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
        private def flushQueue(workspace: WorkSpace, block: IndexedSeq[Int], batch: Batch[W], span: Int, _ev: Seq[CLEvent]): Seq[CLEvent] = {
          import workspace._
 
-         assert(queueSize == _todo, s"$queueSize ${_todo} $span")
-         CLEvent.waitFor(_ev:_*)
-         val oldLeftPtr = lPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
-         assert(oldLeftPtr.take(queueSize).toIndexedSeq == lArray.take(queueSize).toIndexedSeq, s"${oldLeftPtr.take(queueSize).toIndexedSeq} ${lArray.take(queueSize).toIndexedSeq}")
-         val oldRightPtr = rPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
-         assert(oldRightPtr.take(queueSize).toIndexedSeq == rArray.take(queueSize).toIndexedSeq, s"${oldRightPtr.take(queueSize).toIndexedSeq} ${rArray.take(queueSize).toIndexedSeq}")
-         val oldParentPtr = pPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
-         assert(oldParentPtr.take(queueSize).toIndexedSeq == pArray.take(queueSize).toIndexedSeq, s"${oldParentPtr.take(queueSize).toIndexedSeq} ${pArray.take(queueSize).toIndexedSeq}")
+//         assert(queueSize == _todo, s"$queueSize ${_todo} $span")
+//         CLEvent.waitFor(_ev:_*)
+//         val oldLeftPtr = lPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
+//         assert(oldLeftPtr.take(queueSize).toIndexedSeq == lArray.take(queueSize).toIndexedSeq, s"${oldLeftPtr.take(queueSize).toIndexedSeq} ${lArray.take(queueSize).toIndexedSeq}")
+//         val oldRightPtr = rPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
+//         assert(oldRightPtr.take(queueSize).toIndexedSeq == rArray.take(queueSize).toIndexedSeq, s"${oldRightPtr.take(queueSize).toIndexedSeq} ${rArray.take(queueSize).toIndexedSeq}")
+//         val oldParentPtr = pPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
+//         assert(oldParentPtr.take(queueSize).toIndexedSeq == pArray.take(queueSize).toIndexedSeq, s"${oldParentPtr.take(queueSize).toIndexedSeq} ${pArray.take(queueSize).toIndexedSeq}")
 
          var ev = _ev
          var offset = 0
@@ -792,7 +850,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
          ev
        }
 
-      var _todo = 0
+//      var _todo = 0
 
        def doUpdates(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent*) = {
 
@@ -826,13 +884,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
            val blockParents: DenseVector[Int] = updater.kernels(block.head).parents
 
-           val (evq, numToDo) = {
-             updater.enqueuer.enqueue(workspace, batch, span, !parentIsBot, leftChart eq ActualParser.this.insideTop, rightChart eq ActualParser.this.insideTop, if(batch.hasMasks) Some(blockParents.toArray) else None, ev:_*)
-           }
-
-           _todo = numToDo
-
-           ev = Seq(evq)
+//           val (evq, numToDo) = {
+//             updater.enqueuer.enqueue(workspace, batch, span, !parentIsBot, leftChart eq ActualParser.this.insideTop, rightChart eq ActualParser.this.insideTop, if(batch.hasMasks) Some(blockParents.toArray) else None, ev:_*)
+//           }
+//
+//           _todo = numToDo
+//
+//           ev = Seq(evq)
 
 
            //        if(allSpans.head._4 != null)
@@ -861,12 +919,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                    val rightChildAllowed = if (split < end) if(rightIsTop) batch.isAllowedTopSpan(sent, split, end) else batch.isAllowedSpan(sent,split,end) else if (rightIsTop) batch.isAllowedTopSpan(sent, end, split) else batch.isAllowedSpan(sent, end, split)
 
                    if (leftChildAllowed && rightChildAllowed) {
-                     val leftChild = leftChartOffset + {
-                       if (split < start) ChartHalf.chartIndex(split, start, len) else ChartHalf.chartIndex(start, split, len)
-                     }
-                     val rightChild = rightChartOffset + {
-                       if (split < end) ChartHalf.chartIndex(split, end, len) else ChartHalf.chartIndex(end, split, len)
-                     }
+                     val leftChild = leftChartOffset + ChartHalf.chartIndex(split, start, len)
+                     val rightChild = rightChartOffset + ChartHalf.chartIndex(split, end, len)
 
                      ev = enqueue(workspace, block, batch, span, parentCell, leftChild, rightChild, ev)
                    }
@@ -912,6 +966,7 @@ object CLParser extends Logging {
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = Xbarize(),
                     device: String = "nvidia",
                     profile: Boolean = false,
+                    parseTrain: Boolean = false,
                     numToParse: Int = 1000, codeCache: File = new File("grammar.grz"), cache: Boolean = true,
                     maxParseLength: Int = 10000,
                     jvmParse: Boolean = false, parseTwice: Boolean = false,
@@ -925,7 +980,14 @@ object CLParser extends Logging {
                     logsum: Boolean = false,
                     numToDrop: Int = 0,
                     evalReference: Boolean = false,
-                    printTrees: Boolean = false)
+                    printTrees: Boolean = false,
+                    pauseBeforeRunning: Boolean = false)
+
+  def repeatToSize[T:ClassTag](arr: IndexedSeq[T], size: Int) = {
+    val len = arr.length
+    val mult = roundUpToMultipleOf(size,len)/len
+    IndexedSeq.fill(mult)(arr).flatten
+  }
 
   def main(args: Array[String]) = {
     import ParserParams.JointParams
@@ -949,7 +1011,8 @@ object CLParser extends Logging {
     println("Training Parser...")
     println(params)
     val transformed = params.treebank.copy(binarization="left", keepUnaryChainsFromTrain = false).trainTrees
-    val gold = params.treebank.trainTrees.filter(_.words.length <= maxParseLength).drop(numToDrop).take(numToParse)
+    val whatToParse = if(parseTrain) params.treebank.trainTrees else params.treebank.trainTrees
+    val gold = repeatToSize(whatToParse.filter(_.words.length <= maxParseLength).drop(numToDrop), numToParse)
     val toParse =  gold.map(_.words)
 
 
@@ -1004,17 +1067,24 @@ object CLParser extends Logging {
       Parser(grammar, if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
     }
 
+
     if(evalReference) {
       val res = ParserTester.evalParser(gold, parser, "cpu-reference", 4)
       println(res)
     }
 
+
+    if(pauseBeforeRunning) {
+      println("Up and running...")
+      readLine()
+    }
+
     if (justInsides || checkPartitions) {
       val partsX = logTime("CL Insides", toParse.length)( kern.partitions(toParse))
-      println(partsX)
+      println(partsX.last)
       if (checkPartitions) {
         val parts2 = toParse.par.map(parser.marginal(_).logPartition)
-        println(parts2)
+        println(parts2.last)
         println("max difference: " + (DenseVector(partsX.map(_.toDouble):_*) - DenseVector(parts2.seq:_*)).norm(Double.PositiveInfinity))
       }
       System.exit(0)
