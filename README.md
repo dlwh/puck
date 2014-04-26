@@ -20,7 +20,7 @@ Proceedings of Empirical Methods in Natural Language Processing.
 ## Documentation
 
 Puck has three main classes. The first is for compiling the GPU representation of a grammar, the second is for parsing with that grammar, and the third is for
-experimental use. 
+experimental use. Running --help with any of these commands will list all options.
 
 ### Building Puck
 
@@ -54,6 +54,16 @@ Input files must be pretokenized into one sentence per line, with words represen
 ```
 
 We plan to fix this soon.
+
+### Experiments
+
+We benchmarked our parser by running it on the treebank.
+
+```bash
+sbt "run-main puck.parser.CLParser --maxParseLength 40 --treebank.path /path/to/treebank/wsj --maxLength 40 --numToParse 20000  --reproject false --viterbi true  --cache false --textGrammarPrefix textGrammars/wsj_1.gr:textGrammars/wsj_6.gr --mem 4g --device 680"
+```
+
+Should reproduce.
 
 
 ### Acknowledgements
