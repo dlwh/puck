@@ -751,7 +751,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           sent <- 0 until batch.numSentences
           len = batch.lengths(sent)
           start <- 0 to batch.sentences(sent).length - span
-          if batch.isAllowedSpan(sent, start, start + span)
+          if batch.isAllowedTopSpan(sent, start, start + span)
         } {
           val end = start + span
           val parentCell = parentChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
