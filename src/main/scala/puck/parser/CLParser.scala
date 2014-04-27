@@ -3,7 +3,7 @@ package parser
 
 import gen._
 import com.nativelibs4java.opencl._
-import com.typesafe.scalalogging.slf4j.Logging
+import com.typesafe.scalalogging.slf4j.LazyLogging
 import puck.util._
 import puck.linalg.CLMatrix
 import puck.linalg.kernels.CLMatrixTransposeCopy
@@ -42,7 +42,7 @@ import scala.concurrent.duration.Duration
  **/
 class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         maxAllocSize: Long = 1<<30,
-                        profile: Boolean = true)(implicit val context: CLContext) extends Logging {
+                        profile: Boolean = true)(implicit val context: CLContext) extends LazyLogging {
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
     val mask = computeMasks(sentences)
@@ -961,7 +961,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
 }
 
-object CLParser extends Logging {
+object CLParser extends LazyLogging {
 
   case class Params(annotator: TreeAnnotator[AnnotatedLabel, String, AnnotatedLabel] = Xbarize(),
                     device: String = "nvidia",

@@ -5,7 +5,7 @@ import puck.linalg.CLMatrix
 import java.io.Closeable
 import breeze.collection.mutable.TriangularArray
 import scala.collection.mutable.ArrayBuffer
-import com.typesafe.scalalogging.slf4j.Logging
+import com.typesafe.scalalogging.slf4j.LazyLogging
 
 /**
  *
@@ -15,7 +15,7 @@ import com.typesafe.scalalogging.slf4j.Logging
 class WorkSpace(val numWorkCells: Int,
                 val numChartCells: Int,
                 val cellSize: Int,
-                val maskSize: Int)(implicit context: CLContext, queue: CLQueue) extends Logging with Closeable {
+                val maskSize: Int)(implicit context: CLContext, queue: CLQueue) extends LazyLogging with Closeable {
 
   def getBatches[W](sentences: IndexedSeq[IndexedSeq[W]], masks: PruningMask = NoPruningMask): IndexedSeq[Batch[W]] = {
     val result = ArrayBuffer[Batch[W]]()

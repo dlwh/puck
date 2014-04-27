@@ -7,7 +7,7 @@ import breeze.config.CommandLineParser
 import java.util.zip.ZipFile
 import com.nativelibs4java.opencl.{JavaCL, CLContext}
 import java.util.{Comparator, Collections}
-import com.typesafe.scalalogging.slf4j.Logging
+import com.typesafe.scalalogging.slf4j.LazyLogging
 import breeze.optimize.BatchDiffFunction
 import puck.{BatchFunctionAnnotatorService, AnnotatorService}
 import scala.io.{Source, Codec}
@@ -21,7 +21,7 @@ import scala.concurrent.duration.Duration
  *
  * @author dlwh
  */
-object RunParser extends Logging {
+object RunParser extends LazyLogging {
   import ExecutionContext.Implicits.global
 
   case class Params(device: String = "nvidia",

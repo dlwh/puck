@@ -4,7 +4,7 @@ import java.io.File
 import breeze.config.CommandLineParser
 import com.nativelibs4java.opencl.{JavaCL, CLContext}
 import java.util.Collections
-import com.typesafe.scalalogging.slf4j.Logging
+import com.typesafe.scalalogging.slf4j.LazyLogging
 import epic.trees.AnnotatedLabel
 import java.util.zip.ZipFile
 import epic.parser.{SimpleRefinedGrammar, GenerativeParser}
@@ -16,7 +16,7 @@ import puck.parser.gen.GenType
  *
  * @author dlwh
  **/
-object CompileGrammar extends Logging {
+object CompileGrammar extends LazyLogging {
   case class Params(device: String = "nvidia",
                     grammar: File = new File("grammar.grz"),
                     textGrammarPrefix: String,
