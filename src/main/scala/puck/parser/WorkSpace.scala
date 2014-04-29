@@ -61,7 +61,10 @@ class WorkSpace(val numWorkCells: Int,
   val devInsideScale, devOutsideScale = context.createFloatBuffer(CLMem.Usage.InputOutput, numChartCells)
 
   // work queue stuff
-  val pArray, lArray, rArray = new Array[Int](numChartCells)
+
+  val workQueue = new ParseItemQueue(numChartCells)
+
+
 //  val parentQueue, leftQueue, rightQueue = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
   val pPtrBuffer, lPtrBuffer, rPtrBuffer = context.createIntBuffer(CLMem.Usage.Input, numChartCells)
   val queueOffsets = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)
@@ -82,7 +85,9 @@ class WorkSpace(val numWorkCells: Int,
 }
 
 object WorkSpace {
-  def allocate( cellSize: Int, maskSize: Int, maxAllocSize: Long = -1, ratioOfChartsToWorkSpace: Int = 7)(implicit context: CLContext, queue: CLQueue): WorkSpace = {
+  def allocate( cellSize: Int,
+                maskSize: Int,
+                maxAllocSize: Long = -1, ratioOfChartsToWorkSpace: Int = 7)(implicit context: CLContext, queue: CLQueue): WorkSpace = {
     var maxMemToUse =  context.getDevices.head.getGlobalMemSize
     if(maxAllocSize >= 0) maxMemToUse = math.min(maxAllocSize, maxMemToUse)
 

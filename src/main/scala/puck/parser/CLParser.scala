@@ -411,7 +411,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     def writeTagScores(workspace: WorkSpace, pArray: Array[Int], tagScores: DenseMatrix[Float], events: CLEvent*): CLEvent = {
       val totalLength = pArray.length
-      import workspace.{pArray => _, _}
+      import workspace._
       val ev2 = pPtrBuffer.writeArray(queue, pArray, totalLength, events: _*) profileIn posEvents
       var offset = 0
       var ev = ev2
@@ -705,14 +705,16 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
 
 
-      private def flushQueue(workspace: WorkSpace, batch: Batch[W], span: Int, queueSize: Int, _ev: Seq[CLEvent]) = {
+      private def flushQueue(workspace: WorkSpace, batch: Batch[W], span: Int, _ev: Seq[CLEvent]) = {
         import workspace._
         val scoreMatrix = chart
         var ev = _ev
         var offset = 0
 
-        val evp = pPtrBuffer.writeArray(queue, pArray, queueSize, ev:_*) profileIn hdTransferEvents
-        val evl = lPtrBuffer.writeArray(queue, lArray, queueSize, ev:_*) profileIn hdTransferEvents
+        val queueSize = workQueue.queueSize(0)
+
+        val evp = pPtrBuffer.writeArray(queue, workQueue.parentQueue(0), queueSize, ev:_*) profileIn hdTransferEvents
+        val evl = lPtrBuffer.writeArray(queue, workQueue.leftQueue(0), queueSize, ev:_*) profileIn hdTransferEvents
 
         while (offset < queueSize) {
           if(offset != 0) println("uflush!")
@@ -728,13 +730,16 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
           offset += toDoThisTime
         }
+
+        workQueue.clear(0)
+
+
         ev
       }
 
       def doUpdates(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent*) = {
         var ev = events
 
-        var queueSize = 0
 
         for {
           sent <- 0 until batch.numSentences
@@ -745,14 +750,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           val end = start + span
           val parentCell = parentChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
           val childCell = childChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
-          workspace.lArray(queueSize) = childCell
-          workspace.pArray(queueSize) = parentCell
-
-          queueSize += 1
+          workspace.workQueue.enqueue(0, parentCell, childCell)
         }
 
-        if (queueSize > 0) {
-          ev = flushQueue(workspace, batch, span, queueSize, ev)
+        if (workspace.workQueue.nonEmpty) {
+          ev = flushQueue(workspace, batch, span, ev)
         }
 
         assert(ev.length == 1)
@@ -775,7 +777,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                                       ranger: (Int, Int, Int)=>Range) {
 
 
-       private def flushQueue(workspace: WorkSpace, block: IndexedSeq[Int], batch: Batch[W], span: Int, queueSize: Int, _ev: Seq[CLEvent]): Seq[CLEvent] = {
+       private def flushQueue(workspace: WorkSpace, block: IndexedSeq[Int], batch: Batch[W], span: Int, _ev: Seq[CLEvent]): Seq[CLEvent] = {
          import workspace._
 
 //         assert(queueSize == _todo, s"$queueSize ${_todo} $span")
@@ -788,11 +790,12 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 //         assert(oldParentPtr.take(queueSize).toIndexedSeq == pArray.take(queueSize).toIndexedSeq, s"${oldParentPtr.take(queueSize).toIndexedSeq} ${pArray.take(queueSize).toIndexedSeq}")
 
          var ev = _ev
+         val queueSize = workQueue.queueSize(0)
          var offset = 0
          // copy ptrs to opencl
-         val evP = pPtrBuffer.writeArray(queue, pArray, queueSize, ev:_*) profileIn hdTransferEvents
-         val evL = lPtrBuffer.writeArray(queue, lArray, queueSize, ev:_*) profileIn hdTransferEvents
-         val evR = rPtrBuffer.writeArray(queue, rArray, queueSize, ev:_*) profileIn hdTransferEvents
+         val evP = pPtrBuffer.writeArray(queue, workQueue.parentQueue(0), queueSize, ev:_*) profileIn hdTransferEvents
+         val evL = lPtrBuffer.writeArray(queue, workQueue.leftQueue(0), queueSize, ev:_*) profileIn hdTransferEvents
+         val evR = rPtrBuffer.writeArray(queue, workQueue.rightQueue(0), queueSize, ev:_*) profileIn hdTransferEvents
 
          ev = Seq(evP, evL, evR)
 
@@ -819,6 +822,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
            offset += toDoThisTime
            ev = kEvents
          }
+         workQueue.clear()
 
          ev
        }
@@ -854,7 +858,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
          val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).groupBy(updater.kernels(_).parents.data.toIndexedSeq).values.toIndexedSeq
 
          for(block <- blocks) {
-           var queueSize = 0
 
            val blockParents: DenseVector[Int] = updater.kernels(block.head).parents
 
@@ -896,11 +899,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                      val leftChild = leftChartOffset + ChartHalf.chartIndex(split, start, len)
                      val rightChild = rightChartOffset + ChartHalf.chartIndex(split, end, len)
 
-                     workspace.pArray(queueSize) = parentCell
-                     workspace.lArray(queueSize) = leftChild
-                     workspace.rArray(queueSize) = rightChild
+                     workspace.workQueue.enqueue(0, parentCell, leftChild, rightChild)
 
-                     queueSize += 1
                    }
                  }
                  split += step
@@ -910,9 +910,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
            }
 
-           if (queueSize > 0) {
-             ev = flushQueue(workspace, block, batch, span, queueSize, ev)
-           }
+           if(workspace.workQueue.nonEmpty)
+             ev = flushQueue(workspace, block, batch, span, ev)
          }
 
          assert(ev.length == 1)
