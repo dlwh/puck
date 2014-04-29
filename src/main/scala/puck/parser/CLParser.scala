@@ -703,21 +703,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                                      parentChart: (Batch[W],Int)=>Int,
                                      childChart: (Batch[W],Int)=>Int) {
 
-      var queueSize = 0 // number of cells used so far.
 
-      private def enqueue(workspace: WorkSpace, batch: Batch[W], span: Int, parent: Int, left: Int, events: Seq[CLEvent]) = {
-        import workspace._
-        lArray(queueSize) = left
-        pArray(queueSize) = parent
-        queueSize += 1
-        if (queueSize >= workspace.lArray.length)  {
-          flushQueue(workspace, batch, span, events)
-        } else {
-          events
-        }
-      }
 
-      private def flushQueue(workspace: WorkSpace, batch: Batch[W], span: Int, _ev: Seq[CLEvent]) = {
+      private def flushQueue(workspace: WorkSpace, batch: Batch[W], span: Int, queueSize: Int, _ev: Seq[CLEvent]) = {
         import workspace._
         val scoreMatrix = chart
         var ev = _ev
@@ -740,12 +728,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
           offset += toDoThisTime
         }
-        queueSize = 0
         ev
       }
 
       def doUpdates(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent*) = {
         var ev = events
+
+        var queueSize = 0
 
         for {
           sent <- 0 until batch.numSentences
@@ -756,12 +745,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           val end = start + span
           val parentCell = parentChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
           val childCell = childChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
+          workspace.lArray(queueSize) = childCell
+          workspace.pArray(queueSize) = parentCell
 
-          ev = enqueue(workspace, batch, span, parentCell, childCell, ev)
+          queueSize += 1
         }
 
         if (queueSize > 0) {
-          flushQueue(workspace, batch, span, ev)
+          ev = flushQueue(workspace, batch, span, queueSize, ev)
         }
 
         assert(ev.length == 1)
@@ -782,26 +773,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                                       leftChart: (Batch[W], Int)=>Int,
                                       rightChart: (Batch[W], Int)=>Int,
                                       ranger: (Int, Int, Int)=>Range) {
-       var queueSize = 0 // number of work cells used so far.
 
 
-       private def enqueue(workspace: WorkSpace, block: IndexedSeq[Int], batch: Batch[W], span: Int, parent: Int, left: Int, right: Int, events: Seq[CLEvent]): Seq[CLEvent] = {
-         import workspace._
-
-         pArray(queueSize) = parent
-         lArray(queueSize) = left
-         rArray(queueSize) = right
-
-         queueSize += 1
-         if (queueSize >= workspace.lArray.size)  {
-           flushQueue(workspace, block, batch, span, events)
-         } else {
-           events
-         }
-       }
-
-
-       private def flushQueue(workspace: WorkSpace, block: IndexedSeq[Int], batch: Batch[W], span: Int, _ev: Seq[CLEvent]): Seq[CLEvent] = {
+       private def flushQueue(workspace: WorkSpace, block: IndexedSeq[Int], batch: Batch[W], span: Int, queueSize: Int, _ev: Seq[CLEvent]): Seq[CLEvent] = {
          import workspace._
 
 //         assert(queueSize == _todo, s"$queueSize ${_todo} $span")
@@ -845,7 +819,6 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
            offset += toDoThisTime
            ev = kEvents
          }
-         queueSize = 0
 
          ev
        }
@@ -881,6 +854,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
          val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).groupBy(updater.kernels(_).parents.data.toIndexedSeq).values.toIndexedSeq
 
          for(block <- blocks) {
+           var queueSize = 0
 
            val blockParents: DenseVector[Int] = updater.kernels(block.head).parents
 
@@ -922,7 +896,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                      val leftChild = leftChartOffset + ChartHalf.chartIndex(split, start, len)
                      val rightChild = rightChartOffset + ChartHalf.chartIndex(split, end, len)
 
-                     ev = enqueue(workspace, block, batch, span, parentCell, leftChild, rightChild, ev)
+                     workspace.pArray(queueSize) = parentCell
+                     workspace.lArray(queueSize) = leftChild
+                     workspace.rArray(queueSize) = rightChild
+
+                     queueSize += 1
                    }
                  }
                  split += step
@@ -933,7 +911,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
            }
 
            if (queueSize > 0) {
-             ev = flushQueue(workspace, block, batch, span, ev)
+             ev = flushQueue(workspace, block, batch, span, queueSize, ev)
            }
          }
 
