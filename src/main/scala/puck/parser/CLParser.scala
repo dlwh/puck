@@ -33,6 +33,7 @@ import org.bridj.Pointer
 import scala.reflect.ClassTag
 import scala.concurrent.{ExecutionContext, Await, Future}
 import scala.concurrent.duration.Duration
+import scala.collection.mutable
 
 
 /**
@@ -299,6 +300,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         profiler.tock()
         println(profiler.report("inside"))
         println(s"Enqueuing writes took ${writeTimer.clear()}s")
+        println(s"Queuing took ${queueTimer.clear()}s")
         println(s"Spin up for writes took ${allTimer.clear()}s")
         println(s"Pruned $pruned/$total")
       }
@@ -763,6 +765,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     }
 
+    val queueTimer = new Timer
+
     private class BinaryUpdateManager(updater: CLBinaryRuleUpdater,
                                       parentIsBot: Boolean,
                                       parentChartMatrix: CLMatrix[Float],
@@ -776,8 +780,15 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                                       rightChart: (Batch[W], Int)=>Int,
                                       ranger: (Int, Int, Int)=>Range) {
 
+      val numBlocks = updater.numKernelBlocks
 
-       private def flushQueue(workspace: WorkSpace, block: IndexedSeq[Int], batch: Batch[W], span: Int, _ev: Seq[CLEvent]): Seq[CLEvent] = {
+
+      val merge = (CLParser.this.data.last ne data) && CLParser.this.data.length != 1
+      val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).groupBy(updater.kernels(_).parents.data.toIndexedSeq).values.toIndexedSeq
+      val blockMasks = Array.tabulate(blocks.length)(i => updater.kernels(blocks(i).head).parents.data.toIndexedSeq)
+
+
+       private def flushQueue(workspace: WorkSpace, batch: Batch[W], span: Int, _ev: Seq[CLEvent]): Seq[CLEvent] = {
          import workspace._
 
 //         assert(queueSize == _todo, s"$queueSize ${_todo} $span")
@@ -788,131 +799,118 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 //         assert(oldRightPtr.take(queueSize).toIndexedSeq == rArray.take(queueSize).toIndexedSeq, s"${oldRightPtr.take(queueSize).toIndexedSeq} ${rArray.take(queueSize).toIndexedSeq}")
 //         val oldParentPtr = pPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
 //         assert(oldParentPtr.take(queueSize).toIndexedSeq == pArray.take(queueSize).toIndexedSeq, s"${oldParentPtr.take(queueSize).toIndexedSeq} ${pArray.take(queueSize).toIndexedSeq}")
-
          var ev = _ev
-         val queueSize = workQueue.queueSize(0)
-         var offset = 0
-         // copy ptrs to opencl
-         val evP = pPtrBuffer.writeArray(queue, workQueue.parentQueue(0), queueSize, ev:_*) profileIn hdTransferEvents
-         val evL = lPtrBuffer.writeArray(queue, workQueue.leftQueue(0), queueSize, ev:_*) profileIn hdTransferEvents
-         val evR = rPtrBuffer.writeArray(queue, workQueue.rightQueue(0), queueSize, ev:_*) profileIn hdTransferEvents
 
-         ev = Seq(evP, evL, evR)
+         for(blockid <- 0 until blocks.size if workQueue.nonEmpty(blockid)) {
 
-         while (offset < queueSize) {
-           val toDoThisTime = math.min(numWorkCells, queueSize - offset)
+           val queueSize = workQueue.queueSize(blockid)
+           var offset = 0
+           // copy ptrs to opencl
+           val evP = pPtrBuffer.writeArray(queue, workQueue.parentQueue(blockid), queueSize, ev:_*) profileIn hdTransferEvents
+           val evL = lPtrBuffer.writeArray(queue, workQueue.leftQueue(blockid), queueSize, ev:_*) profileIn hdTransferEvents
+           val evR = rPtrBuffer.writeArray(queue, workQueue.rightQueue(blockid), queueSize, ev:_*) profileIn hdTransferEvents
 
-           val updateDirectToChart = updater.directWriteToChart
-           require(updateDirectToChart)
+           ev = Seq(evP, evL, evR)
 
+           while (offset < queueSize) {
+             val toDoThisTime = math.min(numWorkCells, queueSize - offset)
 
-           // do transpose based on ptrs
-           val evTransLeft  = transposeCopy.permuteTransposeCopy(devLeft(0 until toDoThisTime, ::), leftChartMatrix, lPtrBuffer, offset, toDoThisTime, ev:_*) profileIn transferEvents
-           val evTransRight = transposeCopy.permuteTransposeCopy(devRight(0 until toDoThisTime, ::), rightChartMatrix, rPtrBuffer, offset, toDoThisTime, ev:_*) profileIn transferEvents
-
-           val targetChart =  parentChartMatrix
-           val kEvents = updater.update(block, binaryEvents,
-             targetChart, parentScale, pPtrBuffer, offset,
-             devLeft(0 until toDoThisTime, ::), leftScale, lPtrBuffer, offset,
-             devRight(0 until toDoThisTime, ::), rightScale, rPtrBuffer, offset,
-             maskCharts, evTransLeft, evTransRight)
+             val updateDirectToChart = updater.directWriteToChart
+             require(updateDirectToChart)
 
 
+             // do transpose based on ptrs
+             val evTransLeft  = transposeCopy.permuteTransposeCopy(devLeft(0 until toDoThisTime, ::), leftChartMatrix, lPtrBuffer, offset, toDoThisTime, ev:_*) profileIn transferEvents
+             val evTransRight = transposeCopy.permuteTransposeCopy(devRight(0 until toDoThisTime, ::), rightChartMatrix, rPtrBuffer, offset, toDoThisTime, ev:_*) profileIn transferEvents
 
-           offset += toDoThisTime
-           ev = kEvents
+             val targetChart =  parentChartMatrix
+             val kEvents = updater.update(blocks(blockid), binaryEvents,
+               targetChart, parentScale, pPtrBuffer, offset,
+               devLeft(0 until toDoThisTime, ::), leftScale, lPtrBuffer, offset,
+               devRight(0 until toDoThisTime, ::), rightScale, rPtrBuffer, offset,
+               maskCharts, evTransLeft, evTransRight)
+
+
+
+             offset += toDoThisTime
+             ev = kEvents
+           }
+
          }
          workQueue.clear()
-
          ev
        }
 
 //      var _todo = 0
+      private val zeroArray = Array(0)
+      import spire.syntax.cfor._
 
-       def doUpdates(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent*) = {
+      private def determineBlocksToDo(mask: Option[DenseVector[Int]]) = mask match {
+        case None => zeroArray
+        case Some(m) =>
+          val out = new mutable.ArrayBuilder.ofInt
+          cfor(0)(_ < blocks.length, _ + 1) { i =>
+            if(intersects(m,  updater.kernels(blocks(i).head).parents)) {
+              out += i
+            }
+          }
+          out.result
+      }
+
+      def doUpdates(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent*) = {
 
          var ev = events
+        queueTimer.tic()
 
 
-         val merge = !batch.hasMasks
+         for {
+           sent <- (0 until batch.numSentences)
+           start <- 0 to batch.sentences(sent).length - span
+         } yield {
+           val end = start + span
+           val mask = if(parentIsBot) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
+           val blockids = determineBlocksToDo(mask)
 
-         val allSpans = if (batch.hasMasks) {
-           for {
-             sent <- 0 until batch.numSentences
-             start <- 0 to batch.sentences(sent).length - span
-             _ = total += 1
-             mask <- if(parentIsBot) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
-             if {val x = batch.isAllowedSpan(sent, start, start + span); if(!x) pruned += 1; x }
-           } yield (sent, start, start+span, mask)
-         } else {
-           for {
-             sent <- 0 until batch.numSentences
-             start <- 0 to batch.sentences(sent).length - span
-           } yield (sent, start, start+span, null)
-         }
+           val len = batch.lengths(sent)
 
+           val parentCell = parentChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
+           val leftChartOffset = leftChart(batch, sent)
+           val rightChartOffset = rightChart(batch, sent)
 
-         val numBlocks = updater.numKernelBlocks
+           val leftIsTop = leftChart eq ActualParser.this.insideTop
+           val rightIsTop = rightChart eq ActualParser.this.insideTop
 
+           val splitRange = ranger(start, start + span, batch.sentences(sent).length)
+           var split =  splitRange.start
+           val splitEnd = splitRange.terminalElement
+           val step = splitRange.step
+           while (split != splitEnd) {
+             if (split >= 0 && split <= batch.sentences(sent).length) {
+               val end = start + span
+               val leftChildAllowed = if (split < start) if(leftIsTop) batch.isAllowedTopSpan(sent, split, start) else batch.isAllowedSpan(sent,split, start) else if(leftIsTop) batch.isAllowedTopSpan(sent, start, split) else batch.isAllowedSpan(sent, start, split)
+               val rightChildAllowed = if (split < end) if(rightIsTop) batch.isAllowedTopSpan(sent, split, end) else batch.isAllowedSpan(sent,split,end) else if (rightIsTop) batch.isAllowedTopSpan(sent, end, split) else batch.isAllowedSpan(sent, end, split)
 
-         val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).groupBy(updater.kernels(_).parents.data.toIndexedSeq).values.toIndexedSeq
+               if (leftChildAllowed && rightChildAllowed) {
+                 val leftChild = leftChartOffset + ChartHalf.chartIndex(split, start, len)
+                 val rightChild = rightChartOffset + ChartHalf.chartIndex(split, end, len)
 
-         for(block <- blocks) {
-
-           val blockParents: DenseVector[Int] = updater.kernels(block.head).parents
-
-//           val (evq, numToDo) = {
-//             updater.enqueuer.enqueue(workspace, batch, span, !parentIsBot, leftChart eq ActualParser.this.insideTop, rightChart eq ActualParser.this.insideTop, if(batch.hasMasks) Some(blockParents.toArray) else None, ev:_*)
-//           }
-//
-//           _todo = numToDo
-//
-//           ev = Seq(evq)
-
-
-           //        if(allSpans.head._4 != null)
-           //          println(BitHacks.asBitSet(blockParents).cardinality)
-           for ( (sent, start, end, mask) <- allSpans ) {
-
-             if(mask == null || intersects(blockParents, mask)) {
-
-               val len = batch.lengths(sent)
-
-               val parentCell = parentChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
-               val leftChartOffset = leftChart(batch, sent)
-               val rightChartOffset = rightChart(batch, sent)
-
-               val leftIsTop = leftChart eq ActualParser.this.insideTop
-               val rightIsTop = rightChart eq ActualParser.this.insideTop
-
-               val splitRange = ranger(start, start + span, batch.sentences(sent).length)
-               var split =  splitRange.start
-               val splitEnd = splitRange.terminalElement
-               val step = splitRange.step
-               while (split != splitEnd) {
-                 if (split >= 0 && split <= batch.sentences(sent).length) {
-                   val end = start + span
-                   val leftChildAllowed = if (split < start) if(leftIsTop) batch.isAllowedTopSpan(sent, split, start) else batch.isAllowedSpan(sent,split, start) else if(leftIsTop) batch.isAllowedTopSpan(sent, start, split) else batch.isAllowedSpan(sent, start, split)
-                   val rightChildAllowed = if (split < end) if(rightIsTop) batch.isAllowedTopSpan(sent, split, end) else batch.isAllowedSpan(sent,split,end) else if (rightIsTop) batch.isAllowedTopSpan(sent, end, split) else batch.isAllowedSpan(sent, end, split)
-
-                   if (leftChildAllowed && rightChildAllowed) {
-                     val leftChild = leftChartOffset + ChartHalf.chartIndex(split, start, len)
-                     val rightChild = rightChartOffset + ChartHalf.chartIndex(split, end, len)
-
-                     workspace.workQueue.enqueue(0, parentCell, leftChild, rightChild)
-
-                   }
+                 cfor(0)(_ < blockids.length, _ + 1) { b =>
+                   workspace.workQueue.enqueue(blockids(b), parentCell, leftChild, rightChild)
                  }
-                 split += step
+
+
                }
-
              }
-
+             split += step
            }
 
-           if(workspace.workQueue.nonEmpty)
-             ev = flushQueue(workspace, block, batch, span, ev)
          }
+
+         queueTimer.toc()
+
+
+         if(workspace.workQueue.nonEmpty)
+           ev = flushQueue(workspace, batch, span, ev)
 
          assert(ev.length == 1)
          ev.head
