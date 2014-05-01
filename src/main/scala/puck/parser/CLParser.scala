@@ -95,6 +95,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
   var pruned = 0
   var total = 0
+  var totalSyms = 0
 
   private class ActualParser(val data: CLParserData[C, L, W], nextParserNeedsScales: Boolean) {
     import data._
@@ -256,6 +257,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       profiler.tick()
       pruned = 0
       total = 0
+      totalSyms = 0
 
       val evZeroCharts = zmk.fillMemory(devInside.data, zero, events:_*) profileIn initMemFillEvents
       val evZeroOutside = zmk.fillMemory(devOutside.data, zero, events:_*) profileIn initMemFillEvents
@@ -303,6 +305,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         println(s"Queuing took ${queueTimer.clear()}s")
         println(s"Spin up for writes took ${allTimer.clear()}s")
         println(s"Pruned $pruned/$total")
+        println(s"Syms per cell: ${totalSyms * 1.0/(total - pruned)}")
       }
 
       ev
@@ -315,6 +318,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       profiler.tick()
       pruned  = 0
       total = 0
+      totalSyms = 0
 
      ev = pPtrBuffer.writeArray(queue, batch.outsideRootIndices, batch.numSentences, ev) profileIn hdTransferEvents
       ev = data.util.setRootScores(devOutside, pPtrBuffer, batch.numSentences, structure.root, data.semiring.one, ev) profileIn memFillEvents
@@ -356,6 +360,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         println(s"Enqueuing writes took ${writeTimer.clear()}s")
         println(s"Spin up for writes took ${allTimer.clear()}s")
         println(s"Pruned $pruned/$total")
+        println(s"Syms per cell: ${totalSyms * 1.0/(total - pruned)}")
       }
 
       ev
@@ -862,12 +867,16 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
          var ev = events
         queueTimer.tic()
 
-
         cfor(0)(_ < batch.numSentences, _ + 1) { sent =>
           val lastStart = batch.sentences(sent).length - span
           cfor(0)(_ <= lastStart, _ + 1) { start =>
+            total += 1
             val end = start + span
             val mask = if(parentIsBot) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
+          if(profile) mask match {
+            case None =>
+            case Some(x) => for(v <- x.valuesIterator) totalSyms += Integer.bitCount(v)
+          }
             val blockids = determineBlocksToDo(mask)
 
             if(blockids.nonEmpty) {
@@ -904,6 +913,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                 }
                 split += step
               }
+            } else {
+              pruned += 1
             }
 
           }
