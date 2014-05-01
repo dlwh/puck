@@ -60,9 +60,6 @@ class WorkSpace(val numWorkCells: Int,
   val maskCharts = new CLMatrix[Int](maskSize, numChartCells)
   val devInsideScale, devOutsideScale = context.createFloatBuffer(CLMem.Usage.InputOutput, numChartCells)
 
-  // work queue stuff
-
-  val workQueue = new ParseItemQueue(numChartCells)
 
 
 //  val parentQueue, leftQueue, rightQueue = context.createIntBuffer(CLMem.Usage.Input, numWorkCells)

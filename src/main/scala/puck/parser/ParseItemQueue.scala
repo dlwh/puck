@@ -11,6 +11,7 @@ final class ParseItemQueue(maxSize: Int) {
 
   private var pArray, lArray, rArray = new ArrayBuffer[Array[Int]]
   private var offsets = new Array[Int](10)
+  ensure(1)
 
   def parentQueue(block: Int) = if(block >= pArray.size) null else pArray(block)
   def leftQueue(block: Int) = if(block >= pArray.size) null else lArray(block)
@@ -19,8 +20,11 @@ final class ParseItemQueue(maxSize: Int) {
 
 
   private def ensure(numBlocks: Int) {
-    while(pArray.length < numBlocks)
-      Seq(pArray, lArray, rArray) foreach( _ += new Array[Int](maxSize))
+    while(pArray.length < numBlocks) {
+      pArray += new Array[Int](maxSize)
+      lArray += new Array[Int](maxSize)
+      rArray += new Array[Int](maxSize)
+    }
     if(offsets.length < numBlocks)  {
       offsets = java.util.Arrays.copyOf(offsets, offsets.length * 2)
     }

@@ -34,6 +34,7 @@ import scala.reflect.ClassTag
 import scala.concurrent.{ExecutionContext, Await, Future}
 import scala.concurrent.duration.Duration
 import scala.collection.mutable
+import java.util.concurrent.LinkedBlockingQueue
 
 
 /**
@@ -44,6 +45,8 @@ import scala.collection.mutable
 class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         maxAllocSize: Long = 1<<30,
                         profile: Boolean = true)(implicit val context: CLContext) extends LazyLogging {
+
+  import ExecutionContext.Implicits.global
 
   def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
     val mask = computeMasks(sentences)
@@ -270,21 +273,20 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         queue.finish()
       }
 
-
-        val (tagScores, pArray) =  Await.result ( tagFuture, Duration.Inf )
-
-        ev = writeTagScores(workspace, pArray, tagScores, ev, evZeroOutside)
+      var eventFuture = tagFuture.map { case (tagScores, pArray) =>
+        Seq(writeTagScores(workspace, pArray, tagScores, ev, evZeroOutside))
+      }
 
       val insideTU = new UnaryUpdateManager(data.inside.insideTUKernels, devInside, devInsideScale, devInsideScale, insideTop, insideBot)
 
-      ev = insideTU.doUpdates(workspace, batch, 1, ev)
+      eventFuture = insideTU.doUpdates(workspace, batch, 1, eventFuture)
 
       for (span <- 2 to batch.maxLength) {
         print(s"$span ")
-        ev = insideBinaryPass(workspace, batch, span, ev)
+        eventFuture = insideBinaryPass(workspace, batch, span, eventFuture)
 
         val insideNU = new UnaryUpdateManager(data.inside.insideNUKernels, devInside, devInsideScale, devInsideScale, insideTop, insideBot)
-        ev = insideNU.doUpdates(workspace, batch, span, ev)
+        eventFuture = insideNU.doUpdates(workspace, batch, span, eventFuture)
 
       }
 
@@ -297,6 +299,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 //        println("=======")
 //      }
 
+      val resultEvents = Await.result(eventFuture, Duration.Inf)
+
       if (profile) {
         queue.finish()
         profiler.tock()
@@ -308,7 +312,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         println(s"Syms per cell: ${totalSyms * 1.0/(total - pruned)}")
       }
 
-      ev
+      CLEvent.waitFor(resultEvents.dropRight(1):_*)
+      resultEvents.last
     }
 
     def outside(workspace: WorkSpace, batch: Batch[W], event: CLEvent):CLEvent = synchronized {
@@ -323,18 +328,21 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
      ev = pPtrBuffer.writeArray(queue, batch.outsideRootIndices, batch.numSentences, ev) profileIn hdTransferEvents
       ev = data.util.setRootScores(devOutside, pPtrBuffer, batch.numSentences, structure.root, data.semiring.one, ev) profileIn memFillEvents
 
+      var eventFuture = Future.successful(Seq(ev))
+
       val outsideNU = new UnaryUpdateManager(data.outside.outsideNUKernels, devOutside, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
-      ev = outsideNU.doUpdates(workspace: WorkSpace, batch, batch.maxLength, ev)
+      eventFuture = outsideNU.doUpdates(workspace: WorkSpace, batch, batch.maxLength, eventFuture)
+
 
       for (span <- (batch.maxLength - 1) to 1 by -1) {
         print(s"$span ")
-        ev = outsideBinaryPass(workspace, batch, span, ev)
+        eventFuture = outsideBinaryPass(workspace, batch, span, eventFuture)
         if (span == 1) {
           val outsideTU = new UnaryUpdateManager(data.outside.outsideTUKernels, devOutside, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
-          ev = outsideTU.doUpdates(workspace, batch, span, ev)
+          eventFuture = outsideTU.doUpdates(workspace, batch, span, eventFuture)
         } else {
           val outsideNU = new UnaryUpdateManager(data.outside.outsideNUKernels, devOutside, devOutsideScale, devOutsideScale, outsideBot, outsideTop)
-          ev = outsideNU.doUpdates(workspace, batch, span, ev)
+          eventFuture = outsideNU.doUpdates(workspace, batch, span, eventFuture)
         }
 
       }
@@ -347,11 +355,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val outsideTT_R = new BinaryUpdateManager(data.outside.outside_R_TTKernels, true, devOutside, devOutsideScale, devInside, devInsideScale, devOutside, devOutsideScale, outsideBot, insideBot, outsideBot, (b, e, l) => (b-1 to b-1))
       val outsideNT_R = new BinaryUpdateManager(data.outside.outside_R_NTKernels, true, devOutside, devOutsideScale, devInside, devInsideScale, devOutside, devOutsideScale, outsideBot, insideTop, outsideBot, (b, e, l) => (0 to b-1))
 
-      ev = outsideTT_L.doUpdates(workspace, batch, 1, ev)
-      ev = outsideNT_R.doUpdates(workspace, batch, 1, ev)
-      ev = outsideTN_L.doUpdates(workspace, batch, 1, ev)
-      ev = outsideTT_R.doUpdates(workspace, batch, 1, ev)
+      eventFuture = outsideTT_L.doUpdates(workspace, batch, 1, eventFuture)
+      eventFuture = outsideNT_R.doUpdates(workspace, batch, 1, eventFuture)
+      eventFuture = outsideTN_L.doUpdates(workspace, batch, 1, eventFuture)
+      eventFuture = outsideTT_R.doUpdates(workspace, batch, 1, eventFuture)
       profiler.tock()
+
+      val resultEvents = Await.result(eventFuture, Duration.Inf)
 
       if (profile) {
         queue.finish()
@@ -363,7 +373,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         println(s"Syms per cell: ${totalSyms * 1.0/(total - pruned)}")
       }
 
-      ev
+      CLEvent.waitFor(resultEvents.dropRight(1):_*)
+      resultEvents.last
     }
 
 
@@ -484,7 +495,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       evr
     }
 
-    private def insideBinaryPass(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent*) = {
+    private def insideBinaryPass(workspace: WorkSpace, batch: Batch[W], span: Int, events: Future[Seq[CLEvent]]) = {
       var ev = events
       import workspace._
       val insideNT = new BinaryUpdateManager(data.inside.insideNTKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideTop, insideBot, (b, e, l) => (e-1 to e-1))
@@ -492,16 +503,16 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val insideNN = new BinaryUpdateManager(data.inside.insideNNKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideTop, insideTop, (b, e, l) => (b+1 to e-1))
       if (span == 2) {
         val insideTT = new BinaryUpdateManager(data.inside.insideTTKernels, true, devInside, devInsideScale, devInside, devInsideScale, devInside, devInsideScale, insideBot, insideBot, insideBot, (b, e, l) => (b+1 to b+1))
-        ev = Seq(insideTT.doUpdates(workspace, batch, span, ev :_*))
+        ev = insideTT.doUpdates(workspace, batch, span, ev)
       }
 
-      ev = Seq(insideNT.doUpdates(workspace, batch, span, ev :_*))
-      ev = Seq(insideTN.doUpdates(workspace, batch, span, ev :_*))
-      ev = Seq(insideNN.doUpdates(workspace, batch, span, ev :_*))
-      ev.head
+      ev = insideNT.doUpdates(workspace, batch, span, ev)
+      ev = insideTN.doUpdates(workspace, batch, span, ev)
+      ev = insideNN.doUpdates(workspace, batch, span, ev)
+      ev
     }
 
-    private def outsideBinaryPass(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent) = {
+    private def outsideBinaryPass(workspace: WorkSpace, batch: Batch[W], span: Int, events: Future[Seq[CLEvent]]) = {
       var ev = events
 
       import workspace._
@@ -702,39 +713,40 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
 
 
-      private def flushQueue(workspace: WorkSpace, batch: Batch[W], span: Int, _ev: Seq[CLEvent]) = {
+      private def flushQueue(workspace: WorkSpace, workQueue: ParseItemQueue, _ev: Future[Seq[CLEvent]]) = {
         import workspace._
         val scoreMatrix = chart
-        var ev = _ev
-        var offset = 0
+        _ev.map { _ev =>
+          var ev = _ev
+          var offset = 0
 
-        val queueSize = workQueue.queueSize(0)
+          val queueSize = workQueue.queueSize(0)
 
-        val evp = pPtrBuffer.writeArray(queue, workQueue.parentQueue(0), queueSize, ev:_*) profileIn hdTransferEvents
-        val evl = lPtrBuffer.writeArray(queue, workQueue.leftQueue(0), queueSize, ev:_*) profileIn hdTransferEvents
+          val evp = pPtrBuffer.writeArray(queue, workQueue.parentQueue(0), queueSize, ev:_*) profileIn hdTransferEvents
+          val evl = lPtrBuffer.writeArray(queue, workQueue.leftQueue(0), queueSize, ev:_*) profileIn hdTransferEvents
 
-        while (offset < queueSize) {
-          if(offset != 0) println("uflush!")
-          val toDoThisTime = math.min(numWorkCells, queueSize - offset)
-          val zz = zmk.shapedFill(devRight(0 until toDoThisTime, ::), zero, ev:_*) profileIn memFillEvents
+          while (offset < queueSize) {
+            if(offset != 0) println("uflush!")
+            val toDoThisTime = math.min(numWorkCells, queueSize - offset)
+            val zz = zmk.shapedFill(devRight(0 until toDoThisTime, ::), zero, ev:_*) profileIn memFillEvents
 
-          val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until toDoThisTime, ::), scoreMatrix, lPtrBuffer, offset, toDoThisTime, evl) profileIn transferEvents
+            val wl = transposeCopy.permuteTransposeCopy(devLeft(0 until toDoThisTime, ::), scoreMatrix, lPtrBuffer, offset, toDoThisTime, evl) profileIn transferEvents
 
-          val endEvents = kernels.update(unaryEvents, devRight(0 until toDoThisTime, ::), parentScale, pPtrBuffer, offset, devLeft(0 until toDoThisTime, ::), childScale, lPtrBuffer, offset, wl, zz, evp)
+            val endEvents = kernels.update(unaryEvents, devRight(0 until toDoThisTime, ::), parentScale, pPtrBuffer, offset, devLeft(0 until toDoThisTime, ::), childScale, lPtrBuffer, offset, wl, zz, evp)
 
-          val evu = transposeCopy.permuteTransposeCopyOut(scoreMatrix, pPtrBuffer, offset, toDoThisTime, devRight(0 until toDoThisTime, ::), (evp +: endEvents):_*) profileIn unarySumEvents
-          ev = Seq(evu)
+            val evu = transposeCopy.permuteTransposeCopyOut(scoreMatrix, pPtrBuffer, offset, toDoThisTime, devRight(0 until toDoThisTime, ::), (evp +: endEvents):_*) profileIn unarySumEvents
+            ev = Seq(evu)
 
-          offset += toDoThisTime
+            offset += toDoThisTime
+          }
+
+          workQueue.clear(0)
+          ev
         }
-
-        workQueue.clear(0)
-
-
-        ev
       }
 
-      def doUpdates(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent*) = {
+      def doUpdates(workspace: WorkSpace, batch: Batch[W], span: Int, events: Future[Seq[CLEvent]]) = {
+        val workQueue = new ParseItemQueue(workspace.numChartCells)
         var ev = events
 
 
@@ -747,15 +759,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           val end = start + span
           val parentCell = parentChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
           val childCell = childChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
-          workspace.workQueue.enqueue(0, parentCell, childCell)
+          workQueue.enqueue(0, parentCell, childCell)
         }
 
-        if (workspace.workQueue.nonEmpty) {
-          ev = flushQueue(workspace, batch, span, ev)
+        if (workQueue.nonEmpty) {
+          ev = flushQueue(workspace, workQueue, ev)
         }
 
-        assert(ev.length == 1)
-        ev.head
+        ev
       }
 
     }
@@ -783,57 +794,51 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       private val blockMasks = Array.tabulate(blocks.length)(i => updater.kernels(blocks(i).head).parents)
 
 
-       private def flushQueue(workspace: WorkSpace, batch: Batch[W], span: Int, _ev: Seq[CLEvent]): Seq[CLEvent] = {
+       private def flushQueue(workspace: WorkSpace, workQueue: ParseItemQueue, evFuture: Future[Seq[CLEvent]]): Future[Seq[CLEvent]] = {
          import workspace._
 
-//         assert(queueSize == _todo, s"$queueSize ${_todo} $span")
-//         CLEvent.waitFor(_ev:_*)
-//         val oldLeftPtr = lPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
-//         assert(oldLeftPtr.take(queueSize).toIndexedSeq == lArray.take(queueSize).toIndexedSeq, s"${oldLeftPtr.take(queueSize).toIndexedSeq} ${lArray.take(queueSize).toIndexedSeq}")
-//         val oldRightPtr = rPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
-//         assert(oldRightPtr.take(queueSize).toIndexedSeq == rArray.take(queueSize).toIndexedSeq, s"${oldRightPtr.take(queueSize).toIndexedSeq} ${rArray.take(queueSize).toIndexedSeq}")
-//         val oldParentPtr = pPtrBuffer.read(queue, 0, queueSize, _ev:_*).getInts()
-//         assert(oldParentPtr.take(queueSize).toIndexedSeq == pArray.take(queueSize).toIndexedSeq, s"${oldParentPtr.take(queueSize).toIndexedSeq} ${pArray.take(queueSize).toIndexedSeq}")
-         var ev = _ev
+         evFuture.map { _ev =>
+           var ev = _ev
 
-         for(blockid <- 0 until blocks.size if workQueue.nonEmpty(blockid)) {
+           for(blockid <- 0 until blocks.size if workQueue.nonEmpty(blockid)) {
 
-           val queueSize = workQueue.queueSize(blockid)
-           var offset = 0
-           // copy ptrs to opencl
-           val evP = pPtrBuffer.writeArray(queue, workQueue.parentQueue(blockid), queueSize, ev:_*) profileIn hdTransferEvents
-           val evL = lPtrBuffer.writeArray(queue, workQueue.leftQueue(blockid), queueSize, ev:_*) profileIn hdTransferEvents
-           val evR = rPtrBuffer.writeArray(queue, workQueue.rightQueue(blockid), queueSize, ev:_*) profileIn hdTransferEvents
+             val queueSize = workQueue.queueSize(blockid)
+             var offset = 0
+             // copy ptrs to opencl
+             val evP = pPtrBuffer.writeArray(queue, workQueue.parentQueue(blockid), queueSize, ev:_*) profileIn hdTransferEvents
+             val evL = lPtrBuffer.writeArray(queue, workQueue.leftQueue(blockid), queueSize, ev:_*) profileIn hdTransferEvents
+             val evR = rPtrBuffer.writeArray(queue, workQueue.rightQueue(blockid), queueSize, ev:_*) profileIn hdTransferEvents
 
-           ev = Seq(evP, evL, evR)
+             val writeEvents = Seq(evP, evL, evR)
 
-           while (offset < queueSize) {
-             val toDoThisTime = math.min(numWorkCells, queueSize - offset)
+             while (offset < queueSize) {
+               val toDoThisTime = math.min(numWorkCells, queueSize - offset)
 
-             val updateDirectToChart = updater.directWriteToChart
-             require(updateDirectToChart)
+               val updateDirectToChart = updater.directWriteToChart
+               require(updateDirectToChart)
 
 
-             // do transpose based on ptrs
-             val evTransLeft  = transposeCopy.permuteTransposeCopy(devLeft(0 until toDoThisTime, ::), leftChartMatrix, lPtrBuffer, offset, toDoThisTime, ev:_*) profileIn transferEvents
-             val evTransRight = transposeCopy.permuteTransposeCopy(devRight(0 until toDoThisTime, ::), rightChartMatrix, rPtrBuffer, offset, toDoThisTime, ev:_*) profileIn transferEvents
+               // do transpose based on ptrs
+               val evTransLeft  = transposeCopy.permuteTransposeCopy(devLeft(0 until toDoThisTime, ::), leftChartMatrix, lPtrBuffer, offset, toDoThisTime, writeEvents:_*) profileIn transferEvents
+               val evTransRight = transposeCopy.permuteTransposeCopy(devRight(0 until toDoThisTime, ::), rightChartMatrix, rPtrBuffer, offset, toDoThisTime, writeEvents:_*) profileIn transferEvents
 
-             val targetChart =  parentChartMatrix
-             val kEvents = updater.update(blocks(blockid), binaryEvents,
-               targetChart, parentScale, pPtrBuffer, offset,
-               devLeft(0 until toDoThisTime, ::), leftScale, lPtrBuffer, offset,
-               devRight(0 until toDoThisTime, ::), rightScale, rPtrBuffer, offset,
-               maskCharts, evTransLeft, evTransRight)
+               val targetChart =  parentChartMatrix
+               val kEvents = updater.update(blocks(blockid), binaryEvents,
+                 targetChart, parentScale, pPtrBuffer, offset,
+                 devLeft(0 until toDoThisTime, ::), leftScale, lPtrBuffer, offset,
+                 devRight(0 until toDoThisTime, ::), rightScale, rPtrBuffer, offset,
+                 maskCharts, evTransLeft, evTransRight)
 
 
 
-             offset += toDoThisTime
-             ev = kEvents
+               offset += toDoThisTime
+               ev = kEvents
+             }
+
            }
-
+           workQueue.clear()
+           ev
          }
-         workQueue.clear()
-         ev
        }
 
 //      var _todo = 0
@@ -852,7 +857,8 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           out.result
       }
 
-      def doUpdates(workspace: WorkSpace, batch: Batch[W], span: Int, events: CLEvent*) = {
+      def doUpdates(workspace: WorkSpace, batch: Batch[W], span: Int, events: Future[Seq[CLEvent]]) = {
+        val workQueue = new ParseItemQueue(workspace.numChartCells)
 
          var ev = events
         queueTimer.tic()
@@ -895,7 +901,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                     val rightChild = rightChartOffset + ChartHalf.chartIndex(split, end, len)
 
                     cfor(0)(_ < blockids.length, _ + 1) { b =>
-                      workspace.workQueue.enqueue(blockids(b), parentCell, leftChild, rightChild)
+                      workQueue.enqueue(blockids(b), parentCell, leftChild, rightChild)
                     }
 
 
@@ -913,11 +919,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         queueTimer.toc()
 
 
-         if(workspace.workQueue.nonEmpty)
-           ev = flushQueue(workspace, batch, span, ev)
+        if(workQueue.nonEmpty)
+          ev = flushQueue(workspace, workQueue, ev)
 
-         assert(ev.length == 1)
-         ev.head
+         ev
        }
 
      }
@@ -946,6 +951,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     false
 
   }
+
 
 }
 
