@@ -406,17 +406,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       evr
     }
 
-    def initializeTagScores(workspace: WorkSpace, batch: Batch[W], events: CLEvent*) = {
-      val cellSize = batch.devInside.rows
-      val totalLength = batch.totalLength
-
-      val (tagScores, pArray) = computeTagScores(batch, cellSize)
-
-      writeTagScores(workspace, pArray, tagScores, events:_*)
-    }
-
-
-    def writeTagScores(workspace: WorkSpace, pArray: Array[Int], tagScores: DenseMatrix[Float], events: CLEvent*): CLEvent = {
+    private def writeTagScores(workspace: WorkSpace, pArray: Array[Int], tagScores: DenseMatrix[Float], events: CLEvent*): CLEvent = {
       val totalLength = pArray.length
       import workspace._
       val ev2 = pPtrBuffer.writeArray(queue, pArray, totalLength, events: _*) profileIn posEvents
@@ -431,7 +421,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       ev
     }
 
-    def computeTagScores(batch: Batch[W], cellSize: Int): (DenseMatrix[Float], Array[Int]) = {
+    private def computeTagScores(batch: Batch[W], cellSize: Int): (DenseMatrix[Float], Array[Int]) = {
       val totalLength = batch.totalLength
       val pArray = new Array[Int](totalLength)
       val tagScores = DenseMatrix.zeros[Float](totalLength, cellSize)
