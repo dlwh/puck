@@ -783,9 +783,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       val numBlocks = updater.numKernelBlocks
 
 
-      val merge = (CLParser.this.data.last ne data) && CLParser.this.data.length != 1
-      val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).groupBy(updater.kernels(_).parents.data.toIndexedSeq).values.toIndexedSeq
-      val blockMasks = Array.tabulate(blocks.length)(i => updater.kernels(blocks(i).head).parents.data.toIndexedSeq)
+      private val merge = (CLParser.this.data.last ne data) && CLParser.this.data.length != 1
+      private val blocks = if(merge) IndexedSeq(0 until numBlocks) else (0 until numBlocks).groupBy(updater.kernels(_).parents.data.toIndexedSeq).values.toIndexedSeq
+      private val blockMasks = Array.tabulate(blocks.length)(i => updater.kernels(blocks(i).head).parents)
 
 
        private def flushQueue(workspace: WorkSpace, batch: Batch[W], span: Int, _ev: Seq[CLEvent]): Seq[CLEvent] = {
@@ -850,7 +850,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         case Some(m) =>
           val out = new mutable.ArrayBuilder.ofInt
           cfor(0)(_ < blocks.length, _ + 1) { i =>
-            if(intersects(m,  updater.kernels(blocks(i).head).parents)) {
+            if(intersects(blockMasks(i), m)) {
               out += i
             }
           }
@@ -863,50 +863,53 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         queueTimer.tic()
 
 
-         for {
-           sent <- (0 until batch.numSentences)
-           start <- 0 to batch.sentences(sent).length - span
-         } yield {
-           val end = start + span
-           val mask = if(parentIsBot) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
-           val blockids = determineBlocksToDo(mask)
+        cfor(0)(_ < batch.numSentences, _ + 1) { sent =>
+          val lastStart = batch.sentences(sent).length - span
+          cfor(0)(_ <= lastStart, _ + 1) { start =>
+            val end = start + span
+            val mask = if(parentIsBot) batch.botMaskFor(sent, start, start + span) else batch.topMaskFor(sent, start, start + span)
+            val blockids = determineBlocksToDo(mask)
 
-           val len = batch.lengths(sent)
+            if(blockids.nonEmpty) {
 
-           val parentCell = parentChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
-           val leftChartOffset = leftChart(batch, sent)
-           val rightChartOffset = rightChart(batch, sent)
+              val len = batch.lengths(sent)
 
-           val leftIsTop = leftChart eq ActualParser.this.insideTop
-           val rightIsTop = rightChart eq ActualParser.this.insideTop
+              val parentCell = parentChart(batch, sent) + ChartHalf.chartIndex(start, end, len)
+              val leftChartOffset = leftChart(batch, sent)
+              val rightChartOffset = rightChart(batch, sent)
 
-           val splitRange = ranger(start, start + span, batch.sentences(sent).length)
-           var split =  splitRange.start
-           val splitEnd = splitRange.terminalElement
-           val step = splitRange.step
-           while (split != splitEnd) {
-             if (split >= 0 && split <= batch.sentences(sent).length) {
-               val end = start + span
-               val leftChildAllowed = if (split < start) if(leftIsTop) batch.isAllowedTopSpan(sent, split, start) else batch.isAllowedSpan(sent,split, start) else if(leftIsTop) batch.isAllowedTopSpan(sent, start, split) else batch.isAllowedSpan(sent, start, split)
-               val rightChildAllowed = if (split < end) if(rightIsTop) batch.isAllowedTopSpan(sent, split, end) else batch.isAllowedSpan(sent,split,end) else if (rightIsTop) batch.isAllowedTopSpan(sent, end, split) else batch.isAllowedSpan(sent, end, split)
+              val leftIsTop = leftChart eq ActualParser.this.insideTop
+              val rightIsTop = rightChart eq ActualParser.this.insideTop
 
-               if (leftChildAllowed && rightChildAllowed) {
-                 val leftChild = leftChartOffset + ChartHalf.chartIndex(split, start, len)
-                 val rightChild = rightChartOffset + ChartHalf.chartIndex(split, end, len)
+              val splitRange = ranger(start, start + span, batch.sentences(sent).length)
+              var split =  splitRange.start
+              val splitEnd = splitRange.terminalElement
+              val step = splitRange.step
+              while (split != splitEnd) {
+                if (split >= 0 && split <= batch.sentences(sent).length) {
+                  val end = start + span
+                  val leftChildAllowed = if (split < start) if(leftIsTop) batch.isAllowedTopSpan(sent, split, start) else batch.isAllowedSpan(sent,split, start) else if(leftIsTop) batch.isAllowedTopSpan(sent, start, split) else batch.isAllowedSpan(sent, start, split)
+                  val rightChildAllowed = if (split < end) if(rightIsTop) batch.isAllowedTopSpan(sent, split, end) else batch.isAllowedSpan(sent,split,end) else if (rightIsTop) batch.isAllowedTopSpan(sent, end, split) else batch.isAllowedSpan(sent, end, split)
 
-                 cfor(0)(_ < blockids.length, _ + 1) { b =>
-                   workspace.workQueue.enqueue(blockids(b), parentCell, leftChild, rightChild)
-                 }
+                  if (leftChildAllowed && rightChildAllowed) {
+                    val leftChild = leftChartOffset + ChartHalf.chartIndex(split, start, len)
+                    val rightChild = rightChartOffset + ChartHalf.chartIndex(split, end, len)
+
+                    cfor(0)(_ < blockids.length, _ + 1) { b =>
+                      workspace.workQueue.enqueue(blockids(b), parentCell, leftChild, rightChild)
+                    }
 
 
-               }
-             }
-             split += step
-           }
+                  }
+                }
+                split += step
+              }
+            }
 
-         }
+          }
+        }
 
-         queueTimer.toc()
+        queueTimer.toc()
 
 
          if(workspace.workQueue.nonEmpty)
@@ -923,11 +926,20 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
 
   private def intersects(blockMask: DenseVector[Int], spanMask: DenseVector[Int]):Boolean = {
-    var i = 0
     assert(blockMask.length == spanMask.length)
-    while(i < blockMask.length) {
-      if( (blockMask.unsafeValueAt(i) & spanMask.unsafeValueAt(i)) != 0) return true
-      i += 1
+    var i = 0
+    if(blockMask.stride == 1 && spanMask.stride == 1) {
+      val bdata = blockMask.data
+      val sdata = spanMask.data
+      while(i < blockMask.length) {
+        if( (bdata(i) & sdata(i + spanMask.offset)) != 0) return true
+        i += 1
+      }
+    } else {
+      while(i < blockMask.length) {
+        if( (blockMask.unsafeValueAt(i) & spanMask.unsafeValueAt(i)) != 0) return true
+        i += 1
+      }
     }
 
     false
