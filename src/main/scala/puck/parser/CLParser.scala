@@ -704,6 +704,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     }
 
+
     private class UnaryUpdateManager(kernels: CLUnaryRuleUpdater,
                                      chart: CLMatrix[Float],
                                      parentScale: CLBuffer[Float],
@@ -741,12 +742,13 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           }
 
           workQueue.clear(0)
+          workspace.queuePool.put(workQueue)
           ev
         }
       }
 
       def doUpdates(workspace: WorkSpace, batch: Batch[W], span: Int, events: Future[Seq[CLEvent]]) = {
-        val workQueue = new ParseItemQueue(workspace.numChartCells)
+        val workQueue = workspace.queuePool.get()
         var ev = events
 
 
@@ -837,6 +839,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
            }
            workQueue.clear()
+           workspace.queuePool.put(workQueue)
            ev
          }
        }
@@ -858,7 +861,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
 
       def doUpdates(workspace: WorkSpace, batch: Batch[W], span: Int, events: Future[Seq[CLEvent]]) = {
-        val workQueue = new ParseItemQueue(workspace.numChartCells)
+        val workQueue = workspace.queuePool.get()
 
          var ev = events
         queueTimer.tic()
