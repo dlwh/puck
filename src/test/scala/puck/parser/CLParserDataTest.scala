@@ -23,7 +23,7 @@ import puck.parser.gen.GenType
 class CLParserDataTest extends FunSuite {
   test("write/read works") {
     implicit val clcontext = JavaCL.createBestContext(CLPlatform.DeviceFeature.GPU)
-    val grammar = ParserTestHarness.grammar.asInstanceOf[SimpleRefinedGrammar[String, String, String]]
+    val grammar = ParserTestHarness.grammar.asInstanceOf[SimpleGrammar[String, String, String]]
     val data = CLParserData.make(grammar, GenType.CoarseParent, false, ViterbiRuleSemiring)
     val tempFile = File.createTempFile("xxx","parserdata")
     tempFile.deleteOnExit()
@@ -87,7 +87,7 @@ object ParserTestHarness {
 
 
   def evalParser(testTrees: IndexedSeq[TreeInstance[AnnotatedLabel, String]], parser: Parser[AnnotatedLabel, String]) = {
-    ParseEval.evaluate(testTrees, parser, AnnotatedLabelChainReplacer, asString = {(_:AnnotatedLabel).baseLabel}, nthreads= -1)
+    ParseEval.evaluate(testTrees, parser, asString = {(_:AnnotatedLabel).baseLabel}, nthreads= -1)
   }
 
   val transform = new StandardTreeProcessor()
@@ -100,12 +100,12 @@ object ParserTestHarness {
       case e:Exception => e.printStackTrace(); throw e
     }
   }
-  val grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String] = {
+  val grammar: SimpleGrammar[AnnotatedLabel, AnnotatedLabel, String] = {
 
     val trees = getTrainTrees()
     GenerativeParser.extractGrammar[AnnotatedLabel, String](trees.head.label.label, trees.map(_.mapLabels(_.baseAnnotatedLabel)))
   }
   val simpleParser: Parser[AnnotatedLabel, String] = {
-    Parser(AugmentedGrammar.fromRefined(grammar))
+    Parser(grammar)
   }
 }

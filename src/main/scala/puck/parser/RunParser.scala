@@ -15,6 +15,7 @@ import java.util.concurrent.atomic.{AtomicBoolean, AtomicLong, AtomicInteger}
 import scala.concurrent.{Future, ExecutionContext}
 import java.util.concurrent.{PriorityBlockingQueue, ConcurrentLinkedQueue, TimeUnit}
 import scala.concurrent.duration.Duration
+import epic.trees.Debinarizer.AnnotatedLabelDebinarizer
 
 /**
  * TODO
@@ -103,9 +104,8 @@ object RunParser extends LazyLogging {
       val i = producedIndex
       producedIndex += 1
       if(words.length < maxLength) {
-        service(words).foreach { guess =>
-          val tree: Tree[String] = AnnotatedLabelChainReplacer.replaceUnaries(guess).map(_.label)
-          val guessTree = Trees.debinarize(Trees.deannotate(tree))
+        service(words).foreach { tree =>
+          val guessTree = tree.map(_.label)
           val rendered = guessTree.render(words, newline = false)
           output.add(rendered -> i)
           output.synchronized {

@@ -7,8 +7,8 @@ import java.util.Collections
 import com.typesafe.scalalogging.slf4j.LazyLogging
 import epic.trees.AnnotatedLabel
 import java.util.zip.ZipFile
-import epic.parser.{SimpleRefinedGrammar, GenerativeParser}
-import epic.parser.SimpleRefinedGrammar.CloseUnaries
+import epic.parser.{SimpleGrammar, GenerativeParser}
+import epic.parser.SimpleGrammar.CloseUnaries
 import puck.parser.gen.GenType
 
 /**
@@ -53,7 +53,7 @@ object CompileGrammar extends LazyLogging {
 
     val parserDatas: IndexedSeq[CLParserData[AnnotatedLabel, AnnotatedLabel, String]] = {
       val paths = textGrammarPrefix.split(":")
-      var grammars = paths.zipWithIndex.map{ case (f,i) => SimpleRefinedGrammar.parseBerkeleyText(f,  -12, CloseUnaries.None)}
+      var grammars = paths.zipWithIndex.map{ case (f,i) => SimpleGrammar.parseBerkeleyText(f,  -12, CloseUnaries.None)}
       if(reproject && grammars.length > 1) {
         val (newc, newr) = CLParser.reprojectGrammar(grammars.head, textGrammarPrefix.split(":").head, grammars.last, textGrammarPrefix.split(":").last)
         grammars = Array(newc, newr)

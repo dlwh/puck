@@ -1,6 +1,5 @@
 package puck.parser.gen
 
-import epic.parser.SimpleRefinedGrammar
 import com.nativelibs4java.opencl.{CLContext, CLKernel}
 import java.util.zip.{ZipFile, ZipOutputStream}
 import puck.util.ZipUtil

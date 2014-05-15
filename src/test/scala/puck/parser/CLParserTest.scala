@@ -1,7 +1,6 @@
 package puck.parser
 
 import com.nativelibs4java.opencl.{CLPlatform, JavaCL}
-import epic.parser.SimpleRefinedGrammar
 import org.scalatest.FunSuite
 import puck.parser.gen.GenType
 

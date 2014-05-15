@@ -16,8 +16,8 @@ import epic.trees._
 import java.io._
 import java.util.zip.{ZipEntry, ZipFile, ZipOutputStream}
 import scala.collection.mutable.ArrayBuffer
-import epic.parser.SimpleRefinedGrammar.CloseUnaries
-import epic.parser.projections.{ProjectionIndexer, GrammarRefinements, ParserChartConstraintsFactory, ConstraintCoreGrammarAdaptor}
+import epic.parser.SimpleGrammar.CloseUnaries
+import epic.parser.projections.{ProjectionIndexer, GrammarRefinements, ParserChartConstraintsFactory}
 import scala.collection.parallel.immutable.ParSeq
 import java.util.Collections
 import epic.trees.UnaryTree
@@ -34,6 +34,7 @@ import scala.reflect.ClassTag
 import scala.concurrent.{ExecutionContext, Await, Future}
 import scala.concurrent.duration.Duration
 import scala.collection.mutable
+import epic.trees.Debinarizer.AnnotatedLabelDebinarizer
 
 
 /**
@@ -43,9 +44,9 @@ import scala.collection.mutable
  **/
 class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         maxAllocSize: Long = 1<<30,
-                        profile: Boolean = true)(implicit val context: CLContext) extends LazyLogging {
+                        profile: Boolean = true)(implicit val context: CLContext, deb: Debinarizer[C]) extends LazyLogging {
 
-  def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[BinarizedTree[C]] = synchronized {
+  def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[Tree[C]] = synchronized {
     val mask = computeMasks(sentences)
     parsers.last.parse(sentences, mask)
   }
@@ -151,14 +152,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
               Option(ev3).foreach(_.waitFor())
               val parseMask: DenseMatrixMask = extractMasks(workspace, batch, false)
               val parses = extractParses(batch, parseMask.matrix, ev3)
-              parses
+              parses.par.map(deb)
             } else {
               ev = outside(workspace, batch, ev)
               val ev3 = computeMBRParts(workspace, batch, ev)
               Option(ev3).foreach(_.waitFor())
               val parseMask = extractMasks(workspace, batch, false)
               val parses = extractMBRParses(workspace, batch, parseMask, ev3)
-              parses
+              parses.par.map(deb)
             }
           }.toIndexedSeq
         }
@@ -437,9 +438,9 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           var maxScore = zero
           for (t <- lexAnch.allowedTags(pos); ref <- data.grammar.refinements.labels.refinementsOf(t)) {
             val index = ref
-            val score = anch.scoreTag(pos, data.grammar.refinedGrammar.labelIndex.get(index))
+            val score = anch.scoreTag(pos, data.grammar.refinedTopology.labelIndex.get(index))
             val gpuIndex = data.structure.labelIndexToTerminal(index)
-            //        if(pos == 0) println(pos,t,ref,data.grammar.refinements.labels.fineIndex.get(ref), gpuIndex,score)
+            //        if(pos == 0) println(pos,t,ref,data.topology.refinements.labels.fineIndex.get(ref), gpuIndex,score)
             pArray(offset) = batch.insideBotCell(i, pos, pos + 1)
             tagScores(offset, gpuIndex) = data.semiring.fromLogSpace(score.toFloat) * myScale.toFloat
             maxScore = maxScore + tagScores(offset, gpuIndex)
@@ -1021,7 +1022,7 @@ object CLParser extends LazyLogging {
       IndexedSeq(CLParserData.make(GenerativeParser.annotated(annotator, transformed), defaultGenerator, true, finePassSemiring))
     } else {
       val paths = textGrammarPrefix.split(":")
-      var grammars = paths.zipWithIndex.map{ case (f,i) => SimpleRefinedGrammar.parseBerkeleyText(f,  -12, CloseUnaries.None)}
+      var grammars = paths.zipWithIndex.map{ case (f,i) => SimpleGrammar.parseBerkeleyText(f,  -12, CloseUnaries.None)}
       if(reproject && grammars.length > 1) {
         val (newc, newr) = reprojectGrammar(grammars.head, textGrammarPrefix.split(":").head, grammars.last, textGrammarPrefix.split(":").last)
         grammars = Array(newc, newr)
@@ -1047,7 +1048,7 @@ object CLParser extends LazyLogging {
 
     val parser = if(grammars.length > 1) {
       val gr = grammars.last
-      Parser(new ConstraintCoreGrammarAdaptor(gr.grammar, gr.lexicon, new ParserChartConstraintsFactory(Parser(grammars.head, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate)),
+      Parser(new ParserChartConstraintsFactory(Parser(grammars.head, new ViterbiDecoder[AnnotatedLabel, String]), (_:AnnotatedLabel).isIntermediate),
         gr,
         if (kern.isViterbi) new ViterbiDecoder[AnnotatedLabel, String] else new MaxConstituentDecoder[AnnotatedLabel, String])
     } else {
@@ -1102,26 +1103,24 @@ object CLParser extends LazyLogging {
   }
 
 
-  def fromParserData[L, L2, W](data: CLParserData[L, L2, W], profile: Boolean, mem: Long)(implicit context: CLContext): CLParser[L, L2, W] = {
+  def fromParserData[L, L2, W](data: CLParserData[L, L2, W], profile: Boolean, mem: Long)(implicit context: CLContext, deb: Debinarizer[L]): CLParser[L, L2, W] = {
     fromParserDatas(IndexedSeq(data), profile, mem)
   }
 
-  def fromParserDatas[L, L2, W](data: IndexedSeq[CLParserData[L, L2, W]], profile: Boolean, mem: Long)(implicit context: CLContext): CLParser[L, L2, W] = {
+  def fromParserDatas[L, L2, W](data: IndexedSeq[CLParserData[L, L2, W]], profile: Boolean, mem: Long)(implicit context: CLContext, deb: Debinarizer[L]): CLParser[L, L2, W] = {
     val kern = new CLParser[L, L2, W](data, profile = profile, maxAllocSize = mem)
     kern
   }
 
-  def eval(trees: IndexedSeq[((BinarizedTree[AnnotatedLabel], BinarizedTree[AnnotatedLabel]), IndexedSeq[String])], name: String, printTrees: Boolean = false) = {
-    val chainReplacer = AnnotatedLabelChainReplacer
+  def eval(trees: IndexedSeq[((Tree[AnnotatedLabel], BinarizedTree[AnnotatedLabel]), IndexedSeq[String])], name: String, printTrees: Boolean = false) = {
     val outDir = new File(s"eval-$name")
     outDir.mkdirs()
     val goldOut = new PrintStream(new FileOutputStream(new File(outDir, "gold")))
     val guessOut = new PrintStream(new FileOutputStream(new File(outDir, "guess")))
     val eval: ParseEval[String] = new ParseEval(Set("","''", "``", ".", ":", ",", "TOP"))
     val res = trees filter (_._1 ne null) map { case ((guess, gold), words) =>
-      val tree: Tree[String] = chainReplacer.replaceUnaries(guess).map(_.label)
-      val guessTree = Trees.debinarize(Trees.deannotate(tree))
-      val deBgold: Tree[String] = Trees.debinarize(Trees.deannotate(chainReplacer.replaceUnaries(gold).map(_.label)))
+      val guessTree: Tree[String] = guess.map(_.label)
+      val deBgold: Tree[String] = AnnotatedLabelDebinarizer(gold).map(_.label)
       val stats = eval.apply(guessTree, deBgold)
       goldOut.println(deBgold.render(words, false))
       guessOut.println(guessTree.render(words, false))
@@ -1150,8 +1149,8 @@ object CLParser extends LazyLogging {
 
 
 
-  def reprojectGrammar(coarseGrammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String], coarseGrammarName: String,
-                    fineGrammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String],  fineGrammarName: String) = {
+  def reprojectGrammar(coarseGrammar: SimpleGrammar[AnnotatedLabel, AnnotatedLabel, String], coarseGrammarName: String,
+                    fineGrammar: SimpleGrammar[AnnotatedLabel, AnnotatedLabel, String],  fineGrammarName: String) = {
     val symMap: Map[String, IndexedSeq[String]] = readHierarchy(fineGrammarName, coarseGrammarName)
     var reverseSymMap: Map[String, String] = for {
       (coarse, fines) <- symMap
@@ -1159,26 +1158,24 @@ object CLParser extends LazyLogging {
     } yield f -> coarse
 
     reverseSymMap += ("TOP_0" -> "TOP_0")
-    val coarseLevelRefinedGrammar: BaseGrammar[AnnotatedLabel] = coarseGrammar.refinedGrammar
-    val fineLevelRefinedGrammar: BaseGrammar[AnnotatedLabel] = fineGrammar.refinedGrammar
-    val newBaseRefinements = GrammarRefinements.identity(coarseLevelRefinedGrammar)
-    val newFineRefinements = GrammarRefinements(coarseLevelRefinedGrammar, fineLevelRefinedGrammar, {(x: AnnotatedLabel) => AnnotatedLabel(reverseSymMap(x.label))}, skipMissingCoarseRules = true)
+    val coarseLevelGrammar: RuleTopology[AnnotatedLabel] = coarseGrammar.topology
+    val fineLevelGrammar: RuleTopology[AnnotatedLabel] = fineGrammar.topology
+    val newBaseRefinements = GrammarRefinements.identity(coarseLevelGrammar)
+    val newFineRefinements = GrammarRefinements(coarseLevelGrammar, fineLevelGrammar, {(x: AnnotatedLabel) => AnnotatedLabel(reverseSymMap(x.label))}, skipMissingCoarseRules = true)
     
-    val newCoarseLexicon = new SplitLexicon(coarseGrammar.lexicon, coarseLevelRefinedGrammar.labelIndex, coarseGrammar.refinements.labels)
+    val newCoarseLexicon = new SplitLexicon(coarseGrammar.lexicon, coarseLevelGrammar.labelIndex, coarseGrammar.refinements.labels)
 
-    val newBaseGrammar =  RefinedGrammar.unanchored[AnnotatedLabel, AnnotatedLabel, String](coarseLevelRefinedGrammar, newCoarseLexicon,
+    val newRuleTopology =  Grammar.unanchored[AnnotatedLabel, AnnotatedLabel, String](coarseLevelGrammar, newCoarseLexicon,
       newBaseRefinements,
       flattenRuleScores(coarseGrammar),
-      new Array(coarseGrammar.refinedGrammar.labelIndex.size),
       coarseGrammar.tagScorer)
 
-    val newFineGrammar = RefinedGrammar.unanchored[AnnotatedLabel, AnnotatedLabel, String](coarseLevelRefinedGrammar, newCoarseLexicon,
+    val newFineGrammar = Grammar.unanchored[AnnotatedLabel, AnnotatedLabel, String](coarseLevelGrammar, newCoarseLexicon,
       newFineRefinements,
       flattenRuleScores(fineGrammar),
-      new Array(fineGrammar.refinedGrammar.labelIndex.size),
       fineGrammar.tagScorer)
 
-    (newBaseGrammar, newFineGrammar)
+    (newRuleTopology, newFineGrammar)
   }
 
 
@@ -1210,8 +1207,8 @@ object CLParser extends LazyLogging {
     symMap
   }
 
-  private def flattenRuleScores(grammar: SimpleRefinedGrammar[AnnotatedLabel, AnnotatedLabel, String]): Array[Double] = {
-    Array.tabulate(grammar.refinedGrammar.index.size) { grammar.ruleScore(_) }
+  private def flattenRuleScores(grammar: SimpleGrammar[AnnotatedLabel, AnnotatedLabel, String]): Array[Double] = {
+    Array.tabulate(grammar.refinedTopology.index.size) { grammar.ruleScore(_) }
   }
 
   @SerialVersionUID(1L)
@@ -1228,7 +1225,7 @@ object CLParser extends LazyLogging {
 }
 
 
-case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
+case class CLParserData[C, L, W](grammar: SimpleGrammar[C, L, W],
                                  structure: RuleStructure[C, L],
                                  semiring: RuleSemiring,
                                  inside: CLInsideKernels,
@@ -1261,18 +1258,18 @@ case class CLParserData[C, L, W](grammar: SimpleRefinedGrammar[C, L, W],
 }
 
 object CLParserData {
-  def make[C, L, W](grammar: SimpleRefinedGrammar[C, L, W], genType: GenType, directWrite: Boolean, semiring: RuleSemiring)(implicit context: CLContext) = {
+  def make[C, L, W](grammar: SimpleGrammar[C, L, W], genType: GenType, directWrite: Boolean, semiring: RuleSemiring)(implicit context: CLContext) = {
     implicit val semi = semiring
-    val ruleScores: Array[Float] = Array.tabulate(grammar.refinedGrammar.index.size){r =>
+    val ruleScores: Array[Float] = Array.tabulate(grammar.refinedTopology.index.size){r =>
       val projectedRule = grammar.refinements.rules.project(r)
       if(projectedRule < 0) {
         semi.fromLogSpace(-12)
       } else {
-        val score = grammar.ruleScoreArray(projectedRule)(grammar.refinements.rules.localize(r))
+        val score = grammar.ruleScoreArray(r)
         semi.fromLogSpace(score.toFloat)
       }
     }
-    val structure = new RuleStructure(grammar.refinements, grammar.refinedGrammar, ruleScores)
+    val structure = new RuleStructure(grammar.refinements, grammar.refinedTopology, ruleScores)
     val inside = CLInsideKernels.make(structure, directWrite, semiring, genType)
     val outside =  CLOutsideKernels.make(structure, directWrite, semiring, genType)
     val util = CLParserUtils.make(structure)
@@ -1285,7 +1282,7 @@ object CLParserData {
   }
 
   def read[C, L, W](prefix: String, file: ZipFile)(implicit context: CLContext): CLParserData[C, L, W] = {
-    val gr = ZipUtil.deserializeEntry[SimpleRefinedGrammar[C, L, W]](file.getInputStream(file.getEntry(s"$prefix/grammar")))
+    val gr = ZipUtil.deserializeEntry[SimpleGrammar[C, L, W]](file.getInputStream(file.getEntry(s"$prefix/grammar")))
     val structure = ZipUtil.deserializeEntry[RuleStructure[C, L]](file.getInputStream(file.getEntry(s"$prefix/structure")))
     val semiring = ZipUtil.deserializeEntry[RuleSemiring](file.getInputStream(file.getEntry(s"$prefix/semiring")))
     val inside = CLInsideKernels.read(prefix, file)

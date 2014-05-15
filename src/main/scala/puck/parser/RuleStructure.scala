@@ -1,7 +1,7 @@
 package puck.parser
 
 import epic.parser.projections.GrammarRefinements
-import epic.parser.BaseGrammar
+import epic.parser.RuleTopology
 import epic.trees.{BinaryRule, UnaryRule}
 import breeze.util.Index
 import scala.io.Source
@@ -12,7 +12,7 @@ import java.io.{FileNotFoundException, FileInputStream}
  * @author dlwh
  */
 @SerialVersionUID(1L)
-case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: BaseGrammar[L], scores: Array[Float]) {
+case class RuleStructure[C, L](refinements: GrammarRefinements[C, L], grammar: RuleTopology[L], scores: Array[Float]) {
 
   def numCoarseSyms = refinements.labels.coarseIndex.size
 
