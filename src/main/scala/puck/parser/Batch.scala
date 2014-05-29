@@ -6,7 +6,6 @@ import puck.linalg.CLMatrix
 import puck.util.BitHacks
 import com.nativelibs4java.opencl.{CLQueue, CLMem, CLContext}
 import org.bridj.Pointer
-import epic.parser.SimpleRefinedGrammar
 import scala.concurrent.Future
 
 /**
