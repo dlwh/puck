@@ -7,6 +7,7 @@ import breeze.config.CommandLineParser
 import java.util.zip.ZipFile
 import com.nativelibs4java.opencl.{JavaCL, CLContext}
 import java.util.{Comparator, Collections}
+import scala.collection.mutable.ArrayBuffer
 import com.typesafe.scalalogging.slf4j.LazyLogging
 import puck.{BatchFunctionAnnotatorService, AnnotatorService}
 import scala.io.{Source, Codec}
@@ -82,6 +83,8 @@ object RunParser extends LazyLogging {
     var producedIndex = 0L
     val timeIn = System.currentTimeMillis()
 
+    val successFutures = ArrayBuffer[Future[Any]]()
+
     for(src <- iter) {
       val queue = FIFOWorkQueue(sentenceSegmenter.sentences(src)){sent =>
         val words = tokenizer(sent).toIndexedSeq
@@ -97,11 +100,15 @@ object RunParser extends LazyLogging {
         }
       }
 
-      service.flush()
-      for(s <- queue) {
-        println(Await.result(s, Duration.Inf))
+
+      successFutures += Future {
+        queue.foreach { q => println(Await.result(q, Duration.Inf)) }
       }
+
     }
+    service.flush()
+
+    Await.result(Future.sequence(successFutures), Duration.Inf)
 
     val timeOut = System.currentTimeMillis()
     val wallTime = (timeOut - timeIn) / 1E3
