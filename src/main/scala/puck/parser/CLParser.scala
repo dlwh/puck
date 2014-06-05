@@ -33,8 +33,9 @@ import org.bridj.Pointer
 import scala.reflect.ClassTag
 import scala.concurrent.{ExecutionContext, Await, Future}
 import scala.concurrent.duration.Duration
-import scala.collection.mutable
+import scala.collection.{immutable, mutable}
 import epic.trees.Debinarizer.AnnotatedLabelDebinarizer
+import scala.util.{Failure, Success, Try}
 
 
 /**
@@ -46,7 +47,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
                         maxAllocSize: Long = 1<<30,
                         profile: Boolean = true)(implicit val context: CLContext, deb: Debinarizer[C]) extends LazyLogging {
 
-  def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[Tree[C]] = synchronized {
+  def parse(sentences: IndexedSeq[IndexedSeq[W]]):IndexedSeq[Try[Tree[C]]] = synchronized {
     val mask = computeMasks(sentences)
     parsers.last.parse(sentences, mask)
   }
@@ -141,7 +142,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
       }
     }
 
-    def parse(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask) = synchronized {
+    def parse(sentences: IndexedSeq[IndexedSeq[W]], mask: PruningMask): immutable.IndexedSeq[Try[Tree[C]]] = synchronized {
       logTime("parse", sentences.length) {
         withWorkSpace(mask.hasMasks) {workspace =>
           pretagger(workspace.getBatches(sentences, mask).iterator).flatMap { case (batch, tagFuture) =>
@@ -152,14 +153,14 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
               Option(ev3).foreach(_.waitFor())
               val parseMask: DenseMatrixMask = extractMasks(workspace, batch, false)
               val parses = extractParses(batch, parseMask.matrix, ev3)
-              parses.par.map(deb)
+              parses.par.map(_.map(deb))
             } else {
               ev = outside(workspace, batch, ev)
               val ev3 = computeMBRParts(workspace, batch, ev)
               Option(ev3).foreach(_.waitFor())
               val parseMask = extractMasks(workspace, batch, false)
               val parses = extractMBRParses(workspace, batch, parseMask, ev3)
-              parses.par.map(deb)
+              parses.par.map(_.map(deb))
             }
           }.toIndexedSeq
         }
@@ -525,7 +526,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
     private val outsideBot = {(b: Batch[W], s: Int) =>  b.outsideBotOffset(s) }
     private val outsideTop = {(b: Batch[W], s: Int) =>  b.outsideTopOffset(s) }
 
-    def extractParses(batch: Batch[W], mask: DenseMatrix[Int], events: CLEvent*): ParSeq[BinarizedTree[C]] = {
+    def extractParses(batch: Batch[W], mask: DenseMatrix[Int], events: CLEvent*): ParSeq[Try[BinarizedTree[C]]] = {
       CLEvent.waitFor(events:_*)
       val in = if (profile) System.currentTimeMillis() else 0L
       val trees = for (s <- 0 until batch.numSentences par) yield try {
@@ -570,11 +571,11 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
         }
         val t = rec(0)
 //        println(t.render(batch.sentences(s)))
-        t
+        Success(t)
       } catch {
         case ex: Exception =>
           ex.printStackTrace()
-          null
+          Failure(ex)
       }
       val out = if (profile) System.currentTimeMillis() else 0L
       if (profile) {
@@ -585,7 +586,7 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
 
     private val unaryThreshold = 0.4
 
-    def extractMBRParses(workspace: WorkSpace, batch: Batch[W], mask: PruningMask, events: CLEvent*): ParSeq[BinarizedTree[C]] = {
+    def extractMBRParses(workspace: WorkSpace, batch: Batch[W], mask: PruningMask, events: CLEvent*): ParSeq[Try[BinarizedTree[C]]] = {
       require(mask.hasMasks, "Can't use null pruning mask for parse extraction!")
       events.foreach(_.waitFor())
       val in = if (profile) System.currentTimeMillis() else 0L
@@ -681,10 +682,10 @@ class CLParser[C, L, W](data: IndexedSeq[CLParserData[C, L, W]],
           }
         }
 
-        extract(0, length)
+        Success(extract(0, length))
 
       } catch {
-        case ex: Throwable => ex.printStackTrace(); null
+        case ex: Throwable => Failure(ex)
       }
       val out = if (profile) System.currentTimeMillis() else 0L
       if (profile) {
@@ -1081,10 +1082,10 @@ object CLParser extends LazyLogging {
 
 
     val trees = logTime("CL Parsing:", toParse.length)(kern.parse(toParse))
-    println(eval(trees zip gold.map(_.tree) zip toParse, "opencl", printTrees))
+    println(eval(trees.map(_.get) zip gold.map(_.tree) zip toParse, "opencl", printTrees))
     if (parseTwice) {
       val trees = logTime("CL Parsing x2:", toParse.length)(kern.parse(toParse))
-      println(eval(trees zip gold.map(_.tree) zip toParse, "opencl-twice"))
+      println(eval(trees.map(_.get) zip gold.map(_.tree) zip toParse, "opencl-twice"))
     }
     if (jvmParse) {
 

@@ -21,6 +21,7 @@ import chalk.text.LanguagePack
 import chalk.text.tokenize.WhitespaceTokenizer
 import epic.util.FIFOWorkQueue
 import scala.concurrent.Await
+import scala.util.{Failure, Success}
 
 /**
  * TODO
@@ -38,7 +39,8 @@ object RunParser extends LazyLogging {
                     grammar: File = new File("grammar.grz"),
                     maxParseLength: Int = 10000,
                     mem: String = "3g",
-                    maxLength: Int = 50)
+                    maxLength: Int = 50,
+                    outputSuffix: String = ".parsed")
 
   def main(args: Array[String]) {
     val (config, files) = CommandLineParser.parseArguments(args)
@@ -77,7 +79,7 @@ object RunParser extends LazyLogging {
 
     logger.info("Up and running")
 
-    val iter = if(files.length == 0) Iterator(System.in) else files.iterator.map(new FileInputStream(_))
+    val iter = if(files.length == 0) Iterator(System.in -> System.out) else files.iterator.map(f => new BufferedInputStream(new FileInputStream(f)) -> new PrintStream(new BufferedOutputStream(new FileOutputStream(new File(f.toString + params.outputSuffix)))))
 
 
     var producedIndex = 0L
@@ -85,15 +87,14 @@ object RunParser extends LazyLogging {
 
     val successFutures = ArrayBuffer[Future[Any]]()
 
-    for(src <- iter) {
+    for( (src, sink) <- iter) {
       val queue = FIFOWorkQueue(sentenceSegmenter.sentences(src)){sent =>
         val words = tokenizer(sent).toIndexedSeq
         producedIndex += 1
         if(words.length < maxLength) {
-          service(words).map { tree =>
-            val guessTree = tree.map(_.label)
-            val rendered = guessTree.render(words, newline = false)
-            rendered
+          service(words).map {
+            case Success(t) => t.map(_.label).render(words, newline = false)
+            case Failure(ex) => ex.printStackTrace(); "(())"
           }
         } else {
           Future.successful("(())")
@@ -102,8 +103,9 @@ object RunParser extends LazyLogging {
 
 
       successFutures += Future {
-        queue.foreach { q => println(Await.result(q, Duration.Inf)) }
+        queue.foreach { q => sink.println(Await.result(q, Duration.Inf)) }
       }
+      successFutures.last.onComplete(_ => sink.close())
 
     }
     service.flush()
