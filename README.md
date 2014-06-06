@@ -6,9 +6,12 @@ Puck is a high-speed, high-accuracy parser for natural languages.
 It's (currently) designed for use with grammars trained with the
 Berkeley Parser and on NVIDIA cards.  On recent-ish NVIDIA cards
 (e.g. a GTX 680), around 400 sentences a second with a full Berkeley
-grammar for length <= 40 sentences.
+grammar for length <= 40 sentences. 
 
-The current version is 0.1-SNAPSHOT.
+*Puck is only useful if you plan on parsing a lot of sentences.* On the order of a few thousand. Also, it's designed
+for throughput, not latency.
+
+The current version is 0.1.
 
 Puck is based on the research in two papers:
 
@@ -31,10 +34,10 @@ This project can be built with sbt 0.13.  Run `sbt assembly` to create a fat jar
 The first step in using Puck is to compile a grammar to GPU code. The best way to do this is to run the command
 
 ```
-sbt "run-main puck.parser.CompileGrammar --textGrammarPrefix textGrammars/wsj_1.gr:textGrammars/wsj_6.gr --grammar grammar.grz"
+java -Xmx4g -cp target/scala-2.10/puck-0.1-assembly.jar puck.parser.CompileGrammar --textGrammarPrefix textGrammars/wsj_1.gr:textGrammars/wsj_6.gr --grammar grammar.grz
 ```
 
-This produces a parser equivalent to the one used in the 2014 paper in a file called `grammar.grz`. The textGrammarPrefix argument accepts
+*This command will take a long time: up to an hour.* When it's finished, this program will produce a parser equivalent to the one used in the 2014 paper in a file called `grammar.grz`. The textGrammarPrefix argument accepts
 a sequence of plain text grammars, separated by colons. We have provided the cascade of grammars used in the Berkeley Parser for English. In 
 practice, using `wsj_1` and `wsj_6` gives you all the benefit for GPU grammars.
 
@@ -43,24 +46,30 @@ practice, using `wsj_1` and `wsj_6` gives you all the benefit for GPU grammars.
 The parser can be run with:
 
 ```
-sbt "run-main puck.parser.RunParser --grammar grammar.grz <input files>"
+java -Xmx4g -cp target/scala-2.10/puck-0.1-assembly.jar puck.parser.RunParser --grammar grammar.grz <input files>
 ```
 
-This will output 1 tree per line. By default it will skip sentences longer than 50 words. 
-Input files must be pretokenized into one sentence per line, with words represented as PTB-compatible format. For example:
+This will output 1 tree per line to files named `[input file name].parsed`.
+By default it will skip sentences longer than 50 words, printing out "(())" instead.
+If no files are listed, it will read from standard input. (You will instead
+want to use th
 
-```
--LRB- Dong-A had had a technology agreement with Jeep maker American Motors Corp. , now a part of Chrysler Corp . -RRB-
-```
+If the sentences are already split up into one sentence per line,
+use --sentences newline. If the words are already tokenized into
+PTB tokens, use --tokens whitespace.
 
-We plan to fix this soon.
+*Initializing the parser can take 2-3 minutes,* longer if it's your first time starting the parser.
+So this parser is only worth your time if you plan on parsing a lot of text. Also
+note that you won't get 400 sentences a second if you aren't parsing
+a lot of sentences.
+
 
 ### Experiments
 
 We benchmarked our parser by running it on the treebank.
 
 ```bash
-sbt "run-main puck.parser.CLParser --maxParseLength 40 --treebank.path /path/to/treebank/wsj --maxLength 40 --numToParse 20000  --reproject false --viterbi true  --cache false --textGrammarPrefix textGrammars/wsj_1.gr:textGrammars/wsj_6.gr --mem 4g --device 680"
+java -cp target/scala-2.10/puck-0.1-assembly.jar puck.parser.CLParser --maxParseLength 40 --treebank.path /path/to/treebank/wsj --maxLength 40 --numToParse 20000  --reproject false --viterbi true  --cache false --textGrammarPrefix textGrammars/wsj_1.gr:textGrammars/wsj_6.gr --mem 4g --device 680"
 ```
 
 Should reproduce.
