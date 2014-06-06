@@ -57,8 +57,7 @@ java -Xmx4g -cp target/scala-2.10/puck-assembly-0.1.jar puck.parser.RunParser --
 
 This will output 1 tree per line to files named `[input file name].parsed`.
 By default it will skip sentences longer than 50 words, printing out "(())" instead.
-If no files are listed, it will read from standard input. (You will instead
-want to use th
+If no files are listed, it will read from standard input.
 
 If the sentences are already split up into one sentence per line,
 use --sentences newline. If the words are already tokenized into
