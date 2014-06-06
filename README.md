@@ -34,7 +34,7 @@ This project can be built with sbt 0.13.  Run `sbt assembly` to create a fat jar
 The first step in using Puck is to compile a grammar to GPU code. The best way to do this is to run the command
 
 ```
-java -Xmx4g -cp target/scala-2.10/puck-0.1-assembly.jar puck.parser.CompileGrammar --textGrammarPrefix textGrammars/wsj_1.gr:textGrammars/wsj_6.gr --grammar grammar.grz
+java -Xmx4g -cp target/scala-2.10/puck-assembly-0.1.jar puck.parser.CompileGrammar --textGrammarPrefix textGrammars/wsj_1.gr:textGrammars/wsj_6.gr --grammar grammar.grz
 ```
 
 *This command will take a long time: up to an hour.* When it's finished, this program will produce a parser equivalent to the one used in the 2014 paper in a file called `grammar.grz`. The textGrammarPrefix argument accepts
@@ -46,7 +46,7 @@ practice, using `wsj_1` and `wsj_6` gives you all the benefit for GPU grammars.
 The parser can be run with:
 
 ```
-java -Xmx4g -cp target/scala-2.10/puck-0.1-assembly.jar puck.parser.RunParser --grammar grammar.grz <input files>
+java -Xmx4g -cp target/scala-2.10/puck-assembly-0.1.jar puck.parser.RunParser --grammar grammar.grz <input files>
 ```
 
 This will output 1 tree per line to files named `[input file name].parsed`.
@@ -69,7 +69,7 @@ a lot of sentences.
 We benchmarked our parser by running it on the treebank.
 
 ```bash
-java -cp target/scala-2.10/puck-0.1-assembly.jar puck.parser.CLParser --maxParseLength 40 --treebank.path /path/to/treebank/wsj --maxLength 40 --numToParse 20000  --reproject false --viterbi true  --cache false --textGrammarPrefix textGrammars/wsj_1.gr:textGrammars/wsj_6.gr --mem 4g --device 680"
+java -cp target/scala-2.10/puck-assembly-0.1.jar puck.parser.CLParser --maxParseLength 40 --treebank.path /path/to/treebank/wsj --maxLength 40 --numToParse 20000  --reproject false --viterbi true  --cache false --textGrammarPrefix textGrammars/wsj_1.gr:textGrammars/wsj_6.gr --mem 4g --device 680"
 ```
 
 Should reproduce.
