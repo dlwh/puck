@@ -25,6 +25,12 @@ Proceedings of Empirical Methods in Natural Language Processing.
 Puck has three main classes. The first is for compiling the GPU representation of a grammar, the second is for parsing with that grammar, and the third is for
 experimental use. Running --help with any of these commands will list all options.
 
+
+### Obtaining Puck
+
+A prebuilt version of puck can be downloaded from <http://www.scalanlp.org/releases/puck-assembly-0.1.jar>. Plain text grammar files (needed to set up a parser) can be obtained from
+this repository in the textGrammars/ directory.
+
 ### Building Puck
 
 This project can be built with sbt 0.13.  Run `sbt assembly` to create a fat jar in `target/scala-2.10/`
