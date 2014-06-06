@@ -30,26 +30,30 @@ class BatchFunctionAnnotatorService[In, Out](f: IndexedSeq[In]=>IndexedSeq[Out],
   private var queue = new ArrayBuffer[(In, Promise[Out])]()
 
   override def flush() {
-    monitorThread.interrupt()
+    service.synchronized {
+      service.notifyAll()
+    }
   }
 
-  private val monitorThread = new Thread() {
+  private val monitorThread:Thread = new Thread() {
     override def run(): Unit = {
-      try {
-        Thread.sleep(flushInterval.toMillis)
-      } catch {
-        case ex: InterruptedException =>
-      }
-
       val theQueue = service.synchronized {
-        val q = queue
+
+        while(queue.isEmpty) {
+          service.wait(flushInterval.toMillis)
+        }
+
+
+        val theQueue = queue
         queue = new ArrayBuffer()
-        q
+        theQueue
       }
 
-      if (theQueue.nonEmpty) {
-        for( (out, promise) <- f(theQueue.map(_._1)) zip theQueue.map(_._2)) {
-          promise.success(out)
+      monitorThread.synchronized {
+        if (theQueue.nonEmpty) {
+          for( (out, promise) <- f(theQueue.map(_._1)) zip theQueue.map(_._2)) {
+            promise.success(out)
+          }
         }
       }
       run()

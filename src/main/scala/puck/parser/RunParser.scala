@@ -1,4 +1,5 @@
-package puck.parser
+package puck
+package parser
 
 import epic.trees.annotations.{Xbarize, TreeAnnotator}
 import epic.trees._
@@ -19,7 +20,7 @@ import epic.trees.Debinarizer.AnnotatedLabelDebinarizer
 import epic.preprocess.{TreebankTokenizer, StreamSentenceSegmenter, NewLineSentenceSegmenter, MLSentenceSegmenter}
 import chalk.text.LanguagePack
 import chalk.text.tokenize.WhitespaceTokenizer
-import epic.util.FIFOWorkQueue
+//import epic.util.FIFOWorkQueue
 import scala.concurrent.Await
 import scala.util.{Failure, Success}
 
@@ -75,7 +76,7 @@ object RunParser extends LazyLogging {
 
     val parser = new CLParser(parserData, CLParser.parseMemString(mem), profile = profile)
 
-    val service = AnnotatorService.fromBatchFunction(parser.parse(_:IndexedSeq[IndexedSeq[String]]), flushInterval = Duration(100, TimeUnit.MILLISECONDS))
+    val service = AnnotatorService.fromBatchFunction(parser.parse(_:IndexedSeq[IndexedSeq[String]]))
 
     logger.info("Up and running")
 
@@ -88,8 +89,10 @@ object RunParser extends LazyLogging {
     val successFutures = ArrayBuffer[Future[Any]]()
 
     for( (src, sink) <- iter) {
-      val queue = FIFOWorkQueue(sentenceSegmenter.sentences(src)){sent =>
+      val queue = FIFOWorkQueue(sentenceSegmenter.sentences(src).filter(_.trim.nonEmpty)){sent =>
         val words = tokenizer(sent).toIndexedSeq
+        assert(words.length > 0)
+
         producedIndex += 1
         if(words.length < maxLength) {
           service(words).map {
@@ -99,13 +102,14 @@ object RunParser extends LazyLogging {
         } else {
           Future.successful("(())")
         }
+
+
       }
-
-
       successFutures += Future {
         queue.foreach { q => sink.println(Await.result(q, Duration.Inf)) }
       }
-      successFutures.last.onComplete(_ => sink.close())
+      successFutures.last.onComplete{_ => src.close();sink.close()}
+      //      Await.result(successFutures.last, Duration.Inf)
 
     }
     service.flush()
