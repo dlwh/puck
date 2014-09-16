@@ -7,7 +7,7 @@ import java.io._
 import breeze.config.CommandLineParser
 import java.util.zip.ZipFile
 import com.nativelibs4java.opencl.{JavaCL, CLContext}
-import java.util.{Comparator, Collections}
+import java.util.{Locale, Comparator, Collections}
 import scala.collection.mutable.ArrayBuffer
 import com.typesafe.scalalogging.slf4j.LazyLogging
 import puck.{BatchFunctionAnnotatorService, AnnotatorService}
@@ -18,8 +18,7 @@ import java.util.concurrent.{PriorityBlockingQueue, ConcurrentLinkedQueue, TimeU
 import scala.concurrent.duration.Duration
 import epic.trees.Debinarizer.AnnotatedLabelDebinarizer
 import epic.preprocess.{TreebankTokenizer, StreamSentenceSegmenter, NewLineSentenceSegmenter, MLSentenceSegmenter}
-import chalk.text.LanguagePack
-import chalk.text.tokenize.WhitespaceTokenizer
+
 //import epic.util.FIFOWorkQueue
 import scala.concurrent.Await
 import scala.util.{Failure, Success}
@@ -63,7 +62,7 @@ object RunParser extends LazyLogging {
 
     val sentenceSegmenter = {
       val base = params.sentences.toLowerCase match {
-        case "java" => LanguagePack.English.sentenceSegmenter
+        case "java" => new epic.preprocess.JavaSentenceSegmenter(new Locale("en"))
         case "default" | "trained" => MLSentenceSegmenter.bundled().get
         case "newline" => new NewLineSentenceSegmenter()
       }
@@ -71,7 +70,7 @@ object RunParser extends LazyLogging {
     }
     val tokenizer = params.tokens.toLowerCase match {
       case "default" | "treebank" => new TreebankTokenizer
-      case "none" | "whitespace" => new WhitespaceTokenizer
+      case "none" | "whitespace" => new epic.preprocess.WhitespaceTokenizer
     }
 
     val parser = new CLParser(parserData, CLParser.parseMemString(mem), profile = profile)
