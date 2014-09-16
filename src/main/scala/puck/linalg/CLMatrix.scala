@@ -5,7 +5,7 @@ import breeze.linalg._
 import java.{lang=>jl}
 import scala.reflect.ClassTag
 import breeze.util.ArrayUtil
-import breeze.storage.DefaultArrayValue
+import breeze.storage.Zero
 import breeze.math.Ring
 import breeze.linalg.operators._
 import breeze.linalg.support._
@@ -193,16 +193,16 @@ object CLMatrix extends LowPriorityNativeMatrix {
    * The standard way to create an empty matrix, size is rows * cols
    */
   def zeros[@specialized(Int, Float, Double) V](rows: Int, cols: Int)(implicit ct: ClassTag[V],
-                                                                      dav: DefaultArrayValue[V],
+                                                                      dav: Zero[V],
                                                                       context: CLContext, queue: CLQueue): CLMatrix[V] = {
     val data = new Array[V](rows * cols)
-    if(dav != null && rows * cols != 0 && data(0) != implicitly[DefaultArrayValue[V]].value)
-      ArrayUtil.fill(data, 0, data.length, implicitly[DefaultArrayValue[V]].value)
+    if(dav != null && rows * cols != 0 && data(0) != implicitly[Zero[V]].value)
+      ArrayUtil.fill(data, 0, data.length, implicitly[Zero[V]].value)
     create(rows, cols, data)
   }
 
   def create[@specialized(Int, Float, Double) V](rows: Int, cols: Int, data: Array[V])(implicit ct: ClassTag[V],
-                                                                                                         dav: DefaultArrayValue[V],
+                                                                                                         dav: Zero[V],
                                                                                                          context: CLContext, queue: CLQueue): CLMatrix[V] = {
     val ptr = Pointer.pointerToArray[V](data)
     new CLMatrix[V](rows, cols, context.createBuffer[V](CLMem.Usage.InputOutput, ptr))
@@ -427,7 +427,7 @@ object CLMatrix extends LowPriorityNativeMatrix {
    * @tparam V
    * @tparam R
    * @return
-  implicit def canMapRows[V:ClassTag:DefaultArrayValue]: CanCollapseAxis[CLMatrix[V], Axis._0.type, CLMatrix[V], CLMatrix[V], CLMatrix[V]]  = new CanCollapseAxis[CLMatrix[V], Axis._0.type, CLMatrix[V], CLMatrix[V], CLMatrix[V]] {
+  implicit def canMapRows[V:ClassTag:Zero]: CanCollapseAxis[CLMatrix[V], Axis._0.type, CLMatrix[V], CLMatrix[V], CLMatrix[V]]  = new CanCollapseAxis[CLMatrix[V], Axis._0.type, CLMatrix[V], CLMatrix[V], CLMatrix[V]] {
     def apply(from: CLMatrix[V], axis: Axis._0.type)(f: (CLMatrix[V]) => CLMatrix[V]): CLMatrix[V] = {
       var result:CLMatrix[V] = null
       for(c <- 0 until from.cols) {
@@ -451,7 +451,7 @@ object CLMatrix extends LowPriorityNativeMatrix {
    * @tparam R
    * @return
    */
-  implicit def canMapCols[V:ClassTag:DefaultArrayValue] = new CanCollapseAxis[CLMatrix[V], Axis._1.type, CLMatrix[V], CLMatrix[V], CLMatrix[V]] {
+  implicit def canMapCols[V:ClassTag:Zero] = new CanCollapseAxis[CLMatrix[V], Axis._1.type, CLMatrix[V], CLMatrix[V], CLMatrix[V]] {
     def apply(from: CLMatrix[V], axis: Axis._1.type)(f: (CLMatrix[V]) => CLMatrix[V]): CLMatrix[V] = {
       var result:CLMatrix[V] = null
       val t = from.t
