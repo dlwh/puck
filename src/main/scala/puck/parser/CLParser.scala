@@ -1221,6 +1221,8 @@ object CLParser extends LazyLogging {
 
       def allowedTags(pos: Int): Set[Int] = canchor.allowedTags(pos).flatMap(proj.refinementsOf(_:Int))
     }
+
+    override def morePermissive: Lexicon[L, W] = this
   }
 
 }

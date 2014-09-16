@@ -6,7 +6,7 @@ import java.{lang=>jl}
 import scala.reflect.ClassTag
 import breeze.util.ArrayUtil
 import breeze.storage.Zero
-import breeze.math.Ring
+import breeze.math.{Semiring, Ring}
 import breeze.linalg.operators._
 import breeze.linalg.support._
 import puck.util._
@@ -44,6 +44,7 @@ final class CLMatrix[@specialized(Int, Float, Double) V](val rows: Int,
   def this(rows: Int, cols: Int, data: CLBuffer[V], offset: Int = 0)(implicit queue: CLQueue, ct: ClassTag[V]) = this(rows, cols, data, offset, rows)
 
 
+  override def flatten(view: View): Vector[V] = error("...")
 
   def apply(row: Int, col: Int) = {
     if(row < 0 || row >= rows) throw new IndexOutOfBoundsException((row,col) + " not in [0,"+rows+") x [0," + cols+")")
@@ -196,8 +197,8 @@ object CLMatrix extends LowPriorityNativeMatrix {
                                                                       dav: Zero[V],
                                                                       context: CLContext, queue: CLQueue): CLMatrix[V] = {
     val data = new Array[V](rows * cols)
-    if(dav != null && rows * cols != 0 && data(0) != implicitly[Zero[V]].value)
-      ArrayUtil.fill(data, 0, data.length, implicitly[Zero[V]].value)
+    if(dav != null && rows * cols != 0 && data(0) != implicitly[Zero[V]].zero)
+      ArrayUtil.fill(data, 0, data.length, implicitly[Zero[V]].zero)
     create(rows, cols, data)
   }
 
@@ -541,13 +542,6 @@ trait LowPriorityNativeMatrix1 {
 
 trait LowPriorityNativeMatrix extends LowPriorityNativeMatrix1 {
 
-  implicit def canSliceWeirdRows[V]:CanSlice2[CLMatrix[V], Seq[Int], ::.type, SliceMatrix[Int, Int, V]] = {
-    new CanSlice2[CLMatrix[V], Seq[Int], ::.type, SliceMatrix[Int, Int, V]] {
-      def apply(from: CLMatrix[V], slice: Seq[Int], slice2: ::.type): SliceMatrix[Int, Int, V] = {
-        new SliceMatrix(from, slice.toIndexedSeq, (0 until from.cols))
-      }
-    }
-  }
 
   class SetCLMCLMVOp[V] extends OpSet.InPlaceImpl2[CLMatrix[V], CLMatrix[V]] {
     def apply(a: CLMatrix[V], b: CLMatrix[V]) {
