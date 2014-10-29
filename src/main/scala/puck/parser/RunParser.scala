@@ -17,7 +17,7 @@ import scala.concurrent.{Future, ExecutionContext}
 import java.util.concurrent.{PriorityBlockingQueue, ConcurrentLinkedQueue, TimeUnit}
 import scala.concurrent.duration.Duration
 import epic.trees.Debinarizer.AnnotatedLabelDebinarizer
-import epic.preprocess.{TreebankTokenizer, StreamSentenceSegmenter, NewLineSentenceSegmenter, MLSentenceSegmenter}
+import epic.preprocess.{TreebankTokenizer, StreamSentenceSegmenter, MLSentenceSegmenter}
 
 //import epic.util.FIFOWorkQueue
 import scala.concurrent.Await
@@ -64,7 +64,7 @@ object RunParser extends LazyLogging {
       val base = params.sentences.toLowerCase match {
         case "java" => new epic.preprocess.JavaSentenceSegmenter(new Locale("en"))
         case "default" | "trained" => MLSentenceSegmenter.bundled().get
-        case "newline" => new NewLineSentenceSegmenter()
+        case "newline" => new puck.preprocess.NewLineSentenceSegmenter()
       }
       new StreamSentenceSegmenter(base)
     }
