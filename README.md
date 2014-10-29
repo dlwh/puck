@@ -11,7 +11,7 @@ grammar for length <= 40 sentences.
 *Puck is only useful if you plan on parsing a lot of sentences.* On the order of a few thousand. Also, it's designed
 for throughput, not latency.
 
-The current version is 0.1.
+The current version is 0.2.
 
 Puck is based on the research in two papers:
 
@@ -28,19 +28,19 @@ experimental use. Running --help with any of these commands will list all option
 
 ### Obtaining Puck
 
-A prebuilt version of puck can be downloaded from <http://www.scalanlp.org/releases/puck-assembly-0.1.jar>. Plain text grammar files (needed to set up a parser) can be obtained from
+A prebuilt version of puck can be downloaded from <http://www.scalanlp.org/releases/puck-assembly-0.2.jar>. Plain text grammar files (needed to set up a parser) can be obtained from
 this repository in the textGrammars/ directory.
 
 ### Building Puck
 
-This project can be built with sbt 0.13.  Run `sbt assembly` to create a fat jar in `target/scala-2.10/`
+This project can be built with sbt 0.23.  Run `sbt assembly` to create a fat jar in `target/scala-2.10/`
 
 ### Compiling a Grammar
 
 The first step in using Puck is to compile a grammar to GPU code. The best way to do this is to run the command
 
 ```
-java -Xmx4g -cp target/scala-2.10/puck-assembly-0.1.jar puck.parser.CompileGrammar --textGrammarPrefix textGrammars/wsj_1.gr:textGrammars/wsj_6.gr --grammar grammar.grz
+java -Xmx4g -cp target/scala-2.10/puck-assembly-0.2.jar puck.parser.CompileGrammar --textGrammarPrefix textGrammars/wsj_1.gr:textGrammars/wsj_6.gr --grammar grammar.grz
 ```
 
 *This command will take a long time: up to an hour.* When it's finished, this program will produce a parser equivalent to the one used in the 2014 paper in a file called `grammar.grz`. The textGrammarPrefix argument accepts
@@ -52,7 +52,7 @@ practice, using `wsj_1` and `wsj_6` gives you all the benefit for GPU grammars.
 The parser can be run with:
 
 ```
-java -Xmx4g -cp target/scala-2.10/puck-assembly-0.1.jar puck.parser.RunParser --grammar grammar.grz <input files>
+java -Xmx4g -cp target/scala-2.10/puck-assembly-0.2.jar puck.parser.RunParser --grammar grammar.grz <input files>
 ```
 
 This will output 1 tree per line to files named `[input file name].parsed`.
@@ -74,7 +74,7 @@ a lot of sentences.
 We benchmarked our parser by running it on the treebank.
 
 ```bash
-java -cp target/scala-2.10/puck-assembly-0.1.jar puck.parser.CLParser --maxParseLength 40 --treebank.path /path/to/treebank/wsj --maxLength 40 --numToParse 20000  --reproject false --viterbi true  --cache false --textGrammarPrefix textGrammars/wsj_1.gr:textGrammars/wsj_6.gr --mem 4g --device 680"
+java -cp target/scala-2.10/puck-assembly-0.2.jar puck.parser.CLParser --maxParseLength 40 --treebank.path /path/to/treebank/wsj --maxLength 40 --numToParse 20000  --reproject false --viterbi true  --cache false --textGrammarPrefix textGrammars/wsj_1.gr:textGrammars/wsj_6.gr --mem 4g --device 680"
 ```
 
 Should reproduce.
