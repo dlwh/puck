@@ -79,7 +79,11 @@ object RunParser extends LazyLogging {
 
     logger.info("Up and running")
 
-    val iter = if(files.length == 0) Iterator(System.in -> System.out) else files.iterator.map(f => new BufferedInputStream(new FileInputStream(f)) -> new PrintStream(new BufferedOutputStream(new FileOutputStream(new File(f.toString + params.outputSuffix)))))
+    val iter = if(files.length == 0) {
+      Iterator(System.in -> System.out)
+    } else {
+      files.iterator.map(f => inputStream(f) -> outputStream(f, params))
+    }
 
 
     var producedIndex = 0L
@@ -123,4 +127,12 @@ object RunParser extends LazyLogging {
 
   }
 
+
+  def inputStream(f: String): BufferedInputStream = {
+    new BufferedInputStream(new FileInputStream(f))
+  }
+
+  def outputStream(f: String, params: RunParser.Params): PrintStream = {
+    new PrintStream(new BufferedOutputStream(new FileOutputStream(new File(f.toString + params.outputSuffix))))
+  }
 }

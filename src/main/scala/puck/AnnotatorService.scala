@@ -26,7 +26,10 @@ class FunctionAnnotatorService[-In, +Out](f: In=>Out)(implicit context: Executio
 }
 
 
-class BatchFunctionAnnotatorService[In, Out](f: IndexedSeq[In]=>IndexedSeq[Out], val flushInterval: Duration = Duration(1, TimeUnit.SECONDS))(implicit context: ExecutionContext) extends AnnotatorService[In, Out] { service =>
+class BatchFunctionAnnotatorService[In, Out](f: IndexedSeq[In]=>IndexedSeq[Out],
+                                             val maxSize: Int = 40 * 1000,
+                                             val flushInterval: Duration = Duration(1, TimeUnit.SECONDS))
+                                            (implicit context: ExecutionContext) extends AnnotatorService[In, Out] { service =>
   private var queue = new ArrayBuffer[(In, Promise[Out])]()
 
   override def flush() {
@@ -65,6 +68,9 @@ class BatchFunctionAnnotatorService[In, Out](f: IndexedSeq[In]=>IndexedSeq[Out],
   override def apply(v1: In): Future[Out] = synchronized {
     val promise = Promise[Out]()
     queue +=  (v1 -> promise)
+    if (queue.size > maxSize) {
+      flush()
+    }
     promise.future
   }
 }
@@ -74,7 +80,7 @@ object AnnotatorService {
 
   def fromBatchFunction[In, Out](f: IndexedSeq[In]=>IndexedSeq[Out],
                                  flushInterval: Duration = Duration(1, TimeUnit.SECONDS))(implicit context: ExecutionContext): BatchFunctionAnnotatorService[In, Out] = {
-    new BatchFunctionAnnotatorService(f, flushInterval)
+    new BatchFunctionAnnotatorService(f, flushInterval = flushInterval)
   }
 
 }
