@@ -27,7 +27,7 @@ class FunctionAnnotatorService[-In, +Out](f: In=>Out)(implicit context: Executio
 
 
 class BatchFunctionAnnotatorService[In, Out](f: IndexedSeq[In]=>IndexedSeq[Out],
-                                             val maxSize: Int = 40 * 1000,
+                                             val maxSize: Int = 20 * 1000,
                                              val flushInterval: Duration = Duration(1, TimeUnit.SECONDS))
                                             (implicit context: ExecutionContext) extends AnnotatorService[In, Out] { service =>
   private var queue = new ArrayBuffer[(In, Promise[Out])]()
@@ -47,10 +47,12 @@ class BatchFunctionAnnotatorService[In, Out](f: IndexedSeq[In]=>IndexedSeq[Out],
         }
 
 
-        val theQueue = queue
-        queue = new ArrayBuffer()
+        val (theQueue, rest) = queue.splitAt(maxSize)
+        queue = rest
         theQueue
       }
+
+
 
       monitorThread.synchronized {
         if (theQueue.nonEmpty) {
